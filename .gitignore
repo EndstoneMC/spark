@@ -1,0 +1,14 @@
+# Build output
+/build/
+/cmake-build-*/
+
+# Conan
+CMakeUserPresets.json
+
+# Profiles produced by --save-to-file
+*.sparkprofile
+
+# Editor / OS
+.idea/
+.vscode/
+__pycache__/

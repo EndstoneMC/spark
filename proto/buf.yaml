@@ -1,0 +1,9 @@
+version: v1
+# These .proto files are vendored verbatim from lucko/spark and are used only as a
+# `protoc --decode` oracle to validate our hand-rolled encoder — they are never
+# compiled into the build. Their package/layout is spark's and must not change, so
+# the naming-convention lint rules do not apply.
+lint:
+  except:
+    - PACKAGE_VERSION_SUFFIX
+    - PACKAGE_DIRECTORY_MATCH
