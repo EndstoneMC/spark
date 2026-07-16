@@ -18,50 +18,53 @@ spark's bytebin and opened as an interactive flame graph at
 
 ## Commands
 
-| Command                    | Description                                     |
-| -------------------------- | ----------------------------------------------- |
-| `/spark profiler start`  | Start profiling the server thread (background). |
-| `/spark profiler stop`   | Stop, upload, and print the viewer link.        |
-| `/spark profiler info`   | Show status of the running profiler.            |
-| `/spark profiler cancel` | Stop without uploading.                         |
-| `/spark tps`             | Ticks-per-second and tick duration (MSPT).      |
-| `/spark health`          | TPS/MSPT plus process memory, threads, uptime.  |
+| Command                         | Description                                             |
+| ------------------------------- | ------------------------------------------------------- |
+| `/spark profiler start [flags]` | Start profiling the server thread (background).         |
+| `/spark profiler stop`          | Stop profiling and finalize the profile.                |
+| `/spark profiler info`          | Show status of the running profiler.                    |
+| `/spark profiler cancel`        | Stop profiling without generating a profile.            |
+| `/spark tps`                    | Show ticks-per-second and tick duration (MSPT).         |
+| `/spark health`                 | Show TPS/MSPT plus process memory, threads, and uptime. |
+
+By default, stopping a profiler uploads the generated profile to spark's bytebin
+and prints the viewer link. With `--save-to-file`, the profile is written locally
+as a `.sparkprofile` file instead.
 
 Permission: `endstone.command.spark` (operators by default).
 
 ### `/spark profiler start` flags
 
-- `--interval <ms>` — sampling interval (default `4`).
-- `--timeout <seconds>` — auto-stop and upload after N seconds.
-- `--only-ticks-over <ms>` — only record ticks longer than this.
-- `--save-to-file` — write a `.sparkprofile` instead of uploading (open it by
-  dragging it into the spark viewer).
-- `--comment <text>` — attach a note to the profile.
-- `--include-sleeping` — also sample while the server thread is idle between ticks
+* `--interval <ms>` — sampling interval (default `4`).
+* `--timeout <seconds>` — auto-stop and finalize after N seconds.
+* `--only-ticks-over <ms>` — only record ticks longer than this.
+* `--save-to-file` — write a `.sparkprofile` file instead of uploading
+  (open it by dragging it into the spark viewer).
+* `--comment <text>` — attach a note to the profile.
+* `--include-sleeping` — also sample while the server thread is idle between ticks
   (off by default, since the inter-tick sleep would otherwise dominate a
   wall-clock profile).
 
 ## How it works
 
-- **Linux:** a dedicated sampler thread signals the server thread (`SIGPROF`) on the
+* **Linux:** a dedicated sampler thread signals the server thread (`SIGPROF`) on the
   chosen interval; the handler captures the stack async-signal-safely via
   [cpptrace](https://github.com/jeremy-rifkin/cpptrace)'s `safe_generate_raw_trace`.
   Frames are resolved with `dladdr` (dynamic symbols) and fall back to
   `module+0xRVA` for the stripped BDS internals — which you can symbolicate offline
   against an IDA database or the Windows PDB.
-- **Windows:** the sampler suspends the server thread and walks its context with
+* **Windows:** the sampler suspends the server thread and walks its context with
   `StackWalk64`; frames resolve against the shipped PDB (real names).
-- Samples aggregate into a call tree, serialize to spark's protobuf, gzip, and
-  upload to bytebin. Symbolization and upload run on a background thread so the
-  server tick never stalls.
+* Samples aggregate into a call tree, serialize to spark's protobuf, gzip, and
+  either upload to bytebin or write a local `.sparkprofile` file. Symbolization and
+  output processing run on a background thread so the server tick never stalls.
 
 ## Building
 
-
 The platform requirements are:
 
-- **Linux:** Clang, libc++, Ninja, and Conan 2.
-- **Windows:** LLVM clang-cl, Visual Studio Build Tools, the Windows SDK,
+* **Linux:** Clang, libc++, Ninja, and Conan 2.
+* **Windows:** LLVM clang-cl, Visual Studio Build Tools, the Windows SDK,
   Ninja, and Conan 2. clang-cl must target the MSVC ABI.
 
 Install Conan, resolve the dependencies, then configure CMake directly with the
@@ -82,8 +85,9 @@ requires cpptrace's async-signal-safe unwinding path. Windows does not use
 libunwind; cpptrace uses its native Windows backend while spark captures stacks
 with StackWalk64.
 
-The plugin is emitted as `build/endstone_spark.so` (Linux) / `build/endstone_spark.dll`
-(Windows). Drop it in your server's `plugins/` directory.
+The plugin is emitted as `build/endstone_spark.so` (Linux) /
+`build/endstone_spark.dll` (Windows). Drop it in your server's `plugins/`
+directory.
 
 > **Toolchain / ABI note.** A C++ Endstone plugin must use the runtime ABI expected
 > by the Endstone build it is loaded into. Match its compiler, compiler ABI, C++

@@ -162,10 +162,10 @@ public:
         else if (module == "tps") {
             cmdTps(sender);
         }
-        else if (module == "health" || module == "healthreport") {
+        else if (module == "health") {
             cmdHealth(sender);
         }
-        else if (module == "profiler" || module == "sampler") {
+        else if (module == "profiler") {
             std::vector<std::string> rest(tokens.begin() + 1, tokens.end());
             cmdProfiler(sender, spark::Arguments(rest));
         }
@@ -194,11 +194,13 @@ private:
     void sendHelp(endstone::CommandSender &sender)
     {
         sender.sendMessage("{}endstone-spark {}v{}", ColorFormat::Gold, ColorFormat::Gray, spark::kVersion);
-        sender.sendMessage("{}/spark profiler start [flags] {}- begin profiling the server thread", ColorFormat::Yellow,
+        sender.sendMessage("{}/spark profiler start [flags] {}- start profiling the server thread", ColorFormat::Yellow,
                            ColorFormat::Gray);
-        sender.sendMessage("{}/spark profiler stop {}- stop & upload a flame graph", ColorFormat::Yellow,
+        sender.sendMessage("{}/spark profiler stop {}- stop profiling and finalize the profile", ColorFormat::Yellow,
                            ColorFormat::Gray);
-        sender.sendMessage("{}/spark profiler info|cancel {}- status / discard", ColorFormat::Yellow,
+        sender.sendMessage("{}/spark profiler info {}- show status of the running profiler", ColorFormat::Yellow,
+                           ColorFormat::Gray);
+        sender.sendMessage("{}/spark profiler cancel {}- stop profiling without generating a profile", ColorFormat::Yellow,
                            ColorFormat::Gray);
         sender.sendMessage("{}/spark tps {}- ticks per second & tick duration", ColorFormat::Yellow,
                            ColorFormat::Gray);
@@ -213,14 +215,10 @@ private:
         if (action.empty() || action == "info") {
             profilerInfo(sender);
         }
-        else if (action == "open") {
-            sender.sendMessage("The live viewer isn't supported by endstone-spark yet — use {}/spark profiler stop{}.",
-                               ColorFormat::Gray, ColorFormat::Reset);
-        }
         else if (action == "cancel") {
             profilerCancel(sender);
         }
-        else if (action == "stop" || action == "upload") {
+        else if (action == "stop") {
             profilerStop(sender, args);
         }
         else if (action == "start") {
@@ -238,7 +236,7 @@ private:
             return;
         }
         if (exporting_.load()) {
-            sender.sendMessage("The previous profile is still uploading — please wait.");
+            sender.sendMessage("The profiler has stopped; results are still being finalized.");
             return;
         }
         if (args.boolFlag("alloc")) {
@@ -318,7 +316,7 @@ private:
         }
         if (timeout <= 0) {
             sender.sendMessage("It runs in the background until stopped.");
-            sender.sendMessage("To stop & upload results, run: {}/spark profiler stop", ColorFormat::Gray);
+            sender.sendMessage("To stop and finalize the profile, run: {}/spark profiler stop", ColorFormat::Gray);
         }
         else {
             if (timeout < 30) {
@@ -331,7 +329,7 @@ private:
     void profilerStop(endstone::CommandSender &sender, const spark::Arguments &args)
     {
         if (!profiler_.running()) {
-            sender.sendMessage(exporting_.load() ? "The profiler has stopped; results are still uploading."
+            sender.sendMessage(exporting_.load() ? "The profiler has stopped; results are still being finalized."
                                                  : "There isn't an active profiler running.");
             return;
         }
@@ -341,8 +339,7 @@ private:
         if (!comments.empty()) {
             comment = comments.front();
         }
-        sender.sendMessage("{}Stopping the profiler & {} results, please wait...", ColorFormat::Gold,
-                           save ? "saving" : "uploading");
+        sender.sendMessage("{}Stopping the profiler and finalizing results, please wait...", ColorFormat::Gold);
         finishProfiler(sender.getName(), save, comment);
     }
 
@@ -350,7 +347,7 @@ private:
     {
         if (!profiler_.running()) {
             if (exporting_.load()) {
-                sender.sendMessage("The profiler has stopped; results are being uploaded...");
+                sender.sendMessage("The profiler has stopped; results are still being finalized.");
                 return;
             }
             sender.sendMessage("The profiler isn't running!");
@@ -363,12 +360,12 @@ private:
                            profiler_.sampleCount());
         std::int64_t auto_end = profiler_.autoEndTimeMs();
         if (auto_end <= 0) {
-            sender.sendMessage("To stop & upload, run: {}/spark profiler stop", ColorFormat::Gray);
+            sender.sendMessage("To stop and finalize the profile, run: {}/spark profiler stop", ColorFormat::Gray);
         }
         else {
             sender.sendMessage("It finishes automatically in {}.", formatDuration((auto_end - nowMs()) / 1000));
         }
-        sender.sendMessage("To cancel without uploading, run: {}/spark profiler cancel", ColorFormat::Gray);
+        sender.sendMessage("To cancel without generating a profile, run: {}/spark profiler cancel", ColorFormat::Gray);
     }
 
     void profilerCancel(endstone::CommandSender &sender)
@@ -582,9 +579,9 @@ ENDSTONE_PLUGIN("spark", "0.1.0", SparkPlugin)
 
     command("spark")
         .description("spark profiler")
-        .usages("/spark", "/spark (tps|health|healthreport)<module: SparkStatusModule>",
-                "/spark (profiler|sampler)<module: SparkProfilerModule> "
-                "(start|stop|info|cancel|open|upload)[action: SparkProfilerAction] [flags: message]")
+        .usages("/spark", "/spark (tps|health)<module: SparkStatusModule>",
+                "/spark (profiler)<module: SparkProfilerModule> "
+                "(start|stop|info|cancel)[action: SparkProfilerAction] [flags: message]")
         .permissions("endstone.command.spark");
 
     permission("endstone.command.spark")
