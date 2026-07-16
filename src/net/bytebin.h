@@ -12,7 +12,6 @@ struct UploadResult {
 };
 
 // POST a (already gzipped) payload to a bytebin instance and return the content key.
-// Uses the system `curl` binary so no TLS stack is linked into the host process.
 UploadResult uploadToBytebin(const std::string &gzipped_body, const std::string &bytebin_url,
                              const std::string &content_type, const std::string &user_agent);
 

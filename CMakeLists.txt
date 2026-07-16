@@ -11,6 +11,7 @@ option(ENDSTONE_SPARK_BUILD_SELFTEST "Build the offline sampler self-test tool" 
 find_package(cpptrace REQUIRED)
 find_package(concurrentqueue REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(CURL REQUIRED)
 find_package(Threads REQUIRED)
 
 # --- Endstone: header-only API + endstone_add_plugin(), fetched standalone ---
@@ -39,7 +40,8 @@ else ()
     target_sources(spark_core PRIVATE src/sampler/capture_linux.cpp)
 endif ()
 target_include_directories(spark_core PUBLIC src)
-target_link_libraries(spark_core PUBLIC cpptrace::cpptrace concurrentqueue::concurrentqueue ZLIB::ZLIB Threads::Threads)
+target_link_libraries(spark_core PUBLIC cpptrace::cpptrace concurrentqueue::concurrentqueue ZLIB::ZLIB CURL::libcurl
+        Threads::Threads)
 set_target_properties(spark_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Keep our vendored cpptrace/zlib symbols local to the .so that embeds spark_core so
 # they never interpose with Endstone core's own (differently-built) cpptrace copy.

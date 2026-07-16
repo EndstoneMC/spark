@@ -23,7 +23,12 @@ tools.build:compiler_executables={"c": "clang-cl", "cpp": "clang-cl"}
 tools.build:compiler_executables={"c": "clang", "cpp": "clang++"}
 {% endif %}
 
-{% if platform.system() != "Windows" %}
 [options]
+libcurl/*:shared=False
+libcurl/*:build_executable=False
+{% if platform.system() == "Windows" %}
+libcurl/*:with_ssl=schannel
+{% else %}
 cpptrace/*:unwind=libunwind
+libcurl/*:with_ssl=openssl
 {% endif %}
