@@ -27,6 +27,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Validate release
         shell: bash
         run: |
@@ -43,28 +48,35 @@ jobs:
             echo "::error::Tag v$VERSION already exists"
             exit 1
           fi
+          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            git fetch origin develop
+            if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/develop)" ]]; then
+              echo "::error::main and develop must point to the same commit before releasing"
+              exit 1
+            fi
+          fi
+          DATE=$(date -u +%Y-%m-%d)
+          PREVIOUS_TAG=$(git tag --sort=-v:refname | head -n 1)
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DATE=$DATE" >> "$GITHUB_ENV"
+          echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> "$GITHUB_ENV"
 
-      - name: Extract unreleased changelog
+      - name: Prepare changelog and release notes
         shell: bash
         run: |
-          sed -n '/^## \[Unreleased\]/,/^## \[/{/^## \[/d; p}' CHANGELOG.md > /tmp/release_body.md
-          sed -i '/./,$!d' /tmp/release_body.md
-          while [ -s /tmp/release_body.md ] && [ -z "$(tail -n 1 /tmp/release_body.md)" ]; do
-            sed -i '$d' /tmp/release_body.md
-          done
-          if [ ! -s /tmp/release_body.md ]; then
-            echo "::error::Unreleased section in CHANGELOG.md is empty"
-            exit 1
-          fi
-          echo "Extracted changelog:"
+          python tools/release_changelog.py \
+            --version "$VERSION" \
+            --date "$DATE" \
+            --repository "${{ github.repository }}" \
+            --output /tmp/CHANGELOG.md \
+            --notes /tmp/release_body.md
+          echo "Release notes:"
           cat /tmp/release_body.md
 
       - name: Preview
         if: inputs.dry_run
         shell: bash
         run: |
-          DATE=$(date -u +%Y-%m-%d)
           echo "=== Dry Run ==="
           echo "Ref: ${{ github.ref }}"
           echo "Version: $VERSION"
@@ -81,6 +93,9 @@ jobs:
           echo "inline constexpr const char *kVersion = \"$VERSION\";"
           echo "ENDSTONE_PLUGIN(\"spark\", \"$VERSION\", SparkPlugin)"
           echo
+          echo "=== Changelog changes ==="
+          diff -u CHANGELOG.md /tmp/CHANGELOG.md || true
+          echo
           echo "=== Release notes ==="
           cat /tmp/release_body.md
 
@@ -88,19 +103,10 @@ jobs:
         if: ${{ !inputs.dry_run }}
         shell: bash
         run: |
-          DATE=$(date -u +%Y-%m-%d)
-          PREVIOUS_TAG=$(git tag --sort=-v:refname | head -n 1)
-
           sed -E -i "s/^project\(spark VERSION [0-9]+\.[0-9]+\.[0-9]+ LANGUAGES CXX\)$/project(spark VERSION $VERSION LANGUAGES CXX)/" CMakeLists.txt
           sed -E -i "s/^inline constexpr const char \*kVersion = \"[0-9]+\.[0-9]+\.[0-9]+\";/inline constexpr const char *kVersion = \"$VERSION\";/" src/spark_constants.h
           sed -E -i "s/ENDSTONE_PLUGIN\(\"spark\", \"[0-9]+\.[0-9]+\.[0-9]+\", SparkPlugin\)/ENDSTONE_PLUGIN(\"spark\", \"$VERSION\", SparkPlugin)/" src/plugin.cpp
-          sed -i "s/^## \[Unreleased\]/## [Unreleased]\n\n## [$VERSION] - $DATE/" CHANGELOG.md
-          sed -i "s#^\[Unreleased\]: .*#[Unreleased]: https://github.com/${{ github.repository }}/compare/v$VERSION...HEAD#" CHANGELOG.md
-          if [ -n "$PREVIOUS_TAG" ]; then
-            sed -i "/^\[Unreleased\]: /a [$VERSION]: https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...v$VERSION" CHANGELOG.md
-          else
-            sed -i "/^\[Unreleased\]: /a [$VERSION]: https://github.com/${{ github.repository }}/releases/tag/v$VERSION" CHANGELOG.md
-          fi
+          cp /tmp/CHANGELOG.md CHANGELOG.md
 
       - name: Verify versions
         if: ${{ !inputs.dry_run }}
@@ -109,6 +115,9 @@ jobs:
           grep -Fx "project(spark VERSION $VERSION LANGUAGES CXX)" CMakeLists.txt
           grep -Fx "inline constexpr const char *kVersion = \"$VERSION\";" src/spark_constants.h
           grep -Fx "ENDSTONE_PLUGIN(\"spark\", \"$VERSION\", SparkPlugin)" src/plugin.cpp
+          test "$(grep -Fc "## [$VERSION]" CHANGELOG.md)" -eq 1
+          test "$(grep -Fc "[$VERSION]:" CHANGELOG.md)" -eq 1
+          test -s /tmp/release_body.md
           git diff --check
           git diff -- CMakeLists.txt src/spark_constants.h src/plugin.cpp CHANGELOG.md
 
@@ -125,8 +134,7 @@ jobs:
           git add CMakeLists.txt CHANGELOG.md src/spark_constants.h src/plugin.cpp
           git commit -m "chore: release v$VERSION"
           git tag "v$VERSION"
-          git push origin HEAD:main
-          git push origin "v$VERSION"
+          git push --atomic origin HEAD:main HEAD:develop "refs/tags/v$VERSION"
 
       - name: Create GitHub release
         if: ${{ !inputs.dry_run }}
@@ -134,7 +142,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          PREVIOUS_TAG=$(git tag --sort=-v:refname | sed -n '2p')
           if [ -n "$PREVIOUS_TAG" ]; then
             printf '\n\n**Full Changelog**: https://github.com/%s/compare/%s...v%s\n' \
               "${{ github.repository }}" "$PREVIOUS_TAG" "$VERSION" >> /tmp/release_body.md

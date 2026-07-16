@@ -7,14 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Build Linux plugins on Ubuntu 22.04 for compatibility with older glibc hosts.
+- Upload profiles without requiring an external `curl` executable.
+
+### Changed
+
+- Upload Linux and Windows plugin binaries from every Build workflow run.
+- Generate release notes and changelog entries from one normalized release section.
+
 ## [0.1.0] - 2026-07-16
 
 ### Fixed
 
 - Preserve `--save-to-file` for the entire profiler session, including manual
   `stop` and `upload` commands.
-
-## [0.1.0] - 2026-07-11
+- Populate world, region, and chunk statistics from loaded chunks and actors.
 
 ### Added
 
@@ -30,4 +39,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: https://github.com/EndstoneMC/spark/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/EndstoneMC/spark/releases/tag/v0.1.0
-[0.1.0]: https://github.com/EndstoneMC/endstone-spark/releases/tag/v0.1.0
