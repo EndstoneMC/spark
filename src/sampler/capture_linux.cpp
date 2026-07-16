@@ -24,6 +24,7 @@ constexpr int kSignal = SIGPROF;
 std::atomic<CaptureBuffer *> g_target{nullptr};
 sem_t g_done;
 std::atomic<bool> g_armed{false};
+struct sigaction g_previous_action{};
 
 void handler(int, siginfo_t *, void *)
 {
@@ -31,8 +32,8 @@ void handler(int, siginfo_t *, void *)
     if (buf != nullptr) {
         // The only async-signal-safe work: walk the stack into a fixed buffer.
         buf->count = cpptrace::safe_generate_raw_trace(buf->ips, CaptureBuffer::kMax, 0);
+        sem_post(&g_done);  // async-signal-safe
     }
-    sem_post(&g_done);  // async-signal-safe
 }
 
 }  // namespace
@@ -53,7 +54,8 @@ bool Capture::arm()
     sa.sa_sigaction = handler;
     sa.sa_flags = SA_SIGINFO | SA_RESTART;
     sigemptyset(&sa.sa_mask);
-    if (sigaction(kSignal, &sa, nullptr) != 0) {
+    if (sigaction(kSignal, &sa, &g_previous_action) != 0) {
+        sem_destroy(&g_done);
         return false;
     }
 
@@ -72,11 +74,12 @@ bool Capture::arm()
 
 void Capture::disarm()
 {
-    if (!g_armed.load()) {
+    if (!g_armed.exchange(false)) {
         return;
     }
-    signal(kSignal, SIG_DFL);
-    g_armed.store(false);
+    g_target.store(nullptr, std::memory_order_release);
+    sigaction(kSignal, &g_previous_action, nullptr);
+    sem_destroy(&g_done);
 }
 
 bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)

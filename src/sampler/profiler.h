@@ -11,6 +11,8 @@
 
 namespace spark {
 
+inline constexpr int kMaxSamplingIntervalMs = 1000;
+
 // Parsed `/spark profiler start` options (spark's flag set).
 struct ProfilerOptions {
     int interval_ms = 4;

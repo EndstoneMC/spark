@@ -21,6 +21,7 @@
 
 #include "net/bytebin.h"
 #include "net/gzip.h"
+#include "sampler/capture.h"
 #include "sampler/profiler.h"
 #include "sampler/symbolicate.h"
 #include "sampler/types.h"
@@ -142,6 +143,63 @@ bool verifySessionIsolation(std::uint64_t worker_tid)
     return true;
 }
 
+bool verifyCaptureLifecycle()
+{
+    for (int i = 0; i < 3; ++i) {
+        if (!spark::Capture::arm()) {
+            std::fprintf(stderr, "capture lifecycle: arm failed on iteration %d\n", i + 1);
+            return false;
+        }
+        spark::Capture::disarm();
+    }
+    return true;
+}
+
+bool verifyStopResponsiveness()
+{
+    using namespace std::chrono_literals;
+
+    spark::SamplerConfig config;
+    config.interval_us = 5'000'000;
+    spark::Sampler sampler;
+    sampler.setTarget(0);
+    if (!sampler.start(config)) {
+        std::fprintf(stderr, "stop responsiveness: sampler start failed\n");
+        return false;
+    }
+    if (sampler.start(config)) {
+        std::fprintf(stderr, "stop responsiveness: running sampler started twice\n");
+        sampler.stop();
+        return false;
+    }
+    std::this_thread::sleep_for(10ms);
+    auto before = std::chrono::steady_clock::now();
+    sampler.stop();
+    auto elapsed = std::chrono::steady_clock::now() - before;
+    if (elapsed >= 500ms) {
+        std::fprintf(stderr, "stop responsiveness: stop took too long\n");
+        return false;
+    }
+
+    spark::Profiler profiler;
+    spark::ProfilerOptions options;
+    options.interval_ms = spark::kMaxSamplingIntervalMs + 1;
+    std::string error;
+    if (profiler.start(options, 0, error)) {
+        std::fprintf(stderr, "stop responsiveness: excessive interval was accepted\n");
+        profiler.cancel();
+        return false;
+    }
+    options.interval_ms = 1;
+    options.timeout_seconds = -1;
+    if (!profiler.start(options, 0, error)) {
+        std::fprintf(stderr, "stop responsiveness: profiler did not recover after failed start\n");
+        return false;
+    }
+    profiler.cancel();
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -190,7 +248,7 @@ int main(int argc, char **argv)
         std::this_thread::sleep_for(1ms);
     }
 
-    if (!verifySessionIsolation(g_worker_tid.load())) {
+    if (!verifyCaptureLifecycle() || !verifyStopResponsiveness() || !verifySessionIsolation(g_worker_tid.load())) {
         g_run.store(false);
         w.join();
         return 1;

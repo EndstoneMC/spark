@@ -25,7 +25,12 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
     }
 
     options_ = options;
-    interval_us_ = options.interval_ms > 0 ? options.interval_ms * 1000 : 4000;
+    int interval_ms = options.interval_ms > 0 ? options.interval_ms : 4;
+    if (interval_ms > kMaxSamplingIntervalMs) {
+        error = "sampling interval must not exceed 1000 milliseconds";
+        return false;
+    }
+    interval_us_ = interval_ms * 1000;
 
     SamplerConfig config;
     config.interval_us = interval_us_;

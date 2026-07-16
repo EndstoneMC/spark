@@ -3,8 +3,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -95,6 +97,8 @@ private:
 
     std::thread sampler_thread_;
     std::thread aggregator_thread_;
+    std::condition_variable wait_cv_;
+    std::mutex wait_mutex_;
 
     moodycamel::ConcurrentQueue<Sample> samples_;
     moodycamel::ConcurrentQueue<TickEvent> ticks_;

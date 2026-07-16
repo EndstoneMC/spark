@@ -45,12 +45,27 @@ bool Sampler::start(const SamplerConfig &config)
     if (!Capture::arm()) {
         return false;
     }
-    resetSession();
-    start_time_ = std::chrono::steady_clock::now();
-    running_.store(true);
-    agg_running_.store(true);
-    aggregator_thread_ = std::thread(&Sampler::aggregatorLoop, this);
-    sampler_thread_ = std::thread(&Sampler::samplerLoop, this);
+    try {
+        resetSession();
+        start_time_ = std::chrono::steady_clock::now();
+        running_.store(true);
+        agg_running_.store(true);
+        aggregator_thread_ = std::thread(&Sampler::aggregatorLoop, this);
+        sampler_thread_ = std::thread(&Sampler::samplerLoop, this);
+    }
+    catch (...) {
+        running_.store(false);
+        wait_cv_.notify_all();
+        if (sampler_thread_.joinable()) {
+            sampler_thread_.join();
+        }
+        agg_running_.store(false);
+        if (aggregator_thread_.joinable()) {
+            aggregator_thread_.join();
+        }
+        Capture::disarm();
+        return false;
+    }
     return true;
 }
 
@@ -59,6 +74,7 @@ void Sampler::stop()
     if (!running_.exchange(false)) {
         return;
     }
+    wait_cv_.notify_all();
     if (sampler_thread_.joinable()) {
         sampler_thread_.join();  // no more samples are produced after this
     }
@@ -111,7 +127,12 @@ void Sampler::samplerLoop()
     CaptureBuffer buf;
     const auto interval = std::chrono::microseconds(config_.interval_us);
     while (running_.load()) {
-        std::this_thread::sleep_for(interval);
+        {
+            std::unique_lock lock(wait_mutex_);
+            if (wait_cv_.wait_for(lock, interval, [this] { return !running_.load(); })) {
+                break;
+            }
+        }
 
         std::uint64_t tid = target_tid_.load();
         if (tid == 0) {

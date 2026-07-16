@@ -248,6 +248,10 @@ private:
 
         spark::ProfilerOptions options;
         double interval = args.doubleFlag("interval", -1.0);
+        if (interval > spark::kMaxSamplingIntervalMs) {
+            sender.sendErrorMessage("The sampling interval must not exceed {}ms.", spark::kMaxSamplingIntervalMs);
+            return;
+        }
         options.interval_ms = interval > 0.0 ? static_cast<int>(interval + 0.5) : 4;
         if (options.interval_ms < 1) {
             options.interval_ms = 1;
