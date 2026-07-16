@@ -17,7 +17,7 @@ jobs:
   release:
     name: Prepare release
     if: inputs.dry_run || github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
 
@@ -213,7 +213,7 @@ jobs:
     name: Linux
     if: ${{ !inputs.dry_run }}
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
 
