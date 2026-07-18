@@ -35,77 +35,6 @@ preserves the compressed profile in its data folder and reports the local path.
 
 Permission: `endstone.command.spark` (operators by default).
 
-### Native allocation profiler (Windows and Linux x86-64)
-
-`/spark profiler start --alloc` starts an allocation profile and uses the same
-stop, save, compression, upload, and spark viewer path as an execution profile.
-The call tree is weighted in allocated bytes, and the protobuf is marked with
-`sampler_mode = ALLOCATION`, so the viewer renders memory values rather than
-execution time. The default sampling interval matches upstream spark: 524287
-bytes (approximately 512 KiB).
-
-`/spark profiler start --alloc-live-only` runs the retained variant. Its call
-tree contains only sampled allocations that are still live when the profile
-stops, weighted by estimated retained bytes. This is intended for leak analysis:
-the oldest/largest retained stacks are candidates, while repeated profiles are
-still required to distinguish a leak from legitimate long-lived state.
-
-The native backends reflect BDS constraints rather than a JVM:
-
-* funchook intercepts the public UCRT `malloc`, `calloc`, `realloc`, `recalloc`,
-  aligned allocation families, and the corresponding internal base exports when
-  they are available. Direct `HeapAlloc` and `HeapReAlloc` calls are also sampled;
-  alias exports are detected so the same entry address is not hooked twice;
-* on Linux x86-64, Spark atomically redirects the BDS executable's glibc import
-  slots for `malloc`, `calloc`, `realloc`, `reallocarray`, `aligned_alloc`, and
-  `posix_memalign` when present, plus `free` for sampled lifetimes. No allocator
-  instruction bytes are rewritten;
-* only allocations made by the BDS server thread are included, matching the
-  current profiler target; direct `VirtualAlloc`, custom pool internals, and other
-  threads remain outside the reported rate. Static/private CRT allocations that
-  ultimately use the Windows process heap are visible at the `HeapAlloc` boundary;
-* successful allocation requests are sampled by requested bytes. Each session
-  chooses a random byte phase and then samples at the configured fixed interval;
-  every crossing contributes one interval of estimated allocation weight to the
-  allocation that actually contains that sampling point;
-* stack capture uses `RtlCaptureStackBackTrace`; symbolization is deferred until
-  the profile stops;
-* sampled allocations are followed through `realloc`, `free`, aligned free, and
-  Windows heap release paths even when ownership moves to another thread. The
-  profile metadata reports freed/live sampled bytes and lifetime diagnostics;
-  normal `--alloc` profiles remain weighted by allocation traffic.
-
-The funchook trampoline set is prepared once and retained across profiler
-sessions. Entry hooks are installed lazily when the first allocation profile
-starts, remain as disabled pass-throughs between sessions, and are removed with
-their trampolines during plugin shutdown. Hook patching uses a stabilized thread
-snapshot and restores every suspend count with checked retries. Shutdown also
-waits until no thread is executing a Spark hook or trampoline before destroying
-the backend, so a successful plugin reload leaves no allocator entry point or
-in-flight callback referencing the old DLL. If that cleanup cannot be proven,
-Spark terminates the process rather than unloading unsafe code or pinning the old
-plugin for the process lifetime.
-
-The byte sampler uses a uniformly random phase that is reset for every profile,
-then counts fixed-interval crossings in constant time. This gives an unbiased
-estimate for each allocation, and a single allocation crossing multiple sampling
-points receives the corresponding multiple of the interval. The allocation
-aggregator is treated as a fallible
-service: an internal failure disables capture, is reported by `profiler info`,
-and prevents export of a partial profile while leaving the backend restartable.
-
-A fixed preallocated event pool is used in the hook path; when it is exhausted,
-samples are dropped and reported by `/spark profiler info`. Captured/dropped
-sample counts, estimated sampled byte weight, observed request bytes, backend
-coverage, and the byte interval are embedded in the uploaded spark metadata under
-`extra_platform_metadata`.
-
-DbgHelp may only have a DLL export table for Windows runtime modules. Since
-`SymFromAddr` returns the nearest preceding symbol, private UCRT startup routines
-can otherwise be mislabeled as unrelated exports. The exporter now accepts UCRT
-names only when DbgHelp can prove the address belongs to that symbol; ambiguous
-frames fall back to `ucrtbase.dll.0x<RVA>`.
-
 ### `/spark profiler start` flags
 
 * `--interval <value>` — execution interval in milliseconds (default `4`),
@@ -136,6 +65,30 @@ frames fall back to `ucrtbase.dll.0x<RVA>`.
 * Samples aggregate into a call tree, serialize to spark's protobuf, gzip, and
   either upload to bytebin or write a local `.sparkprofile` file. Symbolization and
   output processing run on a background thread so the server tick never stalls.
+
+### Native allocation profiler
+
+`--alloc` profiles successful native allocation requests made by the BDS server
+thread on Windows and Linux x86-64. Samples are weighted by requested bytes using
+a randomized fixed-byte interval (524287 bytes by default), then exported through
+the same spark viewer, upload, and save paths as execution profiles.
+
+`--alloc-live-only` follows sampled allocations through realloc and free calls,
+including releases from other threads, and reports only allocations still live
+when profiling stops. It is intended to identify retained-memory and leak
+candidates; repeated profiles are needed to distinguish growth from legitimate
+long-lived state.
+
+Windows intercepts UCRT and process-heap allocation entry points with funchook.
+Linux atomically redirects the BDS executable's glibc import slots without
+rewriting allocator instructions. Direct virtual-memory calls, custom allocator
+internals, and allocations made entirely by other threads are outside the current
+profile scope.
+
+Stack symbolization and call-tree aggregation run outside the hook path. A fixed
+preallocated queue drops and reports excess samples instead of blocking the server
+thread. Hooks remain disabled pass-throughs between sessions and are fully removed
+after in-flight calls finish during plugin shutdown, allowing a clean plugin reload.
 
 ## Building
 
