@@ -264,7 +264,6 @@ struct AllocationSampler::Impl {
     static thread_local ByteSamplingState thread_sampling;
 
     ElfImportHooks hooks;
-    void *libc_handle = nullptr;
     MallocFn real_malloc = nullptr;
     CallocFn real_calloc = nullptr;
     ReallocFn real_realloc = nullptr;
@@ -762,14 +761,17 @@ struct AllocationSampler::Impl {
     }
 
     template <typename Function>
-    bool resolveLibc(const char *name, Function &function, bool required,
-                     std::string &error)
+    bool resolveAllocator(const char *name, Function &function, bool required,
+                          std::string &error)
     {
         ::dlerror();
-        function = reinterpret_cast<Function>(::dlsym(libc_handle, name));
+        // Resolve the process-wide effective allocator before import slots are
+        // patched. RTLD_DEFAULT preserves LD_PRELOAD interposition instead of
+        // forcing allocations into libc and potentially mixing allocator domains.
+        function = reinterpret_cast<Function>(::dlsym(RTLD_DEFAULT, name));
         const char *failure = ::dlerror();
         if (function == nullptr && required) {
-            error = std::string("required glibc allocator export not found: ") + name;
+            error = std::string("required Linux allocator symbol not found: ") + name;
             if (failure != nullptr) {
                 error += ": ";
                 error += failure;
@@ -826,20 +828,13 @@ struct AllocationSampler::Impl {
         if (!hook_capabilities.empty()) {
             return true;
         }
-        libc_handle = ::dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
-        if (libc_handle == nullptr) {
-            error = std::string("dlopen(libc.so.6) failed: ") + ::dlerror();
-            return false;
-        }
-        if (!resolveLibc("malloc", real_malloc, true, error) ||
-            !resolveLibc("calloc", real_calloc, true, error) ||
-            !resolveLibc("realloc", real_realloc, true, error) ||
-            !resolveLibc("free", real_free, true, error) ||
-            !resolveLibc("reallocarray", real_reallocarray, false, error) ||
-            !resolveLibc("aligned_alloc", real_aligned_alloc, false, error) ||
-            !resolveLibc("posix_memalign", real_posix_memalign, false, error)) {
-            ::dlclose(libc_handle);
-            libc_handle = nullptr;
+        if (!resolveAllocator("malloc", real_malloc, true, error) ||
+            !resolveAllocator("calloc", real_calloc, true, error) ||
+            !resolveAllocator("realloc", real_realloc, true, error) ||
+            !resolveAllocator("free", real_free, true, error) ||
+            !resolveAllocator("reallocarray", real_reallocarray, true, error) ||
+            !resolveAllocator("aligned_alloc", real_aligned_alloc, true, error) ||
+            !resolveAllocator("posix_memalign", real_posix_memalign, true, error)) {
             return false;
         }
 
@@ -853,8 +848,6 @@ struct AllocationSampler::Impl {
             ElfImportHookSpec{"posix_memalign", reinterpret_cast<void *>(&hookPosixMemalign), false},
         };
         if (!hooks.prepare(specs, error)) {
-            ::dlclose(libc_handle);
-            libc_handle = nullptr;
             return false;
         }
         for (const ElfImportHookCapability &capability : hooks.capabilities()) {
@@ -1220,10 +1213,6 @@ struct AllocationSampler::Impl {
         active_instance.compare_exchange_strong(expected, nullptr,
                                                 std::memory_order_release,
                                                 std::memory_order_relaxed);
-        if (libc_handle != nullptr) {
-            ::dlclose(libc_handle);
-            libc_handle = nullptr;
-        }
         return true;
     }
 

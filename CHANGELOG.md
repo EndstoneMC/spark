@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Follow sampled allocations through realloc and free entry points across threads,
   reporting live/freed estimates and sampled allocation lifetimes on both native
   backends.
+- Preserve the process's effective Linux allocator implementation, including
+  `LD_PRELOAD` interposition, while redirecting BDS import slots.
 - Harden native hook lifecycle handling: prepare and retain trampolines separately
   from entry-hook installation, retain disabled entry hooks between sessions,
   stabilize and verify thread suspension, retry thread restoration, and require
