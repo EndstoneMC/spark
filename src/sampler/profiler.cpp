@@ -164,6 +164,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         config.interval_bytes = options.allocation_interval_bytes;
         config.target_tid = main_tid;
         config.only_ticks_over_ms = options.only_ticks_over_ms > 0 ? options.only_ticks_over_ms : 0;
+        config.live_only = options.alloc_live_only;
         config.fail_aggregator_for_testing = options.fail_allocation_aggregator_for_testing;
         started = allocation_sampler_.start(config, error);
     }
@@ -309,7 +310,16 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         meta.extra_platform_metadata["Allocation observed request bytes"] =
             std::to_string(allocation_sampler_.observedBytes());
         meta.extra_platform_metadata["Allocation interval bytes"] = std::to_string(interval_);
-        meta.extra_platform_metadata["Allocation live-only"] = "false";
+        meta.extra_platform_metadata["Allocation live-only"] =
+            options_.alloc_live_only ? "true" : "false";
+        if (options_.alloc_live_only) {
+            meta.extra_platform_metadata["Allocation analysis"] = jsonString(
+                "retained sampled allocations at profile stop; candidates require repeated growth verification");
+            meta.extra_platform_metadata["Allocation retained average age ms"] =
+                std::to_string(allocation_sampler_.retainedAverageAgeMs());
+            meta.extra_platform_metadata["Allocation retained maximum age ms"] =
+                std::to_string(allocation_sampler_.retainedMaximumAgeMs());
+        }
 
         const auto &capabilities = allocation_sampler_.hookCapabilities();
         std::size_t active = 0;

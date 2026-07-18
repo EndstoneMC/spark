@@ -552,6 +552,8 @@ struct AllocationSampler::Impl {
     std::atomic<std::uint64_t> lifetime_ms_total{0};
     std::atomic<std::uint64_t> lifetime_ms_max{0};
     std::atomic<std::uint64_t> lifecycle_dropped{0};
+    std::atomic<std::uint64_t> retained_age_ms_total{0};
+    std::atomic<std::uint64_t> retained_age_ms_max{0};
     SLIST_HEADER free_events{};
     SLIST_HEADER ready_events{};
     AllocationEvent *event_storage = nullptr;
@@ -1284,6 +1286,10 @@ struct AllocationSampler::Impl {
         live_samples.fetch_add(1, std::memory_order_relaxed);
         live_bytes.fetch_add(weight, std::memory_order_relaxed);
 
+        if (config.live_only) {
+            return;
+        }
+
         PSLIST_ENTRY entry = ::InterlockedPopEntrySList(&free_events);
         if (entry == nullptr) {
             dropped_samples.fetch_add(1, std::memory_order_relaxed);
@@ -1562,7 +1568,7 @@ struct AllocationSampler::Impl {
             prepareExport(ucrt, "_aligned_offset_recalloc", real_aligned_offset_recalloc,
                           reinterpret_cast<void *>(&hookAlignedOffsetRecalloc), false, error) &&
             prepareExport(ucrt, "_aligned_free", real_aligned_free,
-                          reinterpret_cast<void *>(&hookAlignedFree), false, error) &&
+                          reinterpret_cast<void *>(&hookAlignedFree), true, error) &&
             prepareExport(ucrt, "_malloc_base", real_malloc_base,
                           reinterpret_cast<void *>(&hookMallocBase), false, error) &&
             prepareExport(ucrt, "_calloc_base", real_calloc_base,
@@ -1842,17 +1848,17 @@ struct AllocationSampler::Impl {
         buckets.erase(it);
     }
 
-    void processEvent(AllocationEvent *event)
+    bool buildSample(void *const *frames, std::uint16_t depth, std::uint64_t tick_id,
+                     std::int32_t window, std::uint64_t weight, Sample &sample)
     {
-        Sample sample;
-        sample.tick_id = event->tick_id;
-        sample.window = event->window;
-        sample.weight = event->weight_bytes;
-        sample.frames.reserve(event->depth);
+        sample.tick_id = tick_id;
+        sample.window = window;
+        sample.weight = weight;
+        sample.frames.reserve(depth);
 
         bool leading = true;
-        for (std::size_t i = 0; i < event->depth; ++i) {
-            const std::uint64_t raw = reinterpret_cast<std::uint64_t>(event->frames[i]);
+        for (std::size_t i = 0; i < depth; ++i) {
+            const std::uint64_t raw = reinterpret_cast<std::uint64_t>(frames[i]);
             if (raw == 0) {
                 continue;
             }
@@ -1867,6 +1873,25 @@ struct AllocationSampler::Impl {
 
         if (sample.frames.empty()) {
             dropped_samples.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        return true;
+    }
+
+    bool tickAccepts(std::uint64_t tick_id) const noexcept
+    {
+        if (config.only_ticks_over_ms <= 0) {
+            return true;
+        }
+        return tick_id < tick_decisions.size() &&
+               tick_decisions[static_cast<std::size_t>(tick_id)] == 2;
+    }
+
+    void processEvent(AllocationEvent *event)
+    {
+        Sample sample;
+        if (!buildSample(event->frames, event->depth, event->tick_id, event->window,
+                         event->weight_bytes, sample)) {
             return;
         }
 
@@ -1883,6 +1908,37 @@ struct AllocationSampler::Impl {
         else {
             buckets[sample.tick_id].push_back(std::move(sample));
         }
+    }
+
+    void finalizeLiveProfile()
+    {
+        const std::uint64_t stopped_ms = monotonicMs();
+        std::uint64_t total_age = 0;
+        std::uint64_t maximum_age = 0;
+        for (std::size_t i = 0; i < kLiveIndexCapacity; ++i) {
+            const LiveIndexEntry &entry = live_index[i];
+            if (entry.pointer == nullptr ||
+                entry.pointer == reinterpret_cast<void *>(static_cast<std::uintptr_t>(1)) ||
+                entry.allocation == nullptr) {
+                continue;
+            }
+            const LiveAllocation &allocation = *entry.allocation;
+            const std::uint64_t age = stopped_ms >= allocation.allocated_ms
+                                          ? stopped_ms - allocation.allocated_ms
+                                          : 0;
+            total_age += age;
+            maximum_age = (std::max)(maximum_age, age);
+            if (!tickAccepts(allocation.tick_id)) {
+                continue;
+            }
+            Sample sample;
+            if (buildSample(allocation.frames, allocation.depth, allocation.tick_id,
+                            allocation.window, allocation.weight_bytes, sample)) {
+                acceptSample(sample);
+            }
+        }
+        retained_age_ms_total.store(total_age, std::memory_order_relaxed);
+        retained_age_ms_max.store(maximum_age, std::memory_order_relaxed);
     }
 
     void drainQueues()
@@ -1960,6 +2016,8 @@ struct AllocationSampler::Impl {
         lifetime_ms_total.store(0, std::memory_order_relaxed);
         lifetime_ms_max.store(0, std::memory_order_relaxed);
         lifecycle_dropped.store(0, std::memory_order_relaxed);
+        retained_age_ms_total.store(0, std::memory_order_relaxed);
+        retained_age_ms_max.store(0, std::memory_order_relaxed);
         aggregator_failure.fill('\0');
         aggregator_failed.store(false, std::memory_order_release);
     }
@@ -2065,9 +2123,16 @@ struct AllocationSampler::Impl {
         if (aggregator_thread.joinable()) {
             aggregator_thread.join();
         }
+        if (config.live_only && !aggregator_failed.load(std::memory_order_acquire)) {
+            finalizeLiveProfile();
+        }
         freeEventPool();
         if (aggregator_failed.load(std::memory_order_acquire)) {
             error = "allocation aggregator failed: " + std::string(aggregator_failure.data());
+            return false;
+        }
+        if (config.live_only && lifecycle_dropped.load(std::memory_order_relaxed) != 0) {
+            error = "allocation lifecycle tracking capacity was exhausted; retained profile discarded";
             return false;
         }
         return true;
@@ -2251,6 +2316,18 @@ std::uint64_t AllocationSampler::maximumLifetimeMs() const
 std::uint64_t AllocationSampler::lifecycleDropped() const
 {
     return impl_->lifecycle_dropped.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::retainedAverageAgeMs() const
+{
+    const std::uint64_t count = impl_->live_samples.load(std::memory_order_relaxed);
+    return count == 0 ? 0 :
+                        impl_->retained_age_ms_total.load(std::memory_order_relaxed) / count;
+}
+
+std::uint64_t AllocationSampler::retainedMaximumAgeMs() const
+{
+    return impl_->retained_age_ms_max.load(std::memory_order_relaxed);
 }
 
 bool AllocationSampler::running() const

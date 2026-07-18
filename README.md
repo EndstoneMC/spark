@@ -44,6 +44,12 @@ The call tree is weighted in allocated bytes, and the protobuf is marked with
 execution time. The default sampling interval matches upstream spark: 524287
 bytes (approximately 512 KiB).
 
+`/spark profiler start --alloc-live-only` runs the retained variant. Its call
+tree contains only sampled allocations that are still live when the profile
+stops, weighted by estimated retained bytes. This is intended for leak analysis:
+the oldest/largest retained stacks are candidates, while repeated profiles are
+still required to distinguish a leak from legitimate long-lived state.
+
 The current native backend reflects BDS constraints rather than a JVM:
 
 * funchook intercepts the public UCRT `malloc`, `calloc`, `realloc`, `recalloc`,
@@ -102,6 +108,8 @@ frames fall back to `ucrtbase.dll.0x<RVA>`.
   or allocation interval in bytes with `--alloc` (default `524287`).
 * `--alloc` — record sampled native allocation call stacks instead of execution time
   (Windows only in the current backend).
+* `--alloc-live-only` — record only sampled allocations retained at stop for leak
+  analysis; this implies `--alloc` (Windows only).
 * `--timeout <seconds>` — auto-stop and finalize after N seconds.
 * `--only-ticks-over <ms>` — only record ticks longer than this.
 * `--save-to-file` — write a `.sparkprofile` file instead of uploading

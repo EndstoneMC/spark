@@ -527,6 +527,59 @@ bool verifyAllocationLifecycle()
     }
     return true;
 }
+
+bool verifyRetainedAllocationProfile()
+{
+    spark::Profiler profiler;
+    spark::ProfilerOptions options;
+    options.alloc = true;
+    options.alloc_live_only = true;
+    options.allocation_interval_bytes = 1;
+    std::string error;
+    if (!profiler.start(options, static_cast<std::uint64_t>(::GetCurrentThreadId()), error)) {
+        std::fprintf(stderr, "retained allocation: start failed: %s\n", error.c_str());
+        return false;
+    }
+
+    void *retained = std::malloc(8192);
+    void *released = std::malloc(4096);
+    if (retained == nullptr || released == nullptr) {
+        std::free(retained);
+        std::free(released);
+        return false;
+    }
+    static_cast<volatile unsigned char *>(retained)[0] = 1;
+    static_cast<volatile unsigned char *>(released)[0] = 2;
+    std::free(released);
+    profiler.onTick(50.0);
+    if (!profiler.stopSampling(error)) {
+        std::fprintf(stderr, "retained allocation: stop failed: %s\n", error.c_str());
+        std::free(retained);
+        return false;
+    }
+
+    spark::ExportContext context;
+    const std::string profile = profiler.exportData(context);
+    const bool valid = profiler.sampleCount() != 0 &&
+                       profiler.sampledAllocationBytes() >= 8192 &&
+                       profiler.freedAllocationSamples() != 0 &&
+                       profile.find("Allocation live-only") != std::string::npos &&
+                       profile.find("Allocation retained maximum age ms") != std::string::npos;
+    std::free(retained);
+    if (!profiler.shutdown(error) || !valid) {
+        std::fprintf(stderr,
+                     "retained allocation: profile validation failed: %s "
+                     "(samples=%llu bytes=%llu freed=%llu live-meta=%d age-meta=%d)\n",
+                     error.c_str(),
+                     static_cast<unsigned long long>(profiler.sampleCount()),
+                     static_cast<unsigned long long>(profiler.sampledAllocationBytes()),
+                     static_cast<unsigned long long>(profiler.freedAllocationSamples()),
+                     profile.find("Allocation live-only") != std::string::npos,
+                     profile.find("Allocation retained maximum age ms") != std::string::npos);
+        return false;
+    }
+    return true;
+}
 #endif
 
 }  // namespace
@@ -582,7 +635,7 @@ int main(int argc, char **argv)
         !verifyStopResponsiveness() ||
         !verifySessionIsolation(g_worker_tid.load()) || !verifyTickFiltering(g_worker_tid.load())
 #if defined(_WIN32)
-        || !verifyAllocationLifecycle()
+        || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile()
 #endif
     ) {
         g_run.store(false);

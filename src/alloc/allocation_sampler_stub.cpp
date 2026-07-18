@@ -87,6 +87,8 @@ std::uint64_t AllocationSampler::liveBytes() const { return 0; }
 std::uint64_t AllocationSampler::averageLifetimeMs() const { return 0; }
 std::uint64_t AllocationSampler::maximumLifetimeMs() const { return 0; }
 std::uint64_t AllocationSampler::lifecycleDropped() const { return 0; }
+std::uint64_t AllocationSampler::retainedAverageAgeMs() const { return 0; }
+std::uint64_t AllocationSampler::retainedMaximumAgeMs() const { return 0; }
 
 bool AllocationSampler::running() const
 {

@@ -297,7 +297,8 @@ private:
         sender.sendMessage("{}/spark tps {}- ticks per second & tick duration", ColorFormat::Yellow,
                            ColorFormat::Gray);
         sender.sendMessage("{}/spark health {}- server health report", ColorFormat::Yellow, ColorFormat::Gray);
-        sender.sendMessage("{}Flags: --alloc, --interval <ms|bytes>, --timeout <seconds>", ColorFormat::Gray);
+        sender.sendMessage("{}Flags: --alloc, --alloc-live-only, --interval <ms|bytes>, --timeout <seconds>",
+                           ColorFormat::Gray);
         sender.sendMessage("{}       --only-ticks-over <ms>, --save-to-file, --comment <text>", ColorFormat::Gray);
         sender.sendMessage("{}       --include-sleeping", ColorFormat::Gray);
     }
@@ -334,11 +335,8 @@ private:
         }
 
         spark::ProfilerOptions options;
-        options.alloc = args.boolFlag("alloc");
-        if (args.boolFlag("alloc-live-only")) {
-            sender.sendErrorMessage("--alloc-live-only is not supported by the native BDS allocation engine yet.");
-            return;
-        }
+        options.alloc_live_only = args.boolFlag("alloc-live-only");
+        options.alloc = args.boolFlag("alloc") || options.alloc_live_only;
 #if !defined(_WIN32)
         if (options.alloc) {
             sender.sendErrorMessage("The native allocation profiler is currently available only on Windows.");
@@ -431,10 +429,19 @@ private:
         start_sender_name_ = sender.getName();
 
         if (options.alloc) {
-            sender.sendMessage("{}Allocation Profiler is now running!{} (async)", ColorFormat::Gold,
-                               ColorFormat::Gray);
+            if (options.alloc_live_only) {
+                sender.sendMessage("{}Retained Allocation Profiler is now running!{} (async)",
+                                   ColorFormat::Gold, ColorFormat::Gray);
+            }
+            else {
+                sender.sendMessage("{}Allocation Profiler is now running!{} (async)",
+                                   ColorFormat::Gold, ColorFormat::Gray);
+            }
             sender.sendMessage("Sampling approximately every {} of UCRT allocations on the server thread.",
                                formatBytes(static_cast<std::uint64_t>(options.allocation_interval_bytes)));
+            if (options.alloc_live_only) {
+                sender.sendMessage("The result will contain only sampled allocations still live when profiling stops.");
+            }
         }
         else {
             sender.sendMessage("{}Profiler is now running!{} (async, {}ms interval)", ColorFormat::Gold,
@@ -509,7 +516,12 @@ private:
             return;
         }
         if (allocation) {
-            sender.sendMessage("{}Allocation Profiler is already running!", ColorFormat::Gold);
+            if (profiler_.options().alloc_live_only) {
+                sender.sendMessage("{}Retained Allocation Profiler is already running!", ColorFormat::Gold);
+            }
+            else {
+                sender.sendMessage("{}Allocation Profiler is already running!", ColorFormat::Gold);
+            }
             sendAllocationHookCoverage(sender);
         }
         else {
@@ -517,10 +529,17 @@ private:
         }
         std::int64_t ran = (nowMs() - profiler_.startTimeMs()) / 1000;
         if (allocation) {
-            sender.sendMessage("So far it has profiled for {} ({} allocation samples, {} estimated from {} observed).",
-                               formatDuration(ran), profiler_.sampleCount(),
-                               formatBytes(profiler_.sampledAllocationBytes()),
-                               formatBytes(profiler_.observedAllocationBytes()));
+            if (profiler_.options().alloc_live_only) {
+                sender.sendMessage("So far it has profiled for {} ({} sampled allocations still live, {} estimated).",
+                                   formatDuration(ran), profiler_.liveAllocationSamples(),
+                                   formatBytes(profiler_.liveAllocationBytes()));
+            }
+            else {
+                sender.sendMessage("So far it has profiled for {} ({} allocation samples, {} estimated from {} observed).",
+                                   formatDuration(ran), profiler_.sampleCount(),
+                                   formatBytes(profiler_.sampledAllocationBytes()),
+                                   formatBytes(profiler_.observedAllocationBytes()));
+            }
             sender.sendMessage("Sampled lifecycle: {} freed, {} still live ({}).",
                                profiler_.freedAllocationSamples(),
                                profiler_.liveAllocationSamples(),

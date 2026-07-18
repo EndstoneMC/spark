@@ -20,6 +20,7 @@ struct AllocationSamplerConfig {
     std::int32_t interval_bytes = kDefaultAllocationIntervalBytes;
     std::uint64_t target_tid = 0;
     std::int64_t only_ticks_over_ms = 0;
+    bool live_only = false;
     // Deterministic fault injection used only by the offline selftest.
     bool fail_aggregator_for_testing = false;
 };
@@ -94,6 +95,8 @@ public:
     std::uint64_t averageLifetimeMs() const;
     std::uint64_t maximumLifetimeMs() const;
     std::uint64_t lifecycleDropped() const;
+    std::uint64_t retainedAverageAgeMs() const;
+    std::uint64_t retainedMaximumAgeMs() const;
     bool running() const;
     bool hooksInstalled() const;
     bool failure(std::string &error) const;

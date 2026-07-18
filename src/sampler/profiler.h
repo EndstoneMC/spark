@@ -28,6 +28,7 @@ struct ProfilerOptions {
     bool combine_all = false;
     bool not_combined = false;
     bool alloc = false;
+    bool alloc_live_only = false;
     bool force_java_sampler = false;  // accepted, unsupported (no Java engine)
     std::string comment;
     bool save_to_file = false;
