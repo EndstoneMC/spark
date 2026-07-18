@@ -3,7 +3,7 @@
 
 namespace spark {
 
-inline constexpr const char *kVersion = "0.1.1";
+inline constexpr const char *kVersion = "0.2.0";
 
 // The spark viewer treats a profile as "supported" (no old-version warning, all
 // features enabled) when platform_metadata.spark_version >= 2. We emit the modern
