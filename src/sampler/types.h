@@ -69,6 +69,8 @@ private:
 // One captured stack, ordered leaf (index 0) -> root.
 struct Sample {
     std::vector<FrameKey> frames;
+    std::uint64_t thread_id = 0;
+    std::string thread_name;
     std::int32_t window = 0;
     std::uint64_t tick_id = 0;
     std::uint64_t weight = 1;  // execution sample count or allocation bytes

@@ -33,6 +33,7 @@
 #include "net/bytebin.h"
 #include "net/gzip.h"
 #include "net/profile_file.h"
+#include "proto/sampler_data.h"
 #include "sampler/capture.h"
 #include "sampler/profiler.h"
 #include "sampler/symbolicate.h"
@@ -477,6 +478,37 @@ bool verifyThreadDiscovery()
     return true;
 }
 
+bool verifyMultiThreadSerialization()
+{
+    spark::ModuleTable modules;
+    spark::ModuleId module = modules.intern("selftest-module");
+    spark::FrameKey first{module, 0x10, 0x10};
+    spark::FrameKey second{module, 0x20, 0x20};
+
+    spark::CallTree first_tree;
+    first_tree.log({first}, 0);
+    spark::CallTree second_tree;
+    second_tree.log({second}, 1);
+
+    spark::ProfileMetadata metadata;
+    metadata.interval = 1000;
+    std::unordered_map<spark::FrameKey, spark::ResolvedFrame, spark::FrameKeyHash> resolved;
+    resolved[first] = {"selftest", "firstFrame"};
+    resolved[second] = {"selftest", "secondFrame"};
+    std::vector<spark::ThreadTreeView> threads{{"worker-one", &first_tree},
+                                               {"worker-two", &second_tree}};
+    std::string profile = spark::buildSamplerData(metadata, threads, resolved);
+    if (profile.find("worker-one") == std::string::npos ||
+        profile.find("worker-two") == std::string::npos ||
+        profile.find("firstFrame") == std::string::npos ||
+        profile.find("secondFrame") == std::string::npos ||
+        spark::collectFrameKeys(threads).size() != 2) {
+        std::fprintf(stderr, "multi-thread serialization: thread trees were not preserved\n");
+        return false;
+    }
+    return true;
+}
+
 bool verifyExecutableHash()
 {
     if (spark::sha256Hex("") !=
@@ -788,8 +820,8 @@ int main(int argc, char **argv)
         std::this_thread::sleep_for(1ms);
     }
 
-    if (!verifyArgumentParsing() || !verifyTickMonitor() || !verifyThreadDiscovery() || !verifyUploadFailure() ||
-        !verifyCaptureLifecycle() ||
+    if (!verifyArgumentParsing() || !verifyTickMonitor() || !verifyThreadDiscovery() ||
+        !verifyMultiThreadSerialization() || !verifyUploadFailure() || !verifyCaptureLifecycle() ||
         !verifyExecutableHash() ||
         !verifyByteSampling() ||
         !verifyStopResponsiveness() ||

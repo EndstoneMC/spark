@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -14,6 +15,11 @@
 #include "stats/system_stats.h"
 
 namespace spark {
+
+struct ThreadTreeView {
+    std::string_view name;
+    const CallTree *tree = nullptr;
+};
 
 // Everything about the run that isn't the call tree itself.
 struct ProfileMetadata {
@@ -41,9 +47,12 @@ struct ProfileMetadata {
 
 // Collect every distinct frame key present in the tree (for batch symbolication).
 std::vector<FrameKey> collectFrameKeys(const CallTree &tree);
+std::vector<FrameKey> collectFrameKeys(const std::vector<ThreadTreeView> &threads);
 
 // Serialize a spark `SamplerData` protobuf message (uncompressed bytes).
 std::string buildSamplerData(const ProfileMetadata &meta, const CallTree &tree,
+                             const std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> &resolved);
+std::string buildSamplerData(const ProfileMetadata &meta, const std::vector<ThreadTreeView> &threads,
                              const std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> &resolved);
 
 }  // namespace spark

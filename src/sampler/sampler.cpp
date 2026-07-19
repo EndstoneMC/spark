@@ -95,6 +95,7 @@ void Sampler::resetSession()
     }
 
     tree_ = CallTree{};
+    thread_trees_.clear();
     buckets_.clear();
     tick_decisions_.clear();
     modules_ = ModuleTable{};
@@ -148,6 +149,8 @@ void Sampler::samplerLoop()
         }
 
         Sample sample;
+        sample.thread_id = tid;
+        sample.thread_name = target_name_;
         sample.tick_id = tick_id;
         sample.window = currentWindow();
         sample.frames.reserve(buf.count);
@@ -198,6 +201,13 @@ void Sampler::samplerLoop()
 void Sampler::acceptSample(const Sample &sample)
 {
     tree_.log(sample.frames, sample.window, sample.weight);
+    auto [it, inserted] = thread_trees_.try_emplace(sample.thread_id);
+    ThreadCallTree &thread = it->second;
+    if (inserted) {
+        thread.thread_id = sample.thread_id;
+        thread.thread_name = sample.thread_name;
+    }
+    thread.tree.log(sample.frames, sample.window, sample.weight);
     sample_count_.fetch_add(1, std::memory_order_relaxed);
 }
 

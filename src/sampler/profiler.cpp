@@ -390,10 +390,23 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         meta.window_stats[window] = ws;
     }
 
-    const CallTree &tree = activeTree();
-    std::vector<FrameKey> keys = collectFrameKeys(tree);
-    auto resolved = resolveFrames(activeModules(), keys);
-    return buildSamplerData(meta, tree, resolved);
+    if (mode_ == ProfileMode::Allocation) {
+        const CallTree &tree = allocation_sampler_.tree();
+        std::vector<FrameKey> keys = collectFrameKeys(tree);
+        auto resolved = resolveFrames(allocation_sampler_.modules(), keys);
+        return buildSamplerData(meta, tree, resolved);
+    }
+
+    std::vector<ThreadTreeView> threads;
+    for (const auto &[id, thread] : sampler_.threadTrees()) {
+        threads.push_back({thread.thread_name, &thread.tree});
+    }
+    if (threads.empty()) {
+        threads.push_back({meta.thread_name, &sampler_.tree()});
+    }
+    std::vector<FrameKey> keys = collectFrameKeys(threads);
+    auto resolved = resolveFrames(sampler_.modules(), keys);
+    return buildSamplerData(meta, threads, resolved);
 }
 
 std::string Profiler::stop(const ExportContext &ctx)

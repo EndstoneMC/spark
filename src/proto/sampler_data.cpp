@@ -335,11 +335,21 @@ std::string buildMetadata(const ProfileMetadata &m)
 
 std::vector<FrameKey> collectFrameKeys(const CallTree &tree)
 {
+    return collectFrameKeys({ThreadTreeView{"", &tree}});
+}
+
+std::vector<FrameKey> collectFrameKeys(const std::vector<ThreadTreeView> &threads)
+{
     std::vector<FrameKey> keys;
     std::unordered_set<FrameKey, FrameKeyHash> seen;
     std::vector<const CallTree::Node *> stack;
-    for (const auto &[key, child] : tree.root().children) {
-        stack.push_back(child.get());
+    for (const ThreadTreeView &thread : threads) {
+        if (thread.tree == nullptr) {
+            continue;
+        }
+        for (const auto &[key, child] : thread.tree->root().children) {
+            stack.push_back(child.get());
+        }
     }
     while (!stack.empty()) {
         const CallTree::Node *node = stack.back();
@@ -357,11 +367,22 @@ std::vector<FrameKey> collectFrameKeys(const CallTree &tree)
 std::string buildSamplerData(const ProfileMetadata &meta, const CallTree &tree,
                              const std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> &resolved)
 {
+    return buildSamplerData(meta, {ThreadTreeView{meta.thread_name, &tree}}, resolved);
+}
+
+std::string buildSamplerData(const ProfileMetadata &meta, const std::vector<ThreadTreeView> &threads,
+                             const std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> &resolved)
+{
     // The viewer requires a WindowStatistics entry for every time window, so the window
     // set is the union of windows that have samples and windows that have tick stats.
     std::set<std::int32_t> window_set;
-    for (const auto &[window, count] : tree.root().times) {
-        window_set.insert(window);
+    for (const ThreadTreeView &thread : threads) {
+        if (thread.tree == nullptr) {
+            continue;
+        }
+        for (const auto &[window, count] : thread.tree->root().times) {
+            window_set.insert(window);
+        }
     }
     for (const auto &[window, ws] : meta.window_stats) {
         window_set.insert(window);
@@ -371,25 +392,29 @@ std::string buildSamplerData(const ProfileMetadata &meta, const CallTree &tree,
     }
     std::vector<std::int32_t> windows(window_set.begin(), window_set.end());
 
-    std::vector<std::string> flat;
-    std::vector<std::int32_t> top_refs;
-    for (const CallTree::Node *kid : sortedChildren(tree.root())) {
-        top_refs.push_back(emitNode(kid, windows, meta, resolved, flat));
-    }
-
-    std::string thread;
-    ProtoWriter tw(thread);
-    tw.string(1, meta.thread_name);
-    for (const std::string &node_bytes : flat) {
-        tw.message(3, node_bytes);
-    }
-    tw.packedDouble(4, alignValues(tree.root().times, windows, meta));
-    tw.packedInt32(5, top_refs);
-
     std::string out;
     ProtoWriter w(out);
     w.message(1, buildMetadata(meta));
-    w.message(2, thread);
+    for (const ThreadTreeView &thread_view : threads) {
+        if (thread_view.tree == nullptr) {
+            continue;
+        }
+        std::vector<std::string> flat;
+        std::vector<std::int32_t> top_refs;
+        for (const CallTree::Node *kid : sortedChildren(thread_view.tree->root())) {
+            top_refs.push_back(emitNode(kid, windows, meta, resolved, flat));
+        }
+
+        std::string thread;
+        ProtoWriter tw(thread);
+        tw.string(1, thread_view.name);
+        for (const std::string &node_bytes : flat) {
+            tw.message(3, node_bytes);
+        }
+        tw.packedDouble(4, alignValues(thread_view.tree->root().times, windows, meta));
+        tw.packedInt32(5, top_refs);
+        w.message(2, thread);
+    }
     w.packedInt32(6, windows);
 
     // time_window_statistics (7): map<int32, WindowStatistics> — one per time window.

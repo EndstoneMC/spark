@@ -31,6 +31,12 @@ struct WindowTickStats {
     double mspt_max = 0.0;
 };
 
+struct ThreadCallTree {
+    std::uint64_t thread_id = 0;
+    std::string thread_name;
+    CallTree tree;
+};
+
 // Wall-clock sampling profiler for a single target thread. The sampler thread
 // captures stacks and hands them to an aggregator thread via a lock-free queue;
 // the aggregator builds the call tree, bucketing per tick so --only-ticks-over can
@@ -43,9 +49,10 @@ public:
     bool start(const SamplerConfig &config);  // arms capture + spawns threads
     void stop();                              // stops + joins; safe to call once
 
-    void setTarget(std::uint64_t tid)
+    void setTarget(std::uint64_t tid, std::string name = "Server thread")
     {
         target_tid_.store(tid);
+        target_name_ = std::move(name);
     }
 
     // Called once per server tick from the main thread: `mspt_ms` is the duration
@@ -60,6 +67,10 @@ public:
     const ModuleTable &modules() const
     {
         return modules_;
+    }
+    const std::map<std::uint64_t, ThreadCallTree> &threadTrees() const
+    {
+        return thread_trees_;
     }
     const std::map<std::int32_t, WindowTickStats> &windowTicks() const
     {
@@ -93,6 +104,7 @@ private:
     std::atomic<std::uint64_t> target_tid_{0};
     std::atomic<std::uint64_t> current_tick_{0};
     std::atomic<std::uint64_t> sample_count_{0};
+    std::string target_name_ = "Server thread";
     std::chrono::steady_clock::time_point start_time_{};
 
     std::thread sampler_thread_;
@@ -105,6 +117,7 @@ private:
 
     // aggregator-thread state
     CallTree tree_;
+    std::map<std::uint64_t, ThreadCallTree> thread_trees_;
     std::unordered_map<std::uint64_t, std::vector<Sample>> buckets_;
     std::vector<std::uint8_t> tick_decisions_;  // 0 pending, 1 drop, 2 keep
 
