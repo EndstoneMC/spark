@@ -35,6 +35,7 @@ struct ProfileMetadata {
     std::string creator_name = "Console";
     bool creator_is_player = false;
     std::string thread_name = "Server thread";
+    bool all_threads = false;
     bool ticked = false;             // --only-ticks-over active
     std::int64_t tick_threshold_ms = 0;
     PlatformStats platform_stats;

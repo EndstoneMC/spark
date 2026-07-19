@@ -102,7 +102,7 @@ std::string buildMetadata(const ProfileMetadata &m)
     {
         std::string t;
         ProtoWriter tw(t);
-        tw.varint(1, 1);
+        tw.varint(1, m.all_threads ? 0 : 1);
         w.message(4, t);
     }
     // data_aggregator (5): { type, thread_grouper = BY_NAME, tick_length_threshold }

@@ -509,6 +509,37 @@ bool verifyMultiThreadSerialization()
     return true;
 }
 
+bool verifyAllThreadSampling()
+{
+    using namespace std::chrono_literals;
+
+    spark::SamplerConfig config;
+    config.interval_us = 2000;
+    config.ignore_sleeping = false;
+    config.all_threads = true;
+
+    spark::Sampler sampler;
+    if (!sampler.start(config)) {
+        std::fprintf(stderr, "all-thread sampling: sampler start failed\n");
+        return false;
+    }
+    std::this_thread::sleep_for(200ms);
+    sampler.stop();
+
+    if (sampler.threadTrees().size() < 2 || sampler.sampleCount() == 0 ||
+        sampler.sampleCount() != sampler.tree().sampleCount()) {
+        std::fprintf(stderr, "all-thread sampling: fewer than two process threads were captured\n");
+        return false;
+    }
+    for (const auto &[id, thread] : sampler.threadTrees()) {
+        if (id == 0 || thread.thread_name.empty() || thread.tree.empty()) {
+            std::fprintf(stderr, "all-thread sampling: invalid per-thread call tree\n");
+            return false;
+        }
+    }
+    return true;
+}
+
 bool verifyExecutableHash()
 {
     if (spark::sha256Hex("") !=
@@ -822,6 +853,7 @@ int main(int argc, char **argv)
 
     if (!verifyArgumentParsing() || !verifyTickMonitor() || !verifyThreadDiscovery() ||
         !verifyMultiThreadSerialization() || !verifyUploadFailure() || !verifyCaptureLifecycle() ||
+        !verifyAllThreadSampling() ||
         !verifyExecutableHash() ||
         !verifyByteSampling() ||
         !verifyStopResponsiveness() ||

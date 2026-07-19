@@ -1,5 +1,6 @@
 #include "sampler/sampler.h"
 
+#include <algorithm>
 #include <chrono>
 #include <string_view>
 #include <utility>
@@ -15,6 +16,7 @@
 
 #include "sampler/capture.h"
 #include "sampler/symbolicate.h"
+#include "sampler/thread_info.h"
 
 namespace spark {
 
@@ -102,6 +104,8 @@ void Sampler::resetSession()
     window_ticks_.clear();
     current_tick_.store(0);
     sample_count_.store(0, std::memory_order_relaxed);
+    sampler_tid_.store(0, std::memory_order_relaxed);
+    aggregator_tid_.store(0, std::memory_order_relaxed);
 }
 
 std::int32_t Sampler::currentWindow() const
@@ -128,6 +132,13 @@ void Sampler::samplerLoop()
 {
     CaptureBuffer buf;
     const auto interval = std::chrono::microseconds(config_.interval_us);
+    sampler_tid_.store(currentNativeThreadId(), std::memory_order_release);
+    while (running_.load() && aggregator_tid_.load(std::memory_order_acquire) == 0) {
+        std::this_thread::yield();
+    }
+
+    std::vector<ThreadInfo> targets;
+    auto next_refresh = std::chrono::steady_clock::time_point{};
     while (running_.load()) {
         {
             std::unique_lock lock(wait_mutex_);
@@ -136,66 +147,92 @@ void Sampler::samplerLoop()
             }
         }
 
-        std::uint64_t tid = target_tid_.load();
-        if (tid == 0) {
-            continue;
-        }
-        if (config_.ignore_sleeping && !Capture::isThreadRunning(tid)) {
-            continue;
-        }
-        std::uint64_t tick_id = current_tick_.load();
-        if (!Capture::captureThread(tid, buf)) {
-            continue;
-        }
-
-        Sample sample;
-        sample.thread_id = tid;
-        sample.thread_name = target_name_;
-        sample.tick_id = tick_id;
-        sample.window = currentWindow();
-        sample.frames.reserve(buf.count);
-        for (std::size_t i = kLeadingDrop; i < buf.count; ++i) {
-#if defined(_WIN32)
-            std::uint64_t raw_address = static_cast<std::uint64_t>(buf.ips[i]);
-            DWORD64 module_base = SymGetModuleBase64(GetCurrentProcess(), raw_address);
-
-            std::string path = "unknown";
-            if (module_base != 0) {
-                char module_path[MAX_PATH]{};
-                DWORD length = GetModuleFileNameA(
-                    reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(module_base)), module_path,
-                    static_cast<DWORD>(sizeof(module_path)));
-                if (length > 0) {
-                    path.assign(module_path, length);
+        if (config_.all_threads) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= next_refresh) {
+                targets = enumerateProcessThreads();
+                const std::uint64_t sampler_tid = sampler_tid_.load(std::memory_order_acquire);
+                const std::uint64_t aggregator_tid = aggregator_tid_.load(std::memory_order_acquire);
+                targets.erase(std::remove_if(targets.begin(), targets.end(), [&](const ThreadInfo &thread) {
+                                  return thread.id == sampler_tid || thread.id == aggregator_tid;
+                              }),
+                              targets.end());
+                for (ThreadInfo &thread : targets) {
+                    thread.name += " (#" + std::to_string(thread.id) + ")";
                 }
+                next_refresh = now + std::chrono::seconds(1);
+            }
+        }
+        else {
+            const std::uint64_t tid = target_tid_.load();
+            targets = tid == 0 ? std::vector<ThreadInfo>{}
+                               : std::vector<ThreadInfo>{{tid, target_name_}};
+        }
+
+        const std::uint64_t tick_id = current_tick_.load();
+        const std::int32_t window = currentWindow();
+        for (const ThreadInfo &target : targets) {
+            if (!running_.load()) {
+                break;
+            }
+            if (config_.ignore_sleeping && !Capture::isThreadRunning(target.id)) {
+                continue;
+            }
+            if (!Capture::captureThread(target.id, buf)) {
+                continue;
             }
 
-            FrameKey key;
-            key.module = modules_.intern(path);
-            key.rva = module_base != 0 ? raw_address - module_base : raw_address;
-            key.raw_address = raw_address;
+            Sample sample;
+            sample.thread_id = target.id;
+            sample.thread_name = target.name;
+            sample.tick_id = tick_id;
+            sample.window = window;
+            sample.frames.reserve(buf.count);
+            for (std::size_t i = kLeadingDrop; i < buf.count; ++i) {
+#if defined(_WIN32)
+                std::uint64_t raw_address = static_cast<std::uint64_t>(buf.ips[i]);
+                DWORD64 module_base = SymGetModuleBase64(GetCurrentProcess(), raw_address);
+
+                std::string path = "unknown";
+                if (module_base != 0) {
+                    char module_path[MAX_PATH]{};
+                    DWORD length = GetModuleFileNameA(
+                        reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(module_base)), module_path,
+                        static_cast<DWORD>(sizeof(module_path)));
+                    if (length > 0) {
+                        path.assign(module_path, length);
+                    }
+                }
+
+                FrameKey key;
+                key.module = modules_.intern(path);
+                key.rva = module_base != 0 ? raw_address - module_base : raw_address;
+                key.raw_address = raw_address;
 #else
-            cpptrace::safe_object_frame frame;
-            cpptrace::get_safe_object_frame(buf.ips[i], &frame);
-            std::string_view path =
-                frame.object_path[0] != '\0' ? std::string_view(frame.object_path) : std::string_view("unknown");
-            FrameKey key;
-            key.module = modules_.intern(path);
-            key.rva = static_cast<std::uint64_t>(frame.address_relative_to_object_start);
-            key.raw_address = static_cast<std::uint64_t>(frame.raw_address);
+                cpptrace::safe_object_frame frame;
+                cpptrace::get_safe_object_frame(buf.ips[i], &frame);
+                std::string_view path = frame.object_path[0] != '\0'
+                                            ? std::string_view(frame.object_path)
+                                            : std::string_view("unknown");
+                FrameKey key;
+                key.module = modules_.intern(path);
+                key.rva = static_cast<std::uint64_t>(frame.address_relative_to_object_start);
+                key.raw_address = static_cast<std::uint64_t>(frame.raw_address);
 #endif
-            sample.frames.push_back(key);
+                sample.frames.push_back(key);
+            }
+            if (sample.frames.empty()) {
+                continue;
+            }
+            // Drop inter-tick and worker wait states so they don't swamp a
+            // wall-clock profile when sleeping threads are excluded.
+            if (config_.ignore_sleeping && isSleepFrame(sample.frames.front().raw_address)) {
+                continue;
+            }
+            samples_.enqueue(std::move(sample));
         }
-        if (sample.frames.empty()) {
-            continue;
-        }
-        // Drop the server thread's inter-tick idle wait (its innermost frame is a
-        // sleep/wait function) so it doesn't swamp a wall-clock profile.
-        if (config_.ignore_sleeping && isSleepFrame(sample.frames.front().raw_address)) {
-            continue;
-        }
-        samples_.enqueue(std::move(sample));
     }
+    sampler_tid_.store(0, std::memory_order_release);
 }
 
 void Sampler::acceptSample(const Sample &sample)
@@ -227,6 +264,7 @@ void Sampler::flushOrDrop(std::uint64_t tick_id, bool keep)
 
 void Sampler::aggregatorLoop()
 {
+    aggregator_tid_.store(currentNativeThreadId(), std::memory_order_release);
     const bool ticked = config_.only_ticks_over_ms > 0;
     const double threshold = static_cast<double>(config_.only_ticks_over_ms);
 
@@ -273,6 +311,7 @@ void Sampler::aggregatorLoop()
         }
     }
     buckets_.clear();
+    aggregator_tid_.store(0, std::memory_order_release);
 }
 
 }  // namespace spark

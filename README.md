@@ -52,6 +52,8 @@ Run the command again to disable the monitor.
 * `--alloc-live-only` — record only sampled allocations retained at stop for leak
   analysis; this implies `--alloc` (Windows and Linux x86-64).
 * `--timeout <seconds>` — auto-stop and finalize after N seconds.
+* `--thread *` — sample all BDS process threads and emit a separate viewer root
+  for each operating-system thread.
 * `--only-ticks-over <ms>` — only record ticks longer than this.
 * `--save-to-file` — write a `.sparkprofile` file instead of uploading
   (open it by dragging it into the spark viewer).

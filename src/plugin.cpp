@@ -369,6 +369,11 @@ private:
             sender.sendErrorMessage("Custom thread selection is not supported by the native allocation engine yet.");
             return;
         }
+        if (!options.alloc && !options.threads.empty() &&
+            !(options.threads.size() == 1 && options.threads.front() == "*")) {
+            sender.sendErrorMessage("This build currently supports only --thread * for execution profiles.");
+            return;
+        }
 
         auto interval = args.doubleFlag("interval");
         if (args.boolFlag("interval") && !interval) {
@@ -465,8 +470,14 @@ private:
             }
         }
         else {
-            sender.sendMessage("{}Profiler is now running!{} (async, {}ms interval)", ColorFormat::Gold,
-                               ColorFormat::Gray, options.interval_ms);
+            if (options.threads.empty()) {
+                sender.sendMessage("{}Profiler is now running!{} (async, {}ms interval)", ColorFormat::Gold,
+                                   ColorFormat::Gray, options.interval_ms);
+            }
+            else {
+                sender.sendMessage("{}Profiler is now running for all process threads!{} (async, {}ms interval)",
+                                   ColorFormat::Gold, ColorFormat::Gray, options.interval_ms);
+            }
         }
         if (options.only_ticks_over_ms > 0) {
             sender.sendMessage("Only recording ticks longer than {}ms.", options.only_ticks_over_ms);

@@ -21,6 +21,7 @@ namespace spark {
 struct SamplerConfig {
     int interval_us = 4000;
     bool ignore_sleeping = true;
+    bool all_threads = false;
     std::int64_t only_ticks_over_ms = 0;  // 0 = disabled (record every tick)
 };
 
@@ -104,6 +105,8 @@ private:
     std::atomic<std::uint64_t> target_tid_{0};
     std::atomic<std::uint64_t> current_tick_{0};
     std::atomic<std::uint64_t> sample_count_{0};
+    std::atomic<std::uint64_t> sampler_tid_{0};
+    std::atomic<std::uint64_t> aggregator_tid_{0};
     std::string target_name_ = "Server thread";
     std::chrono::steady_clock::time_point start_time_{};
 

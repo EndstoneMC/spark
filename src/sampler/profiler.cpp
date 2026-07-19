@@ -184,6 +184,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         SamplerConfig config;
         config.interval_us = interval_;
         config.ignore_sleeping = options.ignore_sleeping;
+        config.all_threads = options.threads.size() == 1 && options.threads.front() == "*";
         config.only_ticks_over_ms = options.only_ticks_over_ms > 0 ? options.only_ticks_over_ms : 0;
         sampler_.setTarget(main_tid);
         started = sampler_.start(config);
@@ -290,6 +291,8 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.comment = !ctx.comment.empty() ? ctx.comment : options_.comment;
     meta.creator_name = options_.creator_name;
     meta.creator_is_player = options_.creator_is_player;
+    meta.all_threads = mode_ == ProfileMode::Execution && options_.threads.size() == 1 &&
+                       options_.threads.front() == "*";
     meta.ticked = options_.only_ticks_over_ms > 0;
     meta.tick_threshold_ms = options_.only_ticks_over_ms > 0 ? options_.only_ticks_over_ms : 0;
 
