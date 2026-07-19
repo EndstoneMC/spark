@@ -18,10 +18,10 @@ spark's bytebin and opened as an interactive flame graph at
 
 ## Commands
 
-| Command                         | Description                                             |
-| ------------------------------- | ------------------------------------------------------- |
-| `/spark profiler start [flags]` | Start profiling selected native threads (background).  |
-| `/spark profiler start --alloc` | Profile native allocation call stacks on Windows/Linux. |
+| Command                           | Description                                             |
+| --------------------------------- | ------------------------------------------------------- |
+| `/spark profiler start [flags]` | Start profiling selected native threads (background).   |
+| `/spark profiler start --alloc` | Profile native allocation call stacks.                  |
 | `/spark profiler stop`          | Stop profiling and finalize the profile.                |
 | `/spark profiler info`          | Show status of the running profiler.                    |
 | `/spark profiler cancel`        | Stop profiling without generating a profile.            |
@@ -45,27 +45,35 @@ Run the command again to disable the monitor.
 
 ### `/spark profiler start` flags
 
-* `--interval <value>` — execution interval in milliseconds (default `4`),
-  or allocation interval in bytes with `--alloc` (default `524287`).
-* `--alloc` — record sampled native allocation call stacks instead of execution time
-  (Windows and Linux x86-64).
+* `--interval <value>` — execution interval in milliseconds (default `4`, maximum
+  `1000`), or allocation interval in bytes with `--alloc` (default `524287`).
+* `--timeout <seconds>` — auto-stop and finalize after more than 10 seconds. Omit
+  this flag to run until `stop` or `cancel` is issued.
+* `--only-ticks-over <ms>` — retain samples only from ticks longer than the given
+  positive whole number of milliseconds.
+* `--comment <text>` — attach a note to the profile; quote text containing spaces.
+* `--save-to-file` — write a `.sparkprofile` file instead of uploading it (open the
+  file by dragging it into the spark viewer).
+* `--thread <name>` — execution profiles only. Select a thread by case-insensitive
+  exact name; repeat the flag to select multiple threads and quote names containing
+  spaces.
+* `--thread *` — execution profiles only. Select all BDS process threads and emit a
+  separate viewer root for each sampled operating-system thread. It cannot be
+  combined with another `--thread` or `--regex`.
+* `--regex` — execution profiles only. Interpret each `--thread <pattern>` as a
+  case-insensitive full-match regular expression; at least one pattern is required.
+* `--include-sleeping` — execution profiles only. Also sample threads while they are
+  idle. Without this flag, Linux task state and Windows per-thread CPU cycle deltas
+  avoid capturing threads that did not run.
+* `--alloc` — record sampled native allocation call stacks instead of execution time.
+  Custom thread selectors are not supported.
 * `--alloc-live-only` — record only sampled allocations retained at stop for leak
-  analysis; this implies `--alloc` (Windows and Linux x86-64).
-* `--timeout <seconds>` — auto-stop and finalize after N seconds.
-* `--thread *` — sample all BDS process threads and emit a separate viewer root
-  for each operating-system thread. Use one or more `--thread <name>` flags to
-  select threads by case-insensitive exact name, or add `--regex` to interpret
-  them as case-insensitive full-match regular expressions. Quote names or
-  patterns containing spaces. Multi-thread profiles use the interval as a global
-  stack-walk budget and rotate fairly through matching threads.
-* `--only-ticks-over <ms>` — only record ticks longer than this.
-* `--save-to-file` — write a `.sparkprofile` file instead of uploading
-  (open it by dragging it into the spark viewer).
-* `--comment <text>` — attach a note to the profile.
-* `--include-sleeping` — also sample while the server thread is idle between ticks
-  (off by default, since the inter-tick sleep would otherwise dominate a
-  wall-clock profile). Without this flag, Linux task state and Windows per-thread
-  CPU cycle deltas are used to avoid capturing threads that did not run.
+  analysis; this implies `--alloc` .
+
+Multi-thread execution profiles treat the interval as a global stack-walk budget and
+rotate fairly through matching threads. `/spark profiler stop` also accepts
+`--save-to-file` and `--comment <text>`; values supplied at stop take effect for the
+final output.
 
 ## How it works
 
@@ -90,7 +98,7 @@ Run the command again to disable the monitor.
 ### Native allocation profiler
 
 `--alloc` profiles successful native allocation requests made by the BDS server
-thread on Windows and Linux x86-64. Samples are weighted by requested bytes using
+thread. Samples are weighted by requested bytes using
 a randomized fixed-byte interval (524287 bytes by default), then exported through
 the same spark viewer, upload, and save paths as execution profiles.
 
@@ -114,7 +122,6 @@ after in-flight calls finish during plugin shutdown, allowing a clean plugin rel
 ## Building
 
 > Windows allocation profiler: CMake fetches and statically builds upstream funchook `v1.1.3`; it is not a Conan requirement. Linux uses atomic ELF import-slot redirection and does not link funchook.
-
 
 The platform requirements are:
 
