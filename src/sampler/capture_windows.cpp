@@ -6,6 +6,7 @@
 // addresses are converted to module-relative keys and resolved later through DbgHelp.
 
 #include <mutex>
+#include <unordered_map>
 
 // clang-format off
 #include <windows.h>
@@ -17,6 +18,7 @@ namespace spark {
 namespace {
 std::mutex g_dbghelp_mutex;
 bool g_armed = false;
+std::unordered_map<DWORD, ULONG64> g_thread_cycles;
 }  // namespace
 
 bool Capture::arm()
@@ -29,6 +31,7 @@ bool Capture::arm()
     if (!SymInitialize(GetCurrentProcess(), nullptr, TRUE)) {  // needed by StackWalk64's module callbacks
         return false;
     }
+    g_thread_cycles.clear();
     g_armed = true;
     return true;
 }
@@ -40,6 +43,7 @@ void Capture::disarm()
         return;
     }
     SymCleanup(GetCurrentProcess());
+    g_thread_cycles.clear();
     g_armed = false;
 }
 
@@ -95,10 +99,33 @@ bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
     return resumed && out.count > 0;
 }
 
-bool Capture::isThreadRunning(std::uint64_t /*tid*/)
+bool Capture::isThreadRunning(std::uint64_t tid)
 {
-    // TODO(windows): approximate via QueryThreadCycleTime deltas. For now, always sample.
-    return true;
+    std::lock_guard lock(g_dbghelp_mutex);
+    if (!g_armed) {
+        return true;
+    }
+
+    const DWORD thread_id = static_cast<DWORD>(tid);
+    HANDLE thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, thread_id);
+    if (thread == nullptr) {
+        return true;
+    }
+    ULONG64 cycles = 0;
+    const bool queried = QueryThreadCycleTime(thread, &cycles) != FALSE;
+    CloseHandle(thread);
+    if (!queried) {
+        return true;
+    }
+
+    auto it = g_thread_cycles.find(thread_id);
+    if (it == g_thread_cycles.end()) {
+        g_thread_cycles.emplace(thread_id, cycles);
+        return false;  // the first observation establishes a baseline
+    }
+    const ULONG64 previous = it->second;
+    it->second = cycles;
+    return cycles != previous;
 }
 
 }  // namespace spark

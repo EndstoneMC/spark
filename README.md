@@ -63,7 +63,8 @@ Run the command again to disable the monitor.
 * `--comment <text>` — attach a note to the profile.
 * `--include-sleeping` — also sample while the server thread is idle between ticks
   (off by default, since the inter-tick sleep would otherwise dominate a
-  wall-clock profile).
+  wall-clock profile). Without this flag, Linux task state and Windows per-thread
+  CPU cycle deltas are used to avoid capturing threads that did not run.
 
 ## How it works
 

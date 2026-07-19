@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Weight execution samples by each thread's measured runnable time instead of the
   nominal interval, preserving viewer time semantics for sequential multi-thread sweeps.
+- Detect idle Windows threads through `QueryThreadCycleTime` deltas so the default
+  execution profiler skips their suspension and stack-walk overhead.
 
 ## [0.2.0] - 2026-07-18
 

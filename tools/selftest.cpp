@@ -173,6 +173,73 @@ bool verifyCaptureLifecycle()
     return true;
 }
 
+#if defined(_WIN32)
+bool verifyWindowsThreadActivityDetection()
+{
+    using namespace std::chrono_literals;
+
+    std::atomic<bool> run{true};
+    std::atomic<std::uint64_t> active_tid{0};
+    std::atomic<std::uint64_t> sleeping_tid{0};
+    std::atomic<std::uint64_t> work{0};
+    HANDLE release_event = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (release_event == nullptr) {
+        std::fprintf(stderr, "Windows thread activity: event creation failed\n");
+        return false;
+    }
+
+    std::thread active([&] {
+        active_tid.store(static_cast<std::uint64_t>(::GetCurrentThreadId()));
+        while (run.load(std::memory_order_relaxed)) {
+            work.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+    std::thread sleeping([&] {
+        sleeping_tid.store(static_cast<std::uint64_t>(::GetCurrentThreadId()));
+        ::WaitForSingleObject(release_event, INFINITE);
+    });
+    while (active_tid.load() == 0 || sleeping_tid.load() == 0) {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(20ms);
+
+    auto finish = [&] {
+        spark::Capture::disarm();
+        run.store(false, std::memory_order_relaxed);
+        ::SetEvent(release_event);
+        active.join();
+        sleeping.join();
+        ::CloseHandle(release_event);
+    };
+
+    if (!spark::Capture::arm()) {
+        std::fprintf(stderr, "Windows thread activity: capture arm failed\n");
+        finish();
+        return false;
+    }
+    const bool active_baseline = spark::Capture::isThreadRunning(active_tid.load());
+    const bool sleeping_baseline = spark::Capture::isThreadRunning(sleeping_tid.load());
+    std::this_thread::sleep_for(40ms);
+    const bool active_running = spark::Capture::isThreadRunning(active_tid.load());
+    const bool sleeping_running = spark::Capture::isThreadRunning(sleeping_tid.load());
+    spark::Capture::disarm();
+
+    if (!spark::Capture::arm()) {
+        std::fprintf(stderr, "Windows thread activity: capture re-arm failed\n");
+        finish();
+        return false;
+    }
+    const bool restarted_baseline = spark::Capture::isThreadRunning(active_tid.load());
+    finish();
+
+    if (active_baseline || sleeping_baseline || !active_running || sleeping_running || restarted_baseline) {
+        std::fprintf(stderr, "Windows thread activity: cycle-time classification failed\n");
+        return false;
+    }
+    return true;
+}
+#endif
+
 bool verifyStopResponsiveness()
 {
     using namespace std::chrono_literals;
@@ -953,6 +1020,9 @@ int main(int argc, char **argv)
 
     if (!verifyArgumentParsing() || !verifyTickMonitor() || !verifyThreadDiscovery() ||
         !verifyMultiThreadSerialization() || !verifyUploadFailure() || !verifyCaptureLifecycle() ||
+#if defined(_WIN32)
+        !verifyWindowsThreadActivityDetection() ||
+#endif
         !verifyAllThreadSampling() || !verifySelectedThreadSampling(g_worker_tid.load()) ||
         !verifyExecutableHash() ||
         !verifyByteSampling() ||
