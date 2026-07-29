@@ -1084,7 +1084,33 @@ bool verifyAllocationResourcePressure()
         return false;
     }
 
+    config.only_ticks_over_ms = 1;
+    spark::AllocationSampler tick_sampler;
+    if (!tick_sampler.start(config, error)) {
+        std::fprintf(stderr, "allocation pressure: tick queue start failed: %s\n",
+                     error.c_str());
+        return false;
+    }
+    constexpr std::uint64_t extra_tick_events = 1024;
+    for (std::uint64_t i = 0;
+         i < tick_sampler.tickEventCapacity() + extra_tick_events; ++i) {
+        tick_sampler.onTick(2.0);
+    }
+    if (!tick_sampler.stop(error) ||
+        tick_sampler.droppedTickEvents() != extra_tick_events ||
+        !tick_sampler.dataIncomplete() || !tick_sampler.shutdown(error)) {
+        std::fprintf(
+            stderr,
+            "allocation pressure: tick queue did not saturate at its declared "
+            "capacity (capacity=%llu dropped=%llu error=%s)\n",
+            static_cast<unsigned long long>(tick_sampler.tickEventCapacity()),
+            static_cast<unsigned long long>(tick_sampler.droppedTickEvents()),
+            error.c_str());
+        return false;
+    }
+
     config.aggregator_delay_ms_for_testing = 0;
+    config.only_ticks_over_ms = 0;
     config.thread_state_limit_for_testing = 8;
     spark::AllocationSampler registry_sampler;
     if (!registry_sampler.start(config, error)) {

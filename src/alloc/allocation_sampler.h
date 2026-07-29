@@ -94,6 +94,7 @@ public:
     std::uint64_t droppedSamples() const;
     std::uint64_t droppedEvents() const;
     std::uint64_t droppedTickEvents() const;
+    std::uint64_t tickEventCapacity() const;
     std::uint64_t enqueuedSamples() const;
     std::uint64_t eventQueueHighWaterMark() const;
     std::uint64_t eventQueueCapacity() const;

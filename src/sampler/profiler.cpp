@@ -357,6 +357,8 @@ std::string Profiler::exportData(const ExportContext &ctx) const
             std::to_string(allocation_sampler_.droppedEvents());
         meta.extra_platform_metadata["Allocation tick events dropped"] =
             std::to_string(allocation_sampler_.droppedTickEvents());
+        meta.extra_platform_metadata["Allocation tick event capacity"] =
+            std::to_string(allocation_sampler_.tickEventCapacity());
         meta.extra_platform_metadata["Allocation sample events enqueued"] =
             std::to_string(allocation_sampler_.enqueuedSamples());
         meta.extra_platform_metadata["Allocation event queue high-water mark"] =

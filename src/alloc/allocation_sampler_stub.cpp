@@ -94,6 +94,7 @@ std::uint64_t AllocationSampler::droppedSamples() const
 std::uint64_t AllocationSampler::enqueuedSamples() const { return 0; }
 std::uint64_t AllocationSampler::droppedEvents() const { return 0; }
 std::uint64_t AllocationSampler::droppedTickEvents() const { return 0; }
+std::uint64_t AllocationSampler::tickEventCapacity() const { return 0; }
 std::uint64_t AllocationSampler::eventQueueHighWaterMark() const { return 0; }
 std::uint64_t AllocationSampler::eventQueueCapacity() const { return 0; }
 std::uint64_t AllocationSampler::freedSamples() const { return 0; }

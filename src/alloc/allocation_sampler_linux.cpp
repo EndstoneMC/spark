@@ -34,8 +34,8 @@
 #include <vector>
 
 #include <cpptrace/cpptrace.hpp>
-#include <moodycamel/concurrentqueue.h>
 
+#include "alloc/bounded_event_queue.h"
 #include "alloc/byte_sampler.h"
 #include "alloc/elf_import_hooks.h"
 #include "sampler/thread_info.h"
@@ -426,7 +426,7 @@ struct AllocationSampler::Impl {
 
     EventQueue events;
     std::thread aggregator_thread;
-    moodycamel::ConcurrentQueue<TickEvent> ticks{kTickEventCapacity};
+    BoundedEventQueue<TickEvent, kTickEventCapacity> ticks;
     CallTree tree;
     std::map<std::uint64_t, ThreadCallTree> thread_trees;
     std::unordered_map<std::uint64_t, std::string> thread_name_cache;
@@ -1340,7 +1340,7 @@ struct AllocationSampler::Impl {
     void drainQueues()
     {
         TickEvent tick;
-        while (ticks.try_dequeue(tick)) {
+        while (ticks.dequeue(tick)) {
             const bool keep = config.only_ticks_over_ms <= 0 ||
                               tick.mspt_ms > static_cast<double>(config.only_ticks_over_ms);
             if (config.only_ticks_over_ms > 0 &&
@@ -1392,7 +1392,7 @@ struct AllocationSampler::Impl {
     void resetSession()
     {
         TickEvent tick;
-        while (ticks.try_dequeue(tick)) {
+        while (ticks.dequeue(tick)) {
         }
         tree = CallTree{};
         thread_trees.clear();
@@ -1588,7 +1588,7 @@ struct AllocationSampler::Impl {
         TrackingSuppressionGuard suppress(*this);
         const std::uint64_t finished = current_tick.fetch_add(1, std::memory_order_relaxed);
         if (config.only_ticks_over_ms > 0 &&
-            !ticks.try_enqueue(TickEvent{finished, mspt_ms})) {
+            !ticks.enqueue(TickEvent{finished, mspt_ms})) {
             dropped_tick_events.fetch_add(1, std::memory_order_relaxed);
         }
         const std::uint64_t now = monotonicMs();
@@ -1691,6 +1691,10 @@ std::uint64_t AllocationSampler::droppedEvents() const
 std::uint64_t AllocationSampler::droppedTickEvents() const
 {
     return impl_->dropped_tick_events.load(std::memory_order_relaxed);
+}
+std::uint64_t AllocationSampler::tickEventCapacity() const
+{
+    return kTickEventCapacity;
 }
 std::uint64_t AllocationSampler::enqueuedSamples() const
 {
