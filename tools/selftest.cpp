@@ -1124,6 +1124,9 @@ bool verifyAllocationResourcePressure()
     for (int thread = 0; thread < 16; ++thread) {
         workers.emplace_back([&]() {
             void *pointer = std::malloc(128);
+            if (pointer != nullptr) {
+                static_cast<volatile unsigned char *>(pointer)[0] = 1;
+            }
             registry_ready.fetch_add(1, std::memory_order_release);
             while (!release_registry_threads.load(std::memory_order_acquire)) {
                 std::this_thread::yield();
