@@ -97,10 +97,12 @@ final output.
 
 ### Native allocation profiler
 
-`--alloc` profiles successful native allocation requests made by the BDS server
-thread. Samples are weighted by requested bytes using
-a randomized fixed-byte interval (524287 bytes by default), then exported through
-the same spark viewer, upload, and save paths as execution profiles.
+`--alloc` profiles successful native allocation requests across process threads.
+Every thread has an independent randomized byte-sampling phase and a non-reused
+session identity, so short-lived threads and operating-system thread-ID reuse do
+not merge unrelated stacks. Samples are weighted by requested bytes using a
+fixed-byte interval (524287 bytes by default) and appear as separate thread roots
+in the same spark viewer used by execution profiles.
 
 `--alloc-live-only` follows sampled allocations through realloc and free calls,
 including releases from other threads, and reports only allocations still live
@@ -108,16 +110,26 @@ when profiling stops. It is intended to identify retained-memory and leak
 candidates; repeated profiles are needed to distinguish growth from legitimate
 long-lived state.
 
-Windows intercepts UCRT and process-heap allocation entry points with funchook.
-Linux atomically redirects the BDS executable's glibc import slots without
-rewriting allocator instructions. Direct virtual-memory calls, custom allocator
-internals, and allocations made entirely by other threads are outside the current
-profile scope.
+Windows intercepts process-wide UCRT and process-heap entry points with funchook.
+Linux atomically redirects supported allocator relocations in the main executable
+and loaded ELF modules, including Endstone, native plugins, and Python when they
+import the effective libc allocator. Loaded modules are rescanned at session start
+and every five seconds while profiling; unloaded modules are recognized before
+restoration so stale slots are never written.
 
 Stack symbolization and call-tree aggregation run outside the hook path. A fixed
-preallocated queue drops and reports excess samples instead of blocking the server
-thread. Hooks remain disabled pass-throughs between sessions and are fully removed
-after in-flight calls finish during plugin shutdown, allowing a clean plugin reload.
+preallocated queue drops and reports excess samples instead of blocking allocator
+threads. Live records, thread roots, module entries, pending samples, and call-tree
+nodes are also capped; exported metadata reports capacities, high-water marks,
+overflow merging, drops, hook coverage, and whether the profile is incomplete.
+Hooks remain disabled pass-throughs between sessions and are fully removed after
+in-flight calls finish during plugin shutdown, allowing a clean plugin reload.
+
+Coverage is limited to the listed allocator entry points/imports. Static CRT
+copies, inlined or private allocators, arenas and object pools that do not reach a
+covered entry point, `VirtualAlloc`/`VirtualFree`, and `mmap`/`munmap` are not
+sampled. A Linux module loaded and unloaded entirely between rescans can escape
+coverage.
 
 ## Building
 
@@ -141,6 +153,12 @@ cmake -S . -B build -G Ninja "-DCMAKE_TOOLCHAIN_FILE=build/RelWithDebInfo/genera
 
 cmake --build build
 ```
+
+With self-test tools enabled, `spark_selftest --allocation-only` exercises
+cross-thread lifecycles, session reuse, thread overflow, and bounded queue/index
+pressure. `spark_allocation_benchmark` prints repeatable CSV medians for
+unprofiled and disabled-hook baselines, default/4 KiB intervals,
+single/four-thread, live-only, and forced saturation cases.
 
 On Linux, the bundled profile selects libunwind because the SIGPROF sampler
 requires cpptrace's async-signal-safe unwinding path. Windows does not use

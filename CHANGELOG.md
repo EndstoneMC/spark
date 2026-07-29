@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Sample native allocations across process threads with independent byte-sampling
+  state, monotonic session thread identities, stable overflow merging, and
+  per-thread spark Viewer roots.
+- Patch supported allocator relocations in the Linux main executable and loaded
+  ELF modules, with REL/RELA validation, RELRO permission restoration, periodic
+  rescans, and unload-safe cleanup.
+- Export distinct allocation hook, success, sampling-point, enqueue, drop,
+  queue high-water, live-index, thread, module, and truncation metadata.
+
+### Fixed
+
+- Avoid Windows loader-TLS recursion by keeping allocation-hook thread state in a
+  preallocated native TLS registry and bypassing hooks while a thread's static TLS
+  vector is being constructed.
+- Preserve sampled allocation identity across cross-thread free and realloc,
+  including failure, zero-size, in-place, moved, and address-reuse cases.
+- Replace the Linux single-producer event ring with a bounded multi-producer queue
+  and shard the live-allocation index on both native backends.
+- Suppress allocation sampling from aggregation, module scanning, export, and
+  symbolization control paths.
+- Quiesce active Windows detours before restoring allocator entry points during
+  shutdown, including allocations originating in other loaded DLLs.
+
+### Limitations
+
+- Allocation coverage does not include static or private allocators,
+  `VirtualAlloc`/`VirtualFree`, `mmap`/`munmap`, or module lifetimes that begin and
+  end entirely between Linux rescans.
+
 ## [0.3.0] - 2026-07-19
 
 ### Added
