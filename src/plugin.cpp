@@ -475,7 +475,7 @@ private:
                 sender.sendMessage("{}Allocation Profiler is now running!{} (async)",
                                    ColorFormat::Gold, ColorFormat::Gray);
             }
-            sender.sendMessage("Sampling approximately every {} of native allocations on the server thread.",
+            sender.sendMessage("Sampling approximately every {} of native allocations across process threads.",
                                formatBytes(static_cast<std::uint64_t>(options.allocation_interval_bytes)));
             if (options.alloc_live_only) {
                 sender.sendMessage("The result will contain only sampled allocations still live when profiling stops.");
