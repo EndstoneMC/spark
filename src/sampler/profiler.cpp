@@ -313,8 +313,9 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.comment = !ctx.comment.empty() ? ctx.comment : options_.comment;
     meta.creator_name = options_.creator_name;
     meta.creator_is_player = options_.creator_is_player;
-    meta.all_threads = mode_ == ProfileMode::Execution && options_.threads.size() == 1 &&
-                       options_.threads.front() == "*";
+    meta.all_threads =
+        mode_ == ProfileMode::Allocation ||
+        (options_.threads.size() == 1 && options_.threads.front() == "*");
     meta.regex_threads = mode_ == ProfileMode::Execution && options_.regex;
     if (meta.regex_threads) {
         meta.thread_patterns = options_.threads;
@@ -334,18 +335,34 @@ std::string Profiler::exportData(const ExportContext &ctx) const
 #if defined(_WIN32)
         meta.extra_platform_metadata["Allocation backend"] = jsonString("Windows UCRT/funchook");
         meta.extra_platform_metadata["Allocation coverage"] = jsonString(
-            "server thread; UCRT malloc/calloc/realloc plus recalloc/aligned/base and "
-            "direct HeapAlloc/HeapReAlloc when available and hookable");
+            "process threads reaching hooked UCRT allocation entry points plus aligned/base "
+            "and direct process HeapAlloc/HeapReAlloc entry points when available");
 #elif defined(__linux__)
         meta.extra_platform_metadata["Allocation backend"] = jsonString("Linux glibc/ELF import slots");
         meta.extra_platform_metadata["Allocation coverage"] = jsonString(
-            "server thread; glibc malloc/calloc/realloc/reallocarray/aligned_alloc/posix_memalign "
-            "imports in the BDS main executable when present");
+            "process threads reaching patched malloc/calloc/realloc/reallocarray/aligned_alloc/"
+            "posix_memalign imports in supported loaded ELF modules");
 #endif
+        meta.extra_platform_metadata["Allocation hook calls"] =
+            std::to_string(allocation_sampler_.hookCalls());
+        meta.extra_platform_metadata["Allocation successful allocation calls"] =
+            std::to_string(allocation_sampler_.successfulAllocationCalls());
+        meta.extra_platform_metadata["Allocation sampling points hit"] =
+            std::to_string(allocation_sampler_.samplingPoints());
         meta.extra_platform_metadata["Allocation samples captured"] =
             std::to_string(allocation_sampler_.sampleCount());
         meta.extra_platform_metadata["Allocation samples dropped"] =
             std::to_string(allocation_sampler_.droppedSamples());
+        meta.extra_platform_metadata["Allocation sample events dropped"] =
+            std::to_string(allocation_sampler_.droppedEvents());
+        meta.extra_platform_metadata["Allocation tick events dropped"] =
+            std::to_string(allocation_sampler_.droppedTickEvents());
+        meta.extra_platform_metadata["Allocation sample events enqueued"] =
+            std::to_string(allocation_sampler_.enqueuedSamples());
+        meta.extra_platform_metadata["Allocation event queue high-water mark"] =
+            std::to_string(allocation_sampler_.eventQueueHighWaterMark());
+        meta.extra_platform_metadata["Allocation event queue capacity"] =
+            std::to_string(allocation_sampler_.eventQueueCapacity());
         meta.extra_platform_metadata["Allocation sampled frees"] =
             std::to_string(allocation_sampler_.freedSamples());
         meta.extra_platform_metadata["Allocation sampled freed bytes"] =
@@ -354,6 +371,34 @@ std::string Profiler::exportData(const ExportContext &ctx) const
             std::to_string(allocation_sampler_.liveSamples());
         meta.extra_platform_metadata["Allocation sampled live bytes"] =
             std::to_string(allocation_sampler_.liveBytes());
+        meta.extra_platform_metadata["Allocation sampled live peak"] =
+            std::to_string(allocation_sampler_.peakLiveSamples());
+        meta.extra_platform_metadata["Allocation live index capacity"] =
+            std::to_string(allocation_sampler_.liveIndexCapacity());
+        meta.extra_platform_metadata["Allocation sampled thread roots"] =
+            std::to_string(allocation_sampler_.sampledThreadCount());
+        meta.extra_platform_metadata["Allocation thread root capacity"] =
+            std::to_string(allocation_sampler_.threadRootCapacity());
+        meta.extra_platform_metadata["Allocation overflow threads"] =
+            std::to_string(allocation_sampler_.overflowThreadCount());
+        meta.extra_platform_metadata["Allocation thread state drops"] =
+            std::to_string(allocation_sampler_.threadStateDrops());
+        meta.extra_platform_metadata["Allocation hooked modules"] =
+            std::to_string(allocation_sampler_.hookedModuleCount());
+        meta.extra_platform_metadata["Allocation attributed module entries"] =
+            std::to_string(allocation_sampler_.moduleRegistryCount());
+        meta.extra_platform_metadata["Allocation attributed module capacity"] =
+            std::to_string(allocation_sampler_.moduleRegistryCapacity());
+        meta.extra_platform_metadata["Allocation profile node capacity"] =
+            std::to_string(allocation_sampler_.profileNodeCapacity());
+#if defined(__linux__)
+        meta.extra_platform_metadata["Allocation skipped modules"] =
+            std::to_string(allocation_sampler_.skippedModuleCount());
+        meta.extra_platform_metadata["Allocation failed modules"] =
+            std::to_string(allocation_sampler_.failedModuleCount());
+#endif
+        meta.extra_platform_metadata["Allocation data incomplete"] =
+            allocation_sampler_.dataIncomplete() ? "true" : "false";
         meta.extra_platform_metadata["Allocation average sampled lifetime ms"] =
             std::to_string(allocation_sampler_.averageLifetimeMs());
         meta.extra_platform_metadata["Allocation maximum sampled lifetime ms"] =
@@ -420,10 +465,16 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     }
 
     if (mode_ == ProfileMode::Allocation) {
-        const CallTree &tree = allocation_sampler_.tree();
-        std::vector<FrameKey> keys = collectFrameKeys(tree);
+        std::vector<ThreadTreeView> threads;
+        for (const auto &[id, thread] : allocation_sampler_.threadTrees()) {
+            threads.push_back({thread.thread_name, &thread.tree});
+        }
+        if (threads.empty()) {
+            threads.push_back({meta.thread_name, &allocation_sampler_.tree()});
+        }
+        std::vector<FrameKey> keys = collectFrameKeys(threads);
         auto resolved = resolveFrames(allocation_sampler_.modules(), keys);
-        return buildSamplerData(meta, tree, resolved);
+        return buildSamplerData(meta, threads, resolved);
     }
 
     std::vector<ThreadTreeView> threads;

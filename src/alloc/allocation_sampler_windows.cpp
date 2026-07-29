@@ -33,6 +33,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <winternl.h>
 #include <psapi.h>
 #include <tlhelp32.h>
 
@@ -40,6 +41,7 @@
 #include <moodycamel/concurrentqueue.h>
 
 #include "alloc/byte_sampler.h"
+#include "sampler/thread_info.h"
 
 namespace spark {
 namespace {
@@ -47,6 +49,19 @@ namespace {
 constexpr std::size_t kStackDepth = 48;
 constexpr std::size_t kEventCapacity = 16384;
 constexpr std::size_t kLiveIndexCapacity = kEventCapacity * 2;
+constexpr std::size_t kLiveIndexShards = 64;
+constexpr std::size_t kLiveIndexShardCapacity =
+    kLiveIndexCapacity / kLiveIndexShards;
+constexpr std::size_t kMaxSampledThreads = 256;
+constexpr std::size_t kMaxThreadStates = 2048;
+constexpr std::size_t kMaxAllocationModules = 512;
+constexpr std::size_t kMaxModuleCacheEntries = 1024;
+constexpr std::size_t kMaxProfileNodes = 131072;
+constexpr std::size_t kMaxPendingSamples = 32768;
+constexpr std::size_t kMaxTickDecisions = 100000;
+constexpr std::size_t kTickEventCapacity = 4096;
+constexpr std::int32_t kMaxProfileWindows = 86400;
+constexpr std::uint64_t kOverflowThreadId = 0;
 constexpr std::size_t kMaxPatchThreads = 2048;
 constexpr std::size_t kHookPatchSize = 5;  // funchook 1.1.3 x86/x64 entry jump
 constexpr unsigned long kFramesToSkip = 2;
@@ -366,6 +381,8 @@ struct AllocationSampler::Impl {
         SLIST_ENTRY entry{};
         std::uint64_t weight_bytes = 0;
         std::uint64_t tick_id = 0;
+        std::uint64_t thread_id = 0;
+        std::uint64_t os_thread_id = 0;
         std::int32_t window = 0;
         std::uint16_t depth = 0;
         void *frames[kStackDepth]{};
@@ -384,6 +401,8 @@ struct AllocationSampler::Impl {
         std::uint64_t requested_bytes = 0;
         std::uint64_t allocated_ms = 0;
         std::uint64_t tick_id = 0;
+        std::uint64_t thread_id = 0;
+        std::uint64_t os_thread_id = 0;
         std::int32_t window = 0;
         std::uint16_t depth = 0;
         void *frames[kStackDepth]{};
@@ -400,26 +419,48 @@ struct AllocationSampler::Impl {
     static_assert(alignof(LiveAllocation) >= MEMORY_ALLOCATION_ALIGNMENT);
     static_assert(sizeof(LiveAllocation) % MEMORY_ALLOCATION_ALIGNMENT == 0);
 
+    struct alignas(64) HookCounter {
+        std::atomic<std::uint64_t> value{0};
+    };
+
     static std::atomic<Impl *> active_instance;
-    static std::atomic<std::uint64_t> active_hook_calls;
-    static thread_local bool inside_hook;
-    static thread_local bool tracking_suppressed;
-    static thread_local ByteSamplingState thread_sampling;
+    static std::array<HookCounter, 64> active_hook_calls;
+
+    struct ThreadSamplingState {
+        // 0 free, 1 initializing, 2 active, 3 being checked for reclamation.
+        std::atomic<std::uint8_t> registry_state{0};
+        std::atomic<void *> teb{nullptr};
+        HANDLE thread_handle = nullptr;
+        ByteSamplingState bytes;
+        std::uint64_t identity_generation = 0;
+        std::uint64_t session_thread_id = 0;
+        std::uint64_t os_thread_id = 0;
+        bool inside_hook = false;
+        bool tracking_suppressed = false;
+    };
 
     class HookCallGuard {
     public:
         HookCallGuard() noexcept
         {
-            active_hook_calls.fetch_add(1, std::memory_order_acq_rel);
+            const std::uintptr_t thread_key =
+                reinterpret_cast<std::uintptr_t>(::NtCurrentTeb()) >> 12;
+            counter_ = &active_hook_calls[
+                static_cast<std::size_t>(thread_key) %
+                active_hook_calls.size()];
+            counter_->value.fetch_add(1, std::memory_order_acq_rel);
         }
 
         ~HookCallGuard()
         {
-            active_hook_calls.fetch_sub(1, std::memory_order_release);
+            counter_->value.fetch_sub(1, std::memory_order_release);
         }
 
         HookCallGuard(const HookCallGuard &) = delete;
         HookCallGuard &operator=(const HookCallGuard &) = delete;
+
+    private:
+        HookCounter *counter_ = nullptr;
     };
 
     class TrackingCallGuard {
@@ -456,17 +497,18 @@ struct AllocationSampler::Impl {
 
     class RecursionGuard {
     public:
-        RecursionGuard() noexcept : owner_(!inside_hook)
+        explicit RecursionGuard(Impl &impl) noexcept : state_(impl.currentThreadState())
         {
-            if (owner_) {
-                inside_hook = true;
+            if (state_ != nullptr && !state_->inside_hook) {
+                state_->inside_hook = true;
+                owner_ = true;
             }
         }
 
         ~RecursionGuard()
         {
             if (owner_) {
-                inside_hook = false;
+                state_->inside_hook = false;
             }
         }
 
@@ -476,28 +518,37 @@ struct AllocationSampler::Impl {
         }
 
     private:
-        bool owner_;
+        ThreadSamplingState *state_ = nullptr;
+        bool owner_ = false;
     };
 
     class TrackingSuppressionGuard {
     public:
-        TrackingSuppressionGuard() noexcept : previous_(tracking_suppressed)
+        explicit TrackingSuppressionGuard(Impl &impl) noexcept
+            : state_(impl.currentThreadState())
         {
-            tracking_suppressed = true;
+            if (state_ != nullptr) {
+                previous_ = state_->tracking_suppressed;
+                state_->tracking_suppressed = true;
+            }
         }
 
         ~TrackingSuppressionGuard()
         {
-            tracking_suppressed = previous_;
+            if (state_ != nullptr) {
+                state_->tracking_suppressed = previous_;
+            }
         }
 
     private:
-        bool previous_;
+        ThreadSamplingState *state_ = nullptr;
+        bool previous_ = false;
     };
 
     funchook_t *hooks = nullptr;
     bool hooks_prepared = false;
     bool hook_state_unknown = false;
+    DWORD tls_index = TLS_OUT_OF_INDEXES;
     std::atomic<bool> hooks_installed{false};
     std::atomic<bool> tracking{false};
     std::atomic<bool> running{false};
@@ -539,16 +590,30 @@ struct AllocationSampler::Impl {
     std::atomic<std::uint64_t> interval_bytes{kDefaultAllocationIntervalBytes};
     std::atomic<std::uint64_t> sampling_seed{0};
     std::atomic<std::uint64_t> started_tick_ms{0};
+    std::atomic<std::uint64_t> hook_calls{0};
+    std::atomic<std::uint64_t> successful_allocation_calls{0};
     std::atomic<std::uint64_t> sample_count{0};
+    std::atomic<std::uint64_t> sampling_points{0};
     std::atomic<std::uint64_t> sampled_bytes{0};
     std::atomic<std::uint64_t> observed_bytes{0};
     std::atomic<std::uint64_t> dropped_samples{0};
+    std::atomic<std::uint64_t> dropped_events{0};
+    std::atomic<std::uint64_t> dropped_tick_events{0};
+    std::atomic<std::uint64_t> enqueued_samples{0};
+    std::atomic<std::uint64_t> ready_event_count{0};
+    std::atomic<std::uint64_t> ready_event_high_water{0};
     std::atomic<std::uint64_t> tracking_hook_calls{0};
     std::atomic<std::uint64_t> next_allocation_id{1};
+    std::atomic<std::uint64_t> next_session_thread_id{1};
+    std::atomic<std::uint64_t> registered_threads{0};
+    std::atomic<std::uint64_t> overflow_threads{0};
+    std::atomic<std::uint64_t> thread_state_drops{0};
+    std::atomic<bool> profile_nodes_exhausted{false};
     std::atomic<std::uint64_t> freed_samples{0};
     std::atomic<std::uint64_t> freed_bytes{0};
     std::atomic<std::uint64_t> live_samples{0};
     std::atomic<std::uint64_t> live_bytes{0};
+    std::atomic<std::uint64_t> peak_live_samples{0};
     std::atomic<std::uint64_t> lifetime_ms_total{0};
     std::atomic<std::uint64_t> lifetime_ms_max{0};
     std::atomic<std::uint64_t> lifecycle_dropped{0};
@@ -560,15 +625,20 @@ struct AllocationSampler::Impl {
     SLIST_HEADER free_live_allocations{};
     LiveAllocation *live_storage = nullptr;
     LiveIndexEntry *live_index = nullptr;
-    SRWLOCK live_index_lock = SRWLOCK_INIT;
+    std::array<SRWLOCK, kLiveIndexShards> live_index_locks{};
+    std::array<ThreadSamplingState, kMaxThreadStates> thread_states{};
 
     std::thread aggregator_thread;
-    moodycamel::ConcurrentQueue<TickEvent> ticks;
+    moodycamel::ConcurrentQueue<TickEvent> ticks{kTickEventCapacity};
 
     CallTree tree;
+    std::map<std::uint64_t, ThreadCallTree> thread_trees;
+    std::unordered_map<std::uint64_t, std::string> thread_name_cache;
     ModuleTable modules;
     std::map<std::int32_t, WindowTickStats> window_ticks;
     std::unordered_map<std::uint64_t, std::vector<Sample>> buckets;
+    std::size_t pending_samples = 0;
+    std::size_t profile_nodes_remaining = kMaxProfileNodes;
     std::vector<std::uint8_t> tick_decisions;
     std::unordered_map<std::uintptr_t, ModuleId> module_cache;
 
@@ -584,6 +654,9 @@ struct AllocationSampler::Impl {
         Impl *self = active();
         if (self == nullptr) {
             std::abort();
+        }
+        if (self->tracking.load(std::memory_order_relaxed)) {
+            self->hook_calls.fetch_add(1, std::memory_order_relaxed);
         }
         return self;
     }
@@ -727,47 +800,137 @@ struct AllocationSampler::Impl {
         return self->handleHeapFree(self->real_heap_free, heap, flags, pointer);
     }
 
+    ThreadSamplingState *currentThreadState() noexcept
+    {
+        if (tls_index == TLS_OUT_OF_INDEXES) {
+            return nullptr;
+        }
+
+        PTEB teb = ::NtCurrentTeb();
+        // Reserved1[11] is the documented SDK view of the native TEB
+        // ThreadLocalStoragePointer slot. It is null while LdrpAllocateTls is
+        // building a new thread's static TLS vector; hooks must stay pass-through
+        // until that loader operation finishes.
+        if (teb == nullptr || teb->Reserved1[11] == nullptr) {
+            return nullptr;
+        }
+
+        void *value = ::TlsGetValue(tls_index);
+        if (value == reinterpret_cast<void *>(static_cast<std::uintptr_t>(1))) {
+            return nullptr;
+        }
+        auto *state = static_cast<ThreadSamplingState *>(value);
+        const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(state);
+        const std::uintptr_t begin =
+            reinterpret_cast<std::uintptr_t>(thread_states.data());
+        const std::size_t state_limit =
+            config.thread_state_limit_for_testing == 0
+                ? thread_states.size()
+                : (std::min)(
+                      thread_states.size(),
+                      static_cast<std::size_t>(
+                          config.thread_state_limit_for_testing));
+        const std::uintptr_t end =
+            begin + state_limit * sizeof(ThreadSamplingState);
+        if (address >= begin && address < end &&
+            state->registry_state.load(std::memory_order_acquire) != 0 &&
+            state->teb.load(std::memory_order_acquire) == teb) {
+            return state;
+        }
+
+        for (std::size_t i = 0; i < state_limit; ++i) {
+            ThreadSamplingState &candidate = thread_states[i];
+            if (candidate.registry_state.load(std::memory_order_acquire) == 1 &&
+                candidate.teb.load(std::memory_order_acquire) == teb) {
+                return &candidate;
+            }
+        }
+
+        ThreadSamplingState *claimed = nullptr;
+        for (std::size_t i = 0; i < state_limit; ++i) {
+            ThreadSamplingState &candidate = thread_states[i];
+            std::uint8_t expected = 0;
+            if (candidate.registry_state.compare_exchange_strong(
+                    expected, 1, std::memory_order_acq_rel)) {
+                claimed = &candidate;
+                break;
+            }
+            expected = 2;
+            if (candidate.registry_state.compare_exchange_strong(
+                    expected, 3, std::memory_order_acq_rel)) {
+                if (candidate.thread_handle != nullptr &&
+                    ::WaitForSingleObject(candidate.thread_handle, 0) == WAIT_OBJECT_0) {
+                    ::CloseHandle(candidate.thread_handle);
+                    candidate.thread_handle = nullptr;
+                    candidate.registry_state.store(1, std::memory_order_release);
+                    claimed = &candidate;
+                    break;
+                }
+                candidate.registry_state.store(2, std::memory_order_release);
+            }
+        }
+        if (claimed == nullptr) {
+            thread_state_drops.fetch_add(1, std::memory_order_relaxed);
+            return nullptr;
+        }
+
+        claimed->teb.store(teb, std::memory_order_release);
+        claimed->bytes = {};
+        claimed->identity_generation = 0;
+        claimed->session_thread_id = 0;
+        claimed->os_thread_id = static_cast<std::uint64_t>(::GetCurrentThreadId());
+        claimed->inside_hook = true;
+        claimed->tracking_suppressed = false;
+        HANDLE thread_handle = nullptr;
+        if (::DuplicateHandle(::GetCurrentProcess(), ::GetCurrentThread(),
+                              ::GetCurrentProcess(), &thread_handle, SYNCHRONIZE,
+                              FALSE, 0) != FALSE) {
+            claimed->thread_handle = thread_handle;
+        }
+        if (::TlsSetValue(tls_index, claimed) == FALSE) {
+            if (claimed->thread_handle != nullptr) {
+                ::CloseHandle(claimed->thread_handle);
+                claimed->thread_handle = nullptr;
+            }
+            claimed->inside_hook = false;
+            claimed->teb.store(nullptr, std::memory_order_release);
+            claimed->registry_state.store(0, std::memory_order_release);
+            thread_state_drops.fetch_add(1, std::memory_order_relaxed);
+            return nullptr;
+        }
+        claimed->inside_hook = false;
+        claimed->registry_state.store(2, std::memory_order_release);
+        return claimed;
+    }
+
     bool shouldTrackCurrentThread() const noexcept
     {
-        if (!tracking.load(std::memory_order_relaxed) ||
-            ::GetCurrentThreadId() !=
-                static_cast<DWORD>(target_tid.load(std::memory_order_relaxed))) {
+        if (!tracking.load(std::memory_order_relaxed)) {
             return false;
         }
-        // TLS access can itself allocate while Windows is constructing a new
-        // thread's TLS vector. Only the already-established target server
-        // thread may reach this read; all other threads stay on the TLS-free
-        // pass-through path.
-        return !tracking_suppressed;
+        auto *self = const_cast<Impl *>(this);
+        ThreadSamplingState *state = self->currentThreadState();
+        return state != nullptr && !state->tracking_suppressed;
     }
 
-    static std::size_t liveIndexSlot(void *pointer) noexcept
+    static std::uint64_t liveIndexHash(void *pointer) noexcept
     {
         const auto value = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer) >> 4);
-        return static_cast<std::size_t>((value * 11400714819323198485ull) &
-                                        (kLiveIndexCapacity - 1));
+        return value * 11400714819323198485ull;
     }
 
-    std::uint64_t lookupAllocationId(void *pointer) noexcept
+    static std::size_t liveIndexShard(std::uint64_t hash) noexcept
     {
-        if (pointer == nullptr || live_index == nullptr) {
-            return 0;
-        }
-        ::AcquireSRWLockShared(&live_index_lock);
-        const std::size_t start = liveIndexSlot(pointer);
-        std::uint64_t result = 0;
-        for (std::size_t offset = 0; offset < kLiveIndexCapacity; ++offset) {
-            const LiveIndexEntry &entry = live_index[(start + offset) & (kLiveIndexCapacity - 1)];
-            if (entry.pointer == nullptr) {
-                break;
-            }
-            if (entry.pointer == pointer) {
-                result = entry.allocation_id;
-                break;
-            }
-        }
-        ::ReleaseSRWLockShared(&live_index_lock);
-        return result;
+        return static_cast<std::size_t>(hash & (kLiveIndexShards - 1));
+    }
+
+    static std::size_t liveIndexSlot(std::uint64_t hash, std::size_t shard,
+                                     std::size_t offset = 0) noexcept
+    {
+        const std::size_t within =
+            (static_cast<std::size_t>(hash >> 6) + offset) &
+            (kLiveIndexShardCapacity - 1);
+        return shard * kLiveIndexShardCapacity + within;
     }
 
     void retireAllocation(LiveAllocation *allocation, std::uint64_t released_ms) noexcept
@@ -788,52 +951,92 @@ struct AllocationSampler::Impl {
         ::InterlockedPushEntrySList(&free_live_allocations, &allocation->entry);
     }
 
-    bool releaseAllocation(void *pointer, std::uint64_t expected_id) noexcept
+    LiveAllocation *detachAllocation(void *pointer) noexcept
     {
-        if (pointer == nullptr || expected_id == 0 || live_index == nullptr) {
-            return false;
+        if (pointer == nullptr || live_index == nullptr) {
+            return nullptr;
         }
-        LiveAllocation *released = nullptr;
-        ::AcquireSRWLockExclusive(&live_index_lock);
-        const std::size_t start = liveIndexSlot(pointer);
-        for (std::size_t offset = 0; offset < kLiveIndexCapacity; ++offset) {
-            LiveIndexEntry &entry = live_index[(start + offset) & (kLiveIndexCapacity - 1)];
+        const std::uint64_t hash = liveIndexHash(pointer);
+        const std::size_t shard = liveIndexShard(hash);
+        ::AcquireSRWLockExclusive(&live_index_locks[shard]);
+        LiveAllocation *detached = nullptr;
+        for (std::size_t offset = 0; offset < kLiveIndexShardCapacity; ++offset) {
+            LiveIndexEntry &entry =
+                live_index[liveIndexSlot(hash, shard, offset)];
             if (entry.pointer == nullptr) {
                 break;
             }
-            if (entry.pointer == pointer && entry.allocation_id == expected_id) {
-                released = entry.allocation;
-                entry.pointer = reinterpret_cast<void *>(static_cast<std::uintptr_t>(1));
+            if (entry.pointer == pointer) {
+                if (entry.allocation == nullptr ||
+                    entry.allocation_id != entry.allocation->allocation_id) {
+                    lifecycle_dropped.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+                detached = entry.allocation;
+                entry.pointer =
+                    reinterpret_cast<void *>(static_cast<std::uintptr_t>(1));
                 entry.allocation_id = 0;
                 entry.allocation = nullptr;
                 break;
             }
         }
-        ::ReleaseSRWLockExclusive(&live_index_lock);
-        if (released != nullptr) {
-            retireAllocation(released, monotonicMs());
-            return true;
+        ::ReleaseSRWLockExclusive(&live_index_locks[shard]);
+        return detached;
+    }
+
+    void restoreDetachedAllocation(LiveAllocation *allocation) noexcept
+    {
+        if (allocation == nullptr) {
+            return;
         }
-        return false;
+        if (!insertLiveAllocation(allocation)) {
+            lifecycle_dropped.fetch_add(1, std::memory_order_relaxed);
+            live_samples.fetch_sub(1, std::memory_order_relaxed);
+            live_bytes.fetch_sub(allocation->weight_bytes,
+                                 std::memory_order_relaxed);
+            ::InterlockedPushEntrySList(&free_live_allocations,
+                                        &allocation->entry);
+        }
     }
 
     void handleFree(FreeFn function, void *pointer) noexcept
     {
+        if (!shouldTrackCurrentThread()) {
+            function(pointer);
+            return;
+        }
         TrackingCallGuard tracking_call(*this);
-        const std::uint64_t allocation_id = tracking_call ? lookupAllocationId(pointer) : 0;
+        RecursionGuard recursion(*this);
+        if (!tracking_call || !recursion.owner()) {
+            function(pointer);
+            return;
+        }
+        LiveAllocation *allocation = detachAllocation(pointer);
         function(pointer);
-        if (tracking_call) {
-            releaseAllocation(pointer, allocation_id);
+        if (allocation != nullptr) {
+            retireAllocation(allocation, monotonicMs());
         }
     }
 
     BOOL handleHeapFree(HeapFreeFn function, HANDLE heap, DWORD flags, void *pointer) noexcept
     {
+        if (!shouldTrackCurrentThread()) {
+            return function(heap, flags, pointer);
+        }
         TrackingCallGuard tracking_call(*this);
-        const std::uint64_t allocation_id = tracking_call ? lookupAllocationId(pointer) : 0;
+        RecursionGuard recursion(*this);
+        if (!tracking_call || !recursion.owner()) {
+            return function(heap, flags, pointer);
+        }
+        LiveAllocation *allocation = detachAllocation(pointer);
         const BOOL result = function(heap, flags, pointer);
-        if (tracking_call && result != FALSE) {
-            releaseAllocation(pointer, allocation_id);
+        if (result != FALSE) {
+            if (allocation != nullptr) {
+                retireAllocation(allocation, monotonicMs());
+            }
+        }
+        else {
+            restoreDetachedAllocation(allocation);
         }
         return result;
     }
@@ -847,7 +1050,7 @@ struct AllocationSampler::Impl {
         if (!tracking_call) {
             return function(requested_size);
         }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(requested_size);
         }
@@ -867,7 +1070,7 @@ struct AllocationSampler::Impl {
         if (!tracking_call) {
             return function(count, requested_size);
         }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(count, requested_size);
         }
@@ -883,30 +1086,30 @@ struct AllocationSampler::Impl {
 
     void *handleRealloc(ReallocFn function, void *pointer, std::size_t requested_size) noexcept
     {
+        if (!shouldTrackCurrentThread()) {
+            return function(pointer, requested_size);
+        }
         TrackingCallGuard tracking_call(*this);
         if (!tracking_call) {
             return function(pointer, requested_size);
         }
-        const bool target_thread = ::GetCurrentThreadId() ==
-                                   static_cast<DWORD>(target_tid.load(std::memory_order_relaxed));
-        if (!target_thread) {
-            const std::uint64_t previous_id = lookupAllocationId(pointer);
-            void *new_pointer = function(pointer, requested_size);
-            if (new_pointer != nullptr || (pointer != nullptr && requested_size == 0)) {
-                releaseAllocation(pointer, previous_id);
-            }
-            return new_pointer;
-        }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(pointer, requested_size);
         }
-        const std::uint64_t previous_id = lookupAllocationId(pointer);
+        LiveAllocation *previous = detachAllocation(pointer);
         void *new_pointer = function(pointer, requested_size);
-        if (new_pointer != nullptr || (pointer != nullptr && requested_size == 0)) {
-            releaseAllocation(pointer, previous_id);
+        const bool replaced =
+            new_pointer != nullptr || (pointer != nullptr && requested_size == 0);
+        if (replaced) {
+            if (previous != nullptr) {
+                retireAllocation(previous, monotonicMs());
+            }
         }
-        if (target_thread && new_pointer != nullptr && requested_size != 0) {
+        else {
+            restoreDetachedAllocation(previous);
+        }
+        if (new_pointer != nullptr && requested_size != 0) {
             // Allocation mode measures successful allocation requests. This avoids
             // an extra _msize heap query on every sample-path allocation and matches
             // the profiler's pressure-oriented semantics better than usable size.
@@ -918,34 +1121,33 @@ struct AllocationSampler::Impl {
     void *handleRecalloc(RecallocFn function, void *pointer, std::size_t count,
                          std::size_t requested_size) noexcept
     {
+        if (!shouldTrackCurrentThread()) {
+            return function(pointer, count, requested_size);
+        }
         TrackingCallGuard tracking_call(*this);
         if (!tracking_call) {
             return function(pointer, count, requested_size);
         }
-        const bool target_thread = ::GetCurrentThreadId() ==
-                                   static_cast<DWORD>(target_tid.load(std::memory_order_relaxed));
-        if (!target_thread) {
-            std::uint64_t bytes = 0;
-            const bool valid_size = checkedMultiply(count, requested_size, bytes);
-            const std::uint64_t previous_id = lookupAllocationId(pointer);
-            void *new_pointer = function(pointer, count, requested_size);
-            if (new_pointer != nullptr || (pointer != nullptr && valid_size && bytes == 0)) {
-                releaseAllocation(pointer, previous_id);
-            }
-            return new_pointer;
-        }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(pointer, count, requested_size);
         }
         std::uint64_t bytes = 0;
         const bool valid_size = checkedMultiply(count, requested_size, bytes);
-        const std::uint64_t previous_id = lookupAllocationId(pointer);
+        LiveAllocation *previous = detachAllocation(pointer);
         void *new_pointer = function(pointer, count, requested_size);
-        if (new_pointer != nullptr || (pointer != nullptr && valid_size && bytes == 0)) {
-            releaseAllocation(pointer, previous_id);
+        const bool replaced =
+            new_pointer != nullptr ||
+            (pointer != nullptr && valid_size && bytes == 0);
+        if (replaced) {
+            if (previous != nullptr) {
+                retireAllocation(previous, monotonicMs());
+            }
         }
-        if (target_thread && new_pointer != nullptr && valid_size && bytes != 0) {
+        else {
+            restoreDetachedAllocation(previous);
+        }
+        if (new_pointer != nullptr && valid_size && bytes != 0) {
             recordAllocation(new_pointer, bytes);
         }
         return new_pointer;
@@ -960,7 +1162,7 @@ struct AllocationSampler::Impl {
         if (!tracking_call) {
             return function(size, alignment);
         }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(size, alignment);
         }
@@ -974,30 +1176,30 @@ struct AllocationSampler::Impl {
     void *handleAlignedRealloc(AlignedReallocFn function, void *pointer, std::size_t size,
                                std::size_t alignment) noexcept
     {
+        if (!shouldTrackCurrentThread()) {
+            return function(pointer, size, alignment);
+        }
         TrackingCallGuard tracking_call(*this);
         if (!tracking_call) {
             return function(pointer, size, alignment);
         }
-        const bool target_thread = ::GetCurrentThreadId() ==
-                                   static_cast<DWORD>(target_tid.load(std::memory_order_relaxed));
-        if (!target_thread) {
-            const std::uint64_t previous_id = lookupAllocationId(pointer);
-            void *new_pointer = function(pointer, size, alignment);
-            if (new_pointer != nullptr || (pointer != nullptr && size == 0)) {
-                releaseAllocation(pointer, previous_id);
-            }
-            return new_pointer;
-        }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(pointer, size, alignment);
         }
-        const std::uint64_t previous_id = lookupAllocationId(pointer);
+        LiveAllocation *previous = detachAllocation(pointer);
         void *new_pointer = function(pointer, size, alignment);
-        if (new_pointer != nullptr || (pointer != nullptr && size == 0)) {
-            releaseAllocation(pointer, previous_id);
+        const bool replaced =
+            new_pointer != nullptr || (pointer != nullptr && size == 0);
+        if (replaced) {
+            if (previous != nullptr) {
+                retireAllocation(previous, monotonicMs());
+            }
         }
-        if (target_thread && new_pointer != nullptr && size != 0) {
+        else {
+            restoreDetachedAllocation(previous);
+        }
+        if (new_pointer != nullptr && size != 0) {
             recordAllocation(new_pointer, static_cast<std::uint64_t>(size));
         }
         return new_pointer;
@@ -1006,34 +1208,33 @@ struct AllocationSampler::Impl {
     void *handleAlignedRecalloc(AlignedRecallocFn function, void *pointer, std::size_t count,
                                 std::size_t size, std::size_t alignment) noexcept
     {
+        if (!shouldTrackCurrentThread()) {
+            return function(pointer, count, size, alignment);
+        }
         TrackingCallGuard tracking_call(*this);
         if (!tracking_call) {
             return function(pointer, count, size, alignment);
         }
-        const bool target_thread = ::GetCurrentThreadId() ==
-                                   static_cast<DWORD>(target_tid.load(std::memory_order_relaxed));
-        if (!target_thread) {
-            std::uint64_t bytes = 0;
-            const bool valid_size = checkedMultiply(count, size, bytes);
-            const std::uint64_t previous_id = lookupAllocationId(pointer);
-            void *new_pointer = function(pointer, count, size, alignment);
-            if (new_pointer != nullptr || (pointer != nullptr && valid_size && bytes == 0)) {
-                releaseAllocation(pointer, previous_id);
-            }
-            return new_pointer;
-        }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(pointer, count, size, alignment);
         }
         std::uint64_t bytes = 0;
         const bool valid_size = checkedMultiply(count, size, bytes);
-        const std::uint64_t previous_id = lookupAllocationId(pointer);
+        LiveAllocation *previous = detachAllocation(pointer);
         void *new_pointer = function(pointer, count, size, alignment);
-        if (new_pointer != nullptr || (pointer != nullptr && valid_size && bytes == 0)) {
-            releaseAllocation(pointer, previous_id);
+        const bool replaced =
+            new_pointer != nullptr ||
+            (pointer != nullptr && valid_size && bytes == 0);
+        if (replaced) {
+            if (previous != nullptr) {
+                retireAllocation(previous, monotonicMs());
+            }
         }
-        if (target_thread && new_pointer != nullptr && valid_size && bytes != 0) {
+        else {
+            restoreDetachedAllocation(previous);
+        }
+        if (new_pointer != nullptr && valid_size && bytes != 0) {
             recordAllocation(new_pointer, bytes);
         }
         return new_pointer;
@@ -1049,7 +1250,7 @@ struct AllocationSampler::Impl {
         if (!tracking_call) {
             return function(size, alignment, offset);
         }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(size, alignment, offset);
         }
@@ -1063,30 +1264,30 @@ struct AllocationSampler::Impl {
     void *handleAlignedOffsetRealloc(AlignedOffsetReallocFn function, void *pointer, std::size_t size,
                                      std::size_t alignment, std::size_t offset) noexcept
     {
+        if (!shouldTrackCurrentThread()) {
+            return function(pointer, size, alignment, offset);
+        }
         TrackingCallGuard tracking_call(*this);
         if (!tracking_call) {
             return function(pointer, size, alignment, offset);
         }
-        const bool target_thread = ::GetCurrentThreadId() ==
-                                   static_cast<DWORD>(target_tid.load(std::memory_order_relaxed));
-        if (!target_thread) {
-            const std::uint64_t previous_id = lookupAllocationId(pointer);
-            void *new_pointer = function(pointer, size, alignment, offset);
-            if (new_pointer != nullptr || (pointer != nullptr && size == 0)) {
-                releaseAllocation(pointer, previous_id);
-            }
-            return new_pointer;
-        }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(pointer, size, alignment, offset);
         }
-        const std::uint64_t previous_id = lookupAllocationId(pointer);
+        LiveAllocation *previous = detachAllocation(pointer);
         void *new_pointer = function(pointer, size, alignment, offset);
-        if (new_pointer != nullptr || (pointer != nullptr && size == 0)) {
-            releaseAllocation(pointer, previous_id);
+        const bool replaced =
+            new_pointer != nullptr || (pointer != nullptr && size == 0);
+        if (replaced) {
+            if (previous != nullptr) {
+                retireAllocation(previous, monotonicMs());
+            }
         }
-        if (target_thread && new_pointer != nullptr && size != 0) {
+        else {
+            restoreDetachedAllocation(previous);
+        }
+        if (new_pointer != nullptr && size != 0) {
             recordAllocation(new_pointer, static_cast<std::uint64_t>(size));
         }
         return new_pointer;
@@ -1095,34 +1296,33 @@ struct AllocationSampler::Impl {
     void *handleAlignedOffsetRecalloc(AlignedOffsetRecallocFn function, void *pointer, std::size_t count,
                                       std::size_t size, std::size_t alignment, std::size_t offset) noexcept
     {
+        if (!shouldTrackCurrentThread()) {
+            return function(pointer, count, size, alignment, offset);
+        }
         TrackingCallGuard tracking_call(*this);
         if (!tracking_call) {
             return function(pointer, count, size, alignment, offset);
         }
-        const bool target_thread = ::GetCurrentThreadId() ==
-                                   static_cast<DWORD>(target_tid.load(std::memory_order_relaxed));
-        if (!target_thread) {
-            std::uint64_t bytes = 0;
-            const bool valid_size = checkedMultiply(count, size, bytes);
-            const std::uint64_t previous_id = lookupAllocationId(pointer);
-            void *new_pointer = function(pointer, count, size, alignment, offset);
-            if (new_pointer != nullptr || (pointer != nullptr && valid_size && bytes == 0)) {
-                releaseAllocation(pointer, previous_id);
-            }
-            return new_pointer;
-        }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(pointer, count, size, alignment, offset);
         }
         std::uint64_t bytes = 0;
         const bool valid_size = checkedMultiply(count, size, bytes);
-        const std::uint64_t previous_id = lookupAllocationId(pointer);
+        LiveAllocation *previous = detachAllocation(pointer);
         void *new_pointer = function(pointer, count, size, alignment, offset);
-        if (new_pointer != nullptr || (pointer != nullptr && valid_size && bytes == 0)) {
-            releaseAllocation(pointer, previous_id);
+        const bool replaced =
+            new_pointer != nullptr ||
+            (pointer != nullptr && valid_size && bytes == 0);
+        if (replaced) {
+            if (previous != nullptr) {
+                retireAllocation(previous, monotonicMs());
+            }
         }
-        if (target_thread && new_pointer != nullptr && valid_size && bytes != 0) {
+        else {
+            restoreDetachedAllocation(previous);
+        }
+        if (new_pointer != nullptr && valid_size && bytes != 0) {
             recordAllocation(new_pointer, bytes);
         }
         return new_pointer;
@@ -1138,7 +1338,7 @@ struct AllocationSampler::Impl {
         if (!tracking_call) {
             return function(heap, flags, requested_size);
         }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(heap, flags, requested_size);
         }
@@ -1152,28 +1352,26 @@ struct AllocationSampler::Impl {
     void *handleHeapReAlloc(HeapReAllocFn function, HANDLE heap, DWORD flags, void *pointer,
                             SIZE_T requested_size) noexcept
     {
+        if (!shouldTrackCurrentThread()) {
+            return function(heap, flags, pointer, requested_size);
+        }
         TrackingCallGuard tracking_call(*this);
         if (!tracking_call) {
             return function(heap, flags, pointer, requested_size);
         }
-        const bool target_thread = ::GetCurrentThreadId() ==
-                                   static_cast<DWORD>(target_tid.load(std::memory_order_relaxed));
-        if (!target_thread) {
-            const std::uint64_t previous_id = lookupAllocationId(pointer);
-            void *new_pointer = function(heap, flags, pointer, requested_size);
-            if (new_pointer != nullptr) {
-                releaseAllocation(pointer, previous_id);
-            }
-            return new_pointer;
-        }
-        RecursionGuard recursion;
+        RecursionGuard recursion(*this);
         if (!recursion.owner()) {
             return function(heap, flags, pointer, requested_size);
         }
-        const std::uint64_t previous_id = lookupAllocationId(pointer);
+        LiveAllocation *previous = detachAllocation(pointer);
         void *new_pointer = function(heap, flags, pointer, requested_size);
         if (new_pointer != nullptr) {
-            releaseAllocation(pointer, previous_id);
+            if (previous != nullptr) {
+                retireAllocation(previous, monotonicMs());
+            }
+        }
+        else {
+            restoreDetachedAllocation(previous);
         }
         if (new_pointer != nullptr && requested_size != 0) {
             recordAllocation(new_pointer, static_cast<std::uint64_t>(requested_size));
@@ -1185,11 +1383,12 @@ struct AllocationSampler::Impl {
     {
         LiveAllocation *replaced = nullptr;
         bool inserted = false;
-        ::AcquireSRWLockExclusive(&live_index_lock);
-        const std::size_t start = liveIndexSlot(allocation->pointer);
+        const std::uint64_t hash = liveIndexHash(allocation->pointer);
+        const std::size_t shard = liveIndexShard(hash);
+        ::AcquireSRWLockExclusive(&live_index_locks[shard]);
         std::size_t tombstone = kLiveIndexCapacity;
-        for (std::size_t offset = 0; offset < kLiveIndexCapacity; ++offset) {
-            const std::size_t slot = (start + offset) & (kLiveIndexCapacity - 1);
+        for (std::size_t offset = 0; offset < kLiveIndexShardCapacity; ++offset) {
+            const std::size_t slot = liveIndexSlot(hash, shard, offset);
             LiveIndexEntry &entry = live_index[slot];
             if (entry.pointer == reinterpret_cast<void *>(static_cast<std::uintptr_t>(1))) {
                 if (tombstone == kLiveIndexCapacity) {
@@ -1216,33 +1415,54 @@ struct AllocationSampler::Impl {
                 {allocation->pointer, allocation->allocation_id, allocation};
             inserted = true;
         }
-        ::ReleaseSRWLockExclusive(&live_index_lock);
+        ::ReleaseSRWLockExclusive(&live_index_locks[shard]);
 
         if (replaced != nullptr) {
-            lifecycle_dropped.fetch_add(1, std::memory_order_relaxed);
-            live_samples.fetch_sub(1, std::memory_order_relaxed);
-            live_bytes.fetch_sub(replaced->weight_bytes, std::memory_order_relaxed);
-            ::InterlockedPushEntrySList(&free_live_allocations, &replaced->entry);
+            // Reuse proves that the previous allocation ended even when its
+            // deallocation bypassed the covered free entry points.
+            retireAllocation(replaced, monotonicMs());
         }
         return inserted;
     }
 
     void recordAllocation(void *pointer, std::uint64_t requested_bytes) noexcept
     {
+        successful_allocation_calls.fetch_add(1, std::memory_order_relaxed);
         if (requested_bytes == 0) {
             return;
         }
         observed_bytes.fetch_add(requested_bytes, std::memory_order_relaxed);
 
-        ByteSamplingState &state = thread_sampling;
+        ThreadSamplingState *thread_pointer = currentThreadState();
+        if (thread_pointer == nullptr) {
+            dropped_samples.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        ThreadSamplingState &thread = *thread_pointer;
+        ByteSamplingState &state = thread.bytes;
         const std::uint64_t current_generation = generation.load(std::memory_order_relaxed);
         const std::uint64_t interval = interval_bytes.load(std::memory_order_relaxed);
+        const std::uint64_t current_tid = static_cast<std::uint64_t>(::GetCurrentThreadId());
         if (state.generation != current_generation) {
             resetByteSamplingState(
                 state, current_generation,
                 sampling_seed.load(std::memory_order_relaxed) ^ current_generation ^
-                    static_cast<std::uint64_t>(::GetCurrentThreadId()),
+                    current_tid,
                 interval);
+        }
+        if (thread.identity_generation != current_generation) {
+            thread.identity_generation = current_generation;
+            thread.os_thread_id = current_tid;
+            const std::uint64_t next =
+                next_session_thread_id.fetch_add(1, std::memory_order_relaxed);
+            if (next <= kMaxSampledThreads) {
+                thread.session_thread_id = next;
+                registered_threads.fetch_add(1, std::memory_order_relaxed);
+            }
+            else {
+                thread.session_thread_id = kOverflowThreadId;
+                overflow_threads.fetch_add(1, std::memory_order_relaxed);
+            }
         }
 
         const std::uint64_t sample_points =
@@ -1250,6 +1470,7 @@ struct AllocationSampler::Impl {
         if (sample_points == 0) {
             return;
         }
+        sampling_points.fetch_add(sample_points, std::memory_order_relaxed);
 
         // Each sampling point represents one configured interval. Unlike the old
         // accumulated-byte scheme, bytes from preceding allocations are not
@@ -1270,11 +1491,15 @@ struct AllocationSampler::Impl {
         allocation->requested_bytes = requested_bytes;
         allocation->allocated_ms = monotonicMs();
         allocation->tick_id = current_tick.load(std::memory_order_relaxed);
+        allocation->thread_id = thread.session_thread_id;
+        allocation->os_thread_id = thread.os_thread_id;
         const std::uint64_t started = started_tick_ms.load(std::memory_order_relaxed);
         allocation->window = static_cast<std::int32_t>(
-            started > 0 && allocation->allocated_ms >= started
-                ? (allocation->allocated_ms - started) / 1000
-                : 0);
+            (std::min)(
+                static_cast<std::uint64_t>(kMaxProfileWindows - 1),
+                started > 0 && allocation->allocated_ms >= started
+                    ? (allocation->allocated_ms - started) / 1000
+                    : 0));
         allocation->depth = static_cast<std::uint16_t>(::RtlCaptureStackBackTrace(
             kFramesToSkip, static_cast<ULONG>(kStackDepth), allocation->frames, nullptr));
         if (allocation->depth == 0 || !insertLiveAllocation(allocation)) {
@@ -1283,8 +1508,14 @@ struct AllocationSampler::Impl {
             ::InterlockedPushEntrySList(&free_live_allocations, &allocation->entry);
             return;
         }
-        live_samples.fetch_add(1, std::memory_order_relaxed);
+        const std::uint64_t current_live =
+            live_samples.fetch_add(1, std::memory_order_relaxed) + 1;
         live_bytes.fetch_add(weight, std::memory_order_relaxed);
+        std::uint64_t previous_peak = peak_live_samples.load(std::memory_order_relaxed);
+        while (previous_peak < current_live &&
+               !peak_live_samples.compare_exchange_weak(
+                   previous_peak, current_live, std::memory_order_relaxed)) {
+        }
 
         if (config.live_only) {
             return;
@@ -1293,16 +1524,28 @@ struct AllocationSampler::Impl {
         PSLIST_ENTRY entry = ::InterlockedPopEntrySList(&free_events);
         if (entry == nullptr) {
             dropped_samples.fetch_add(1, std::memory_order_relaxed);
+            dropped_events.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         auto *event = CONTAINING_RECORD(entry, AllocationEvent, entry);
         event->weight_bytes = weight;
         event->tick_id = allocation->tick_id;
+        event->thread_id = allocation->thread_id;
+        event->os_thread_id = allocation->os_thread_id;
         event->window = allocation->window;
         event->depth = allocation->depth;
         std::memcpy(event->frames, allocation->frames,
                     static_cast<std::size_t>(allocation->depth) * sizeof(void *));
+        const std::uint64_t ready =
+            ready_event_count.fetch_add(1, std::memory_order_relaxed) + 1;
+        std::uint64_t previous_high_water =
+            ready_event_high_water.load(std::memory_order_relaxed);
+        while (previous_high_water < ready &&
+               !ready_event_high_water.compare_exchange_weak(
+                   previous_high_water, ready, std::memory_order_relaxed)) {
+        }
         ::InterlockedPushEntrySList(&ready_events, &event->entry);
+        enqueued_samples.fetch_add(1, std::memory_order_relaxed);
     }
 
     bool allocateEventPool(std::string &error)
@@ -1531,6 +1774,14 @@ struct AllocationSampler::Impl {
         if (hooks_prepared) {
             return true;
         }
+        if (tls_index == TLS_OUT_OF_INDEXES) {
+            tls_index = ::TlsAlloc();
+            if (tls_index == TLS_OUT_OF_INDEXES) {
+                error = "TlsAlloc for allocation thread state failed: " +
+                        std::to_string(::GetLastError());
+                return false;
+            }
+        }
 
         HMODULE ucrt = ::GetModuleHandleW(L"ucrtbase.dll");
         if (ucrt == nullptr) {
@@ -1653,6 +1904,15 @@ struct AllocationSampler::Impl {
         return true;
     }
 
+    static bool anyActiveHookCalls() noexcept
+    {
+        return std::any_of(
+            active_hook_calls.begin(), active_hook_calls.end(),
+            [](const HookCounter &counter) {
+                return counter.value.load(std::memory_order_acquire) != 0;
+            });
+    }
+
     bool uninstallHooks(std::string &error)
     {
         if (!hooks_installed.load(std::memory_order_acquire)) {
@@ -1661,6 +1921,30 @@ struct AllocationSampler::Impl {
 
         SuspendedProcessThreads suspended;
         if (!suspended.suspendStable(error)) {
+            return false;
+        }
+
+        bool instruction_in_protected_code = false;
+        DWORD inspect_failure = ERROR_SUCCESS;
+        DWORD inspect_thread = 0;
+        const bool inspected = suspended.anyInstructionPointerInRanges(
+            protected_code_ranges, instruction_in_protected_code,
+            inspect_failure, inspect_thread);
+        const bool active_calls = anyActiveHookCalls();
+        if (!inspected || instruction_in_protected_code || active_calls) {
+            std::string resume_error;
+            const bool resumed = suspended.resume(resume_error);
+            if (!inspected) {
+                error = "GetThreadContext failed for thread " +
+                        std::to_string(inspect_thread) + ": " +
+                        std::to_string(inspect_failure);
+            }
+            else {
+                error = "allocation hook calls are still active during shutdown";
+            }
+            if (!resumed) {
+                error += "; " + resume_error;
+            }
             return false;
         }
 
@@ -1713,8 +1997,7 @@ struct AllocationSampler::Impl {
             const bool inspected = suspended.anyInstructionPointerInRanges(
                 protected_code_ranges, instruction_in_protected_code, inspect_failure,
                 inspect_thread);
-            const std::uint64_t active_calls =
-                active_hook_calls.load(std::memory_order_acquire);
+            const bool active_calls = anyActiveHookCalls();
             std::string resume_error;
             const bool resumed = suspended.resume(resume_error);
             if (!inspected) {
@@ -1729,7 +2012,7 @@ struct AllocationSampler::Impl {
                 error = resume_error;
                 return false;
             }
-            if (!instruction_in_protected_code && active_calls == 0) {
+            if (!instruction_in_protected_code && !active_calls) {
                 return true;
             }
             if (monotonicMs() >= deadline) {
@@ -1743,6 +2026,7 @@ struct AllocationSampler::Impl {
     bool destroyHooks(std::string &error)
     {
         if (hooks == nullptr) {
+            releaseThreadStateRegistry();
             return true;
         }
         if (hooks_installed.load(std::memory_order_acquire)) {
@@ -1765,7 +2049,24 @@ struct AllocationSampler::Impl {
         active_instance.compare_exchange_strong(expected, nullptr, std::memory_order_release,
                                                 std::memory_order_relaxed);
         clearFunctionPointers();
+        releaseThreadStateRegistry();
         return true;
+    }
+
+    void releaseThreadStateRegistry() noexcept
+    {
+        if (tls_index != TLS_OUT_OF_INDEXES) {
+            ::TlsFree(tls_index);
+            tls_index = TLS_OUT_OF_INDEXES;
+        }
+        for (ThreadSamplingState &state : thread_states) {
+            if (state.thread_handle != nullptr) {
+                ::CloseHandle(state.thread_handle);
+                state.thread_handle = nullptr;
+            }
+            state.teb.store(nullptr, std::memory_order_relaxed);
+            state.registry_state.store(0, std::memory_order_relaxed);
+        }
     }
 
     void clearFunctionPointers() noexcept
@@ -1817,7 +2118,9 @@ struct AllocationSampler::Impl {
                                      : 0;
             module_path = length > 0 ? std::string(path, length) : std::string("unknown");
             module_id = modules.intern(module_path);
-            module_cache.emplace(module_base, module_id);
+            if (module_cache.size() < kMaxModuleCacheEntries) {
+                module_cache.emplace(module_base, module_id);
+            }
         }
 
         FrameKey key;
@@ -1829,7 +2132,20 @@ struct AllocationSampler::Impl {
 
     void acceptSample(const Sample &sample)
     {
-        tree.log(sample.frames, sample.window, sample.weight);
+        bool complete = tree.logBounded(sample.frames, sample.window, sample.weight,
+                                        profile_nodes_remaining);
+        auto [it, inserted] = thread_trees.try_emplace(sample.thread_id);
+        ThreadCallTree &thread = it->second;
+        if (inserted) {
+            thread.thread_id = sample.thread_id;
+            thread.thread_name = sample.thread_name;
+        }
+        complete = thread.tree.logBounded(sample.frames, sample.window,
+                                          sample.weight, profile_nodes_remaining) &&
+                   complete;
+        if (!complete) {
+            profile_nodes_exhausted.store(true, std::memory_order_relaxed);
+        }
         sample_count.fetch_add(1, std::memory_order_relaxed);
         sampled_bytes.fetch_add(sample.weight, std::memory_order_relaxed);
     }
@@ -1845,13 +2161,30 @@ struct AllocationSampler::Impl {
                 acceptSample(sample);
             }
         }
+        pending_samples -= it->second.size();
         buckets.erase(it);
     }
 
     bool buildSample(void *const *frames, std::uint16_t depth, std::uint64_t tick_id,
+                     std::uint64_t thread_id, std::uint64_t os_thread_id,
                      std::int32_t window, std::uint64_t weight, Sample &sample)
     {
         sample.tick_id = tick_id;
+        sample.thread_id = thread_id;
+        auto cached_name = thread_name_cache.find(thread_id);
+        if (cached_name == thread_name_cache.end()) {
+            std::string name;
+            if (thread_id == kOverflowThreadId) {
+                name = "<other threads>";
+            }
+            else {
+                name = nativeThreadName(os_thread_id);
+                name += " (#" + std::to_string(os_thread_id) +
+                        ", session #" + std::to_string(thread_id) + ")";
+            }
+            cached_name = thread_name_cache.emplace(thread_id, std::move(name)).first;
+        }
+        sample.thread_name = cached_name->second;
         sample.window = window;
         sample.weight = weight;
         sample.frames.reserve(depth);
@@ -1890,7 +2223,8 @@ struct AllocationSampler::Impl {
     void processEvent(AllocationEvent *event)
     {
         Sample sample;
-        if (!buildSample(event->frames, event->depth, event->tick_id, event->window,
+        if (!buildSample(event->frames, event->depth, event->tick_id,
+                         event->thread_id, event->os_thread_id, event->window,
                          event->weight_bytes, sample)) {
             return;
         }
@@ -1906,7 +2240,14 @@ struct AllocationSampler::Impl {
             }
         }
         else {
-            buckets[sample.tick_id].push_back(std::move(sample));
+            if (sample.tick_id >= kMaxTickDecisions ||
+                pending_samples == kMaxPendingSamples) {
+                dropped_samples.fetch_add(1, std::memory_order_relaxed);
+            }
+            else {
+                buckets[sample.tick_id].push_back(std::move(sample));
+                ++pending_samples;
+            }
         }
     }
 
@@ -1933,6 +2274,7 @@ struct AllocationSampler::Impl {
             }
             Sample sample;
             if (buildSample(allocation.frames, allocation.depth, allocation.tick_id,
+                            allocation.thread_id, allocation.os_thread_id,
                             allocation.window, allocation.weight_bytes, sample)) {
                 acceptSample(sample);
             }
@@ -1949,7 +2291,7 @@ struct AllocationSampler::Impl {
         TickEvent tick;
         while (ticks.try_dequeue(tick)) {
             const bool keep = !ticked || tick.mspt_ms > threshold;
-            if (ticked) {
+            if (ticked && tick.tick_id < kMaxTickDecisions) {
                 if (tick_decisions.size() <= tick.tick_id) {
                     tick_decisions.resize(static_cast<std::size_t>(tick.tick_id + 1), 0);
                 }
@@ -1963,6 +2305,7 @@ struct AllocationSampler::Impl {
             PSLIST_ENTRY next = list->Next;
             auto *event = CONTAINING_RECORD(list, AllocationEvent, entry);
             processEvent(event);
+            ready_event_count.fetch_sub(1, std::memory_order_relaxed);
             recycleEvent(event);
             list = next;
         }
@@ -1970,15 +2313,23 @@ struct AllocationSampler::Impl {
 
     void aggregatorLoop()
     {
-        TrackingSuppressionGuard suppress;
+        TrackingSuppressionGuard suppress(*this);
         if (config.fail_aggregator_for_testing) {
             throw std::runtime_error("injected allocation aggregator failure");
+        }
+        if (config.aggregator_delay_ms_for_testing != 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(
+                config.aggregator_delay_ms_for_testing));
         }
         while (aggregator_running.load(std::memory_order_acquire)) {
             drainQueues();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         drainQueues();
+        if (pending_samples != 0) {
+            dropped_samples.fetch_add(pending_samples, std::memory_order_relaxed);
+            pending_samples = 0;
+        }
         buckets.clear();
     }
 
@@ -1997,22 +2348,40 @@ struct AllocationSampler::Impl {
         while (ticks.try_dequeue(tick)) {
         }
         tree = CallTree{};
-        modules = ModuleTable{};
+        thread_trees.clear();
+        thread_name_cache.clear();
+        modules = ModuleTable{kMaxAllocationModules};
         window_ticks.clear();
         buckets.clear();
+        pending_samples = 0;
+        profile_nodes_remaining = kMaxProfileNodes;
+        profile_nodes_exhausted.store(false, std::memory_order_relaxed);
         tick_decisions.clear();
         module_cache.clear();
         current_tick.store(0, std::memory_order_relaxed);
+        hook_calls.store(0, std::memory_order_relaxed);
+        successful_allocation_calls.store(0, std::memory_order_relaxed);
         sample_count.store(0, std::memory_order_relaxed);
+        sampling_points.store(0, std::memory_order_relaxed);
         sampled_bytes.store(0, std::memory_order_relaxed);
         observed_bytes.store(0, std::memory_order_relaxed);
         dropped_samples.store(0, std::memory_order_relaxed);
+        dropped_events.store(0, std::memory_order_relaxed);
+        dropped_tick_events.store(0, std::memory_order_relaxed);
+        enqueued_samples.store(0, std::memory_order_relaxed);
+        ready_event_count.store(0, std::memory_order_relaxed);
+        ready_event_high_water.store(0, std::memory_order_relaxed);
         tracking_hook_calls.store(0, std::memory_order_relaxed);
         next_allocation_id.store(1, std::memory_order_relaxed);
+        next_session_thread_id.store(1, std::memory_order_relaxed);
+        registered_threads.store(0, std::memory_order_relaxed);
+        overflow_threads.store(0, std::memory_order_relaxed);
+        thread_state_drops.store(0, std::memory_order_relaxed);
         freed_samples.store(0, std::memory_order_relaxed);
         freed_bytes.store(0, std::memory_order_relaxed);
         live_samples.store(0, std::memory_order_relaxed);
         live_bytes.store(0, std::memory_order_relaxed);
+        peak_live_samples.store(0, std::memory_order_relaxed);
         lifetime_ms_total.store(0, std::memory_order_relaxed);
         lifetime_ms_max.store(0, std::memory_order_relaxed);
         lifecycle_dropped.store(0, std::memory_order_relaxed);
@@ -2085,6 +2454,7 @@ struct AllocationSampler::Impl {
         running.store(true, std::memory_order_release);
         tracking.store(true, std::memory_order_release);
         try {
+            TrackingSuppressionGuard suppress(*this);
             aggregator_thread = std::thread([this]() {
                 try {
                     aggregatorLoop();
@@ -2184,14 +2554,19 @@ struct AllocationSampler::Impl {
             aggregator_failed.load(std::memory_order_acquire)) {
             return;
         }
-        TrackingSuppressionGuard suppress;
+        TrackingSuppressionGuard suppress(*this);
         const std::uint64_t finished = current_tick.fetch_add(1, std::memory_order_relaxed);
-        ticks.enqueue(TickEvent{finished, mspt_ms});
+        if (config.only_ticks_over_ms > 0 &&
+            !ticks.try_enqueue(TickEvent{finished, mspt_ms})) {
+            dropped_tick_events.fetch_add(1, std::memory_order_relaxed);
+        }
 
         const std::uint64_t started = started_tick_ms.load(std::memory_order_relaxed);
         const std::uint64_t now = monotonicMs();
         const std::int32_t window =
-            static_cast<std::int32_t>(started > 0 && now >= started ? (now - started) / 1000 : 0);
+            static_cast<std::int32_t>((std::min)(
+                static_cast<std::uint64_t>(kMaxProfileWindows - 1),
+                started > 0 && now >= started ? (now - started) / 1000 : 0));
         WindowTickStats &stats = window_ticks[window];
         stats.ticks += 1;
         stats.mspt_sum += mspt_ms;
@@ -2200,10 +2575,8 @@ struct AllocationSampler::Impl {
 };
 
 std::atomic<AllocationSampler::Impl *> AllocationSampler::Impl::active_instance{nullptr};
-std::atomic<std::uint64_t> AllocationSampler::Impl::active_hook_calls{0};
-thread_local bool AllocationSampler::Impl::inside_hook = false;
-thread_local bool AllocationSampler::Impl::tracking_suppressed = false;
-thread_local ByteSamplingState AllocationSampler::Impl::thread_sampling{};
+std::array<AllocationSampler::Impl::HookCounter, 64>
+    AllocationSampler::Impl::active_hook_calls{};
 
 AllocationSampler::AllocationSampler() : impl_(std::make_unique<Impl>())
 {
@@ -2254,6 +2627,11 @@ const CallTree &AllocationSampler::tree() const
     return impl_->tree;
 }
 
+const std::map<std::uint64_t, ThreadCallTree> &AllocationSampler::threadTrees() const
+{
+    return impl_->thread_trees;
+}
+
 const ModuleTable &AllocationSampler::modules() const
 {
     return impl_->modules;
@@ -2269,9 +2647,24 @@ std::uint64_t AllocationSampler::numberOfTicks() const
     return impl_->current_tick.load(std::memory_order_relaxed);
 }
 
+std::uint64_t AllocationSampler::hookCalls() const
+{
+    return impl_->hook_calls.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::successfulAllocationCalls() const
+{
+    return impl_->successful_allocation_calls.load(std::memory_order_relaxed);
+}
+
 std::uint64_t AllocationSampler::sampleCount() const
 {
     return impl_->sample_count.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::samplingPoints() const
+{
+    return impl_->sampling_points.load(std::memory_order_relaxed);
 }
 
 std::uint64_t AllocationSampler::sampledBytes() const
@@ -2287,6 +2680,31 @@ std::uint64_t AllocationSampler::observedBytes() const
 std::uint64_t AllocationSampler::droppedSamples() const
 {
     return impl_->dropped_samples.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::droppedEvents() const
+{
+    return impl_->dropped_events.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::droppedTickEvents() const
+{
+    return impl_->dropped_tick_events.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::enqueuedSamples() const
+{
+    return impl_->enqueued_samples.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::eventQueueHighWaterMark() const
+{
+    return impl_->ready_event_high_water.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::eventQueueCapacity() const
+{
+    return kEventCapacity;
 }
 
 std::uint64_t AllocationSampler::freedSamples() const
@@ -2307,6 +2725,73 @@ std::uint64_t AllocationSampler::liveSamples() const
 std::uint64_t AllocationSampler::liveBytes() const
 {
     return impl_->live_bytes.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::peakLiveSamples() const
+{
+    return impl_->peak_live_samples.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::liveIndexCapacity() const
+{
+    return kEventCapacity;
+}
+
+std::uint64_t AllocationSampler::sampledThreadCount() const
+{
+    return impl_->thread_trees.size();
+}
+std::uint64_t AllocationSampler::threadRootCapacity() const
+{
+    return kMaxSampledThreads + 1;
+}
+
+std::uint64_t AllocationSampler::overflowThreadCount() const
+{
+    return impl_->overflow_threads.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::threadStateDrops() const
+{
+    return impl_->thread_state_drops.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AllocationSampler::hookedModuleCount() const
+{
+    return impl_->hooks_prepared ? 2 : 0;
+}
+
+std::uint64_t AllocationSampler::skippedModuleCount() const
+{
+    return 0;
+}
+
+std::uint64_t AllocationSampler::failedModuleCount() const
+{
+    return 0;
+}
+
+std::uint64_t AllocationSampler::moduleRegistryCount() const
+{
+    return impl_->modules.size();
+}
+
+std::uint64_t AllocationSampler::moduleRegistryCapacity() const
+{
+    return kMaxAllocationModules;
+}
+std::uint64_t AllocationSampler::profileNodeCapacity() const
+{
+    return kMaxProfileNodes;
+}
+
+bool AllocationSampler::dataIncomplete() const
+{
+    return impl_->dropped_samples.load(std::memory_order_relaxed) != 0 ||
+           impl_->lifecycle_dropped.load(std::memory_order_relaxed) != 0 ||
+           impl_->dropped_tick_events.load(std::memory_order_relaxed) != 0 ||
+           impl_->thread_state_drops.load(std::memory_order_relaxed) != 0 ||
+           impl_->profile_nodes_exhausted.load(std::memory_order_relaxed);
 }
 
 std::uint64_t AllocationSampler::averageLifetimeMs() const

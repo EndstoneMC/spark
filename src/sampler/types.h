@@ -41,12 +41,23 @@ struct FrameKeyHash {
 // Interns module path strings to small ids. Written only by the sampler thread.
 class ModuleTable {
 public:
+    explicit ModuleTable(std::size_t maximum_paths = 0)
+        : maximum_paths_(maximum_paths)
+    {
+        if (maximum_paths_ != 0) {
+            paths_.emplace_back("<other modules>");
+        }
+    }
+
     ModuleId intern(std::string_view path)
     {
         for (ModuleId i = 0; i < paths_.size(); ++i) {
             if (paths_[i] == path) {
                 return i;
             }
+        }
+        if (maximum_paths_ != 0 && paths_.size() >= maximum_paths_) {
+            return 0;
         }
         paths_.emplace_back(path);
         return static_cast<ModuleId>(paths_.size() - 1);
@@ -63,6 +74,7 @@ public:
     }
 
 private:
+    std::size_t maximum_paths_ = 0;
     std::vector<std::string> paths_;
 };
 

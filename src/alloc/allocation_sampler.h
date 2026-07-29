@@ -23,6 +23,8 @@ struct AllocationSamplerConfig {
     bool live_only = false;
     // Deterministic fault injection used only by the offline selftest.
     bool fail_aggregator_for_testing = false;
+    std::uint32_t aggregator_delay_ms_for_testing = 0;
+    std::uint32_t thread_state_limit_for_testing = 0;
 };
 
 enum class AllocationHookStatus {
@@ -53,11 +55,9 @@ struct AllocationHookCapability {
     std::string detail;
 };
 
-// Windows native allocation sampler. The backend hooks public UCRT allocation
-// entry points and samples allocation stacks by requested bytes. Tree weights
-// are estimated allocation bytes, not elapsed time. The current backend remains
-// intentionally focused on allocations originating on the selected server
-// thread. Sampled allocations are followed through realloc/free on any thread.
+// Native allocation sampler. Tree weights are estimated allocation bytes, not
+// elapsed time. Each process thread is sampled independently and sampled
+// allocations are followed through realloc/free on any thread.
 class AllocationSampler {
 public:
     AllocationSampler();
@@ -80,18 +80,40 @@ public:
     void onTick(double mspt_ms);
 
     const CallTree &tree() const;
+    const std::map<std::uint64_t, ThreadCallTree> &threadTrees() const;
     const ModuleTable &modules() const;
     const std::map<std::int32_t, WindowTickStats> &windowTicks() const;
 
     std::uint64_t numberOfTicks() const;
+    std::uint64_t hookCalls() const;
+    std::uint64_t successfulAllocationCalls() const;
     std::uint64_t sampleCount() const;
+    std::uint64_t samplingPoints() const;
     std::uint64_t sampledBytes() const;
     std::uint64_t observedBytes() const;
     std::uint64_t droppedSamples() const;
+    std::uint64_t droppedEvents() const;
+    std::uint64_t droppedTickEvents() const;
+    std::uint64_t enqueuedSamples() const;
+    std::uint64_t eventQueueHighWaterMark() const;
+    std::uint64_t eventQueueCapacity() const;
     std::uint64_t freedSamples() const;
     std::uint64_t freedBytes() const;
     std::uint64_t liveSamples() const;
     std::uint64_t liveBytes() const;
+    std::uint64_t peakLiveSamples() const;
+    std::uint64_t liveIndexCapacity() const;
+    std::uint64_t sampledThreadCount() const;
+    std::uint64_t threadRootCapacity() const;
+    std::uint64_t overflowThreadCount() const;
+    std::uint64_t threadStateDrops() const;
+    std::uint64_t hookedModuleCount() const;
+    std::uint64_t skippedModuleCount() const;
+    std::uint64_t failedModuleCount() const;
+    std::uint64_t moduleRegistryCount() const;
+    std::uint64_t moduleRegistryCapacity() const;
+    std::uint64_t profileNodeCapacity() const;
+    bool dataIncomplete() const;
     std::uint64_t averageLifetimeMs() const;
     std::uint64_t maximumLifetimeMs() const;
     std::uint64_t lifecycleDropped() const;

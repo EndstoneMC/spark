@@ -53,7 +53,7 @@ std::string utf8ThreadName(HANDLE thread)
     return name;
 }
 
-std::string threadName(std::uint64_t id)
+std::string platformThreadName(std::uint64_t id)
 {
     HANDLE thread = ::OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(id));
     if (thread == nullptr) {
@@ -66,7 +66,7 @@ std::string threadName(std::uint64_t id)
 
 #elif defined(__linux__)
 
-std::string threadName(std::uint64_t id)
+std::string platformThreadName(std::uint64_t id)
 {
     std::string path = "/proc/self/task/" + std::to_string(id) + "/comm";
     int fd = ::open(path.c_str(), O_RDONLY);
@@ -101,6 +101,11 @@ std::uint64_t currentNativeThreadId()
 #endif
 }
 
+std::string nativeThreadName(std::uint64_t id)
+{
+    return platformThreadName(id);
+}
+
 std::vector<ThreadInfo> enumerateProcessThreads()
 {
     std::vector<ThreadInfo> threads;
@@ -117,7 +122,7 @@ std::vector<ThreadInfo> enumerateProcessThreads()
         do {
             if (entry.th32OwnerProcessID == process_id) {
                 const std::uint64_t id = static_cast<std::uint64_t>(entry.th32ThreadID);
-                threads.push_back({id, threadName(id)});
+                threads.push_back({id, platformThreadName(id)});
             }
             entry.dwSize = sizeof(entry);
         } while (::Thread32Next(snapshot, &entry));
@@ -140,7 +145,7 @@ std::vector<ThreadInfo> enumerateProcessThreads()
         }
         auto [parsed_end, error] = std::from_chars(begin, end, id);
         if (error == std::errc{} && parsed_end == end && id != 0) {
-            threads.push_back({id, threadName(id)});
+            threads.push_back({id, platformThreadName(id)});
         }
     }
     ::closedir(directory);

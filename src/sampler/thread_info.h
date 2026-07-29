@@ -13,6 +13,7 @@ struct ThreadInfo {
 };
 
 std::uint64_t currentNativeThreadId();
+std::string nativeThreadName(std::uint64_t id);
 std::vector<ThreadInfo> enumerateProcessThreads();
 
 }  // namespace spark

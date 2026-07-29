@@ -18,10 +18,13 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #if defined(_WIN32)
+#include <malloc.h>
 #include <windows.h>
 #else
+#include <dlfcn.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
@@ -48,6 +51,14 @@
 namespace {
 
 volatile double g_sink = 0.0;
+
+#if defined(_WIN32)
+void __cdecl ignoreInvalidParameter(const wchar_t *, const wchar_t *,
+                                    const wchar_t *, unsigned int,
+                                    std::uintptr_t)
+{
+}
+#endif
 
 double hotInner(int n)
 {
@@ -470,6 +481,72 @@ SPARK_NOINLINE bool exerciseNativeAllocations()
     }
     std::free(replacement);
 
+#if defined(_WIN32)
+    void *recalloced = _recalloc(nullptr, 32, 32);
+    if (recalloced == nullptr) {
+        std::fprintf(stderr, "native allocations: _recalloc failed\n");
+        return false;
+    }
+    void *recalloced_replacement = _recalloc(recalloced, 64, 32);
+    if (recalloced_replacement == nullptr) {
+        std::fprintf(stderr, "native allocations: resized _recalloc failed\n");
+        std::free(recalloced);
+        return false;
+    }
+    std::free(recalloced_replacement);
+
+    void *aligned = _aligned_malloc(1024, 64);
+    if (aligned == nullptr) {
+        std::fprintf(stderr, "native allocations: _aligned_malloc failed\n");
+        return false;
+    }
+    void *aligned_replacement = _aligned_realloc(aligned, 4096, 64);
+    if (aligned_replacement == nullptr) {
+        std::fprintf(stderr, "native allocations: _aligned_realloc failed\n");
+        _aligned_free(aligned);
+        return false;
+    }
+    void *aligned_recalloced = _aligned_recalloc(aligned_replacement, 128, 64, 64);
+    if (aligned_recalloced == nullptr) {
+        std::fprintf(stderr, "native allocations: _aligned_recalloc failed\n");
+        _aligned_free(aligned_replacement);
+        return false;
+    }
+    _aligned_free(aligned_recalloced);
+
+    void *offset = _aligned_offset_malloc(1024, 64, 16);
+    if (offset == nullptr) {
+        std::fprintf(stderr, "native allocations: _aligned_offset_malloc failed\n");
+        return false;
+    }
+    void *offset_replacement = _aligned_offset_realloc(offset, 4096, 64, 16);
+    if (offset_replacement == nullptr) {
+        std::fprintf(stderr, "native allocations: _aligned_offset_realloc failed\n");
+        _aligned_free(offset);
+        return false;
+    }
+    void *offset_recalloced =
+        _aligned_offset_recalloc(offset_replacement, 128, 64, 64, 16);
+    if (offset_recalloced == nullptr) {
+        std::fprintf(stderr,
+                     "native allocations: _aligned_offset_recalloc failed\n");
+        _aligned_free(offset_replacement);
+        return false;
+    }
+    _aligned_free(offset_recalloced);
+#elif defined(__linux__)
+    void *array = ::reallocarray(nullptr, 32, 32);
+    if (array == nullptr) {
+        return false;
+    }
+    void *array_replacement = ::reallocarray(array, 64, 32);
+    if (array_replacement == nullptr) {
+        std::free(array);
+        return false;
+    }
+    std::free(array_replacement);
+#endif
+
     void *cross_thread = std::malloc(4096);
     if (cross_thread == nullptr) {
         return false;
@@ -756,7 +833,337 @@ bool runAllocationSession(spark::AllocationSampler &sampler,
     if (sampler.sampleCount() == 0 || sampler.observedBytes() == 0 ||
         sampler.freedSamples() == 0 || sampler.freedBytes() == 0 ||
         sampler.lifecycleDropped() != 0) {
-        std::fprintf(stderr, "allocation lifecycle: session captured no allocations\n");
+        std::fprintf(
+            stderr,
+            "allocation lifecycle: invalid counters "
+            "(samples=%llu observed=%llu freed=%llu freed-bytes=%llu "
+            "lifecycle-dropped=%llu)\n",
+            static_cast<unsigned long long>(sampler.sampleCount()),
+            static_cast<unsigned long long>(sampler.observedBytes()),
+            static_cast<unsigned long long>(sampler.freedSamples()),
+            static_cast<unsigned long long>(sampler.freedBytes()),
+            static_cast<unsigned long long>(sampler.lifecycleDropped()));
+        return false;
+    }
+    return true;
+}
+
+bool verifyProcessWideAllocationSampling()
+{
+    using namespace std::chrono_literals;
+
+    spark::AllocationSamplerConfig config;
+    config.interval_bytes = 1;
+    config.target_tid = spark::currentNativeThreadId();
+
+    spark::AllocationSampler sampler;
+    std::string error;
+    if (!sampler.start(config, error)) {
+        std::fprintf(stderr, "process-wide allocation: start failed: %s\n",
+                     error.c_str());
+        return false;
+    }
+
+    std::atomic<int> ready{0};
+    std::atomic<bool> go{false};
+    auto allocate_on_worker = [&]() {
+        ready.fetch_add(1, std::memory_order_release);
+        while (!go.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        for (int i = 0; i < 64; ++i) {
+            void *pointer = std::malloc(static_cast<std::size_t>(512 + i));
+            if (pointer != nullptr) {
+                static_cast<volatile unsigned char *>(pointer)[0] =
+                    static_cast<unsigned char>(i);
+                std::free(pointer);
+            }
+        }
+    };
+    std::thread first(allocate_on_worker);
+    std::thread second(allocate_on_worker);
+    while (ready.load(std::memory_order_acquire) != 2) {
+        std::this_thread::yield();
+    }
+    go.store(true, std::memory_order_release);
+    first.join();
+    second.join();
+
+    std::atomic<void *> handoff{nullptr};
+    std::thread allocator([&]() {
+        handoff.store(std::malloc(4096), std::memory_order_release);
+    });
+    allocator.join();
+    void *original = handoff.load(std::memory_order_acquire);
+    if (original == nullptr) {
+        std::fprintf(stderr, "process-wide allocation: handoff malloc failed\n");
+        sampler.stop(error);
+        return false;
+    }
+    std::thread resizer([&]() {
+        void *replacement = std::realloc(original, 1024 * 1024);
+        handoff.store(replacement != nullptr ? replacement : original,
+                      std::memory_order_release);
+    });
+    resizer.join();
+    std::thread releaser([&]() {
+        std::free(handoff.load(std::memory_order_acquire));
+    });
+    releaser.join();
+
+    void *failed = std::malloc(1024);
+    if (failed == nullptr) {
+        std::fprintf(stderr, "process-wide allocation: failure probe malloc failed\n");
+        sampler.stop(error);
+        return false;
+    }
+    const std::size_t impossible = (std::numeric_limits<std::size_t>::max)();
+    volatile std::size_t impossible_runtime = impossible;
+    void *failure = std::realloc(failed, impossible);
+    if (failure != nullptr) {
+        std::free(failure);
+    }
+    else {
+        std::free(failed);
+    }
+#if defined(_WIN32)
+    _invalid_parameter_handler previous_handler =
+        _set_thread_local_invalid_parameter_handler(ignoreInvalidParameter);
+#endif
+    void *calloc_overflow = std::calloc(impossible_runtime, 2);
+    if (calloc_overflow != nullptr) {
+        std::fprintf(stderr,
+                     "process-wide allocation: calloc overflow succeeded (%p)\n",
+                     calloc_overflow);
+        std::free(calloc_overflow);
+#if defined(_WIN32)
+        _set_thread_local_invalid_parameter_handler(previous_handler);
+#endif
+        sampler.stop(error);
+        return false;
+    }
+#if defined(_WIN32)
+    void *recalloc_overflow = _recalloc(nullptr, impossible_runtime, 2);
+    _set_thread_local_invalid_parameter_handler(previous_handler);
+#else
+    void *recalloc_overflow = ::reallocarray(nullptr, impossible_runtime, 2);
+#endif
+    if (recalloc_overflow != nullptr) {
+        std::fprintf(stderr,
+                     "process-wide allocation: recalloc overflow succeeded\n");
+        std::free(recalloc_overflow);
+        sampler.stop(error);
+        return false;
+    }
+    void *from_null = std::realloc(nullptr, 2048);
+    std::free(from_null);
+    void *to_zero = std::malloc(2048);
+    if (to_zero != nullptr) {
+        void *zero_result = std::realloc(to_zero, 0);
+        std::free(zero_result);
+    }
+
+    for (int i = 0; i < 300; ++i) {
+        std::thread short_lived([]() {
+            void *pointer = std::malloc(128);
+            if (pointer != nullptr) {
+                static_cast<volatile unsigned char *>(pointer)[0] = 1;
+                std::free(pointer);
+            }
+        });
+        short_lived.join();
+    }
+
+    sampler.onTick(50.0);
+    if (!sampler.stop(error)) {
+        std::fprintf(stderr, "process-wide allocation: stop failed: %s\n",
+                     error.c_str());
+        return false;
+    }
+
+    const auto &trees = sampler.threadTrees();
+    const auto overflow = trees.find(0);
+    if (sampler.sampleCount() == 0 || sampler.samplingPoints() == 0 ||
+        sampler.enqueuedSamples() == 0 || sampler.eventQueueHighWaterMark() == 0 ||
+        sampler.freedSamples() == 0 ||
+        trees.size() != sampler.threadRootCapacity() ||
+        sampler.overflowThreadCount() < 40 ||
+        sampler.overflowThreadCount() > 512 || overflow == trees.end() ||
+        overflow->second.thread_name != "<other threads>" ||
+        overflow->second.tree.empty()) {
+        std::fprintf(
+            stderr,
+            "process-wide allocation: invalid coverage "
+            "(samples=%llu points=%llu enqueued=%llu high-water=%llu freed=%llu "
+            "threads=%zu overflow=%llu)\n",
+            static_cast<unsigned long long>(sampler.sampleCount()),
+            static_cast<unsigned long long>(sampler.samplingPoints()),
+            static_cast<unsigned long long>(sampler.enqueuedSamples()),
+            static_cast<unsigned long long>(sampler.eventQueueHighWaterMark()),
+            static_cast<unsigned long long>(sampler.freedSamples()), trees.size(),
+            static_cast<unsigned long long>(sampler.overflowThreadCount()));
+        return false;
+    }
+    for (const auto &[id, thread] : trees) {
+        if (thread.thread_name.empty() || thread.tree.empty()) {
+            std::fprintf(stderr,
+                         "process-wide allocation: empty thread root %llu\n",
+                         static_cast<unsigned long long>(id));
+            return false;
+        }
+    }
+    std::vector<spark::ThreadTreeView> views;
+    for (const auto &[id, thread] : trees) {
+        views.push_back({thread.thread_name, &thread.tree});
+    }
+    std::unordered_map<spark::FrameKey, spark::ResolvedFrame,
+                       spark::FrameKeyHash>
+        resolved;
+    for (const spark::FrameKey &frame : spark::collectFrameKeys(views)) {
+        resolved.emplace(frame, spark::ResolvedFrame{"selftest", "allocation"});
+    }
+    spark::ProfileMetadata metadata;
+    metadata.mode = spark::ProfileMode::Allocation;
+    metadata.all_threads = true;
+    const std::string profile = spark::buildSamplerData(metadata, views, resolved);
+    if (profile.find("<other threads>") == std::string::npos ||
+        profile.find("session #") == std::string::npos) {
+        std::fprintf(stderr,
+                     "process-wide allocation: thread roots were not serialized\n");
+        return false;
+    }
+    return sampler.shutdown(error);
+}
+
+bool verifyAllocationResourcePressure()
+{
+    spark::AllocationSamplerConfig config;
+    config.interval_bytes = 1;
+    config.target_tid = spark::currentNativeThreadId();
+    config.aggregator_delay_ms_for_testing = 1000;
+
+    std::string error;
+    spark::AllocationSampler queue_sampler;
+    if (!queue_sampler.start(config, error)) {
+        std::fprintf(stderr, "allocation pressure: queue start failed: %s\n",
+                     error.c_str());
+        return false;
+    }
+    std::vector<std::thread> workers;
+    workers.reserve(8);
+    for (int thread = 0; thread < 8; ++thread) {
+        workers.emplace_back([]() {
+            for (int i = 0; i < 4096; ++i) {
+                void *pointer = std::malloc(64);
+                if (pointer != nullptr) {
+                    static_cast<volatile unsigned char *>(pointer)[0] =
+                        static_cast<unsigned char>(i);
+                    std::free(pointer);
+                }
+            }
+        });
+    }
+    for (std::thread &worker_thread : workers) {
+        worker_thread.join();
+    }
+    if (!queue_sampler.stop(error) ||
+        queue_sampler.eventQueueHighWaterMark() !=
+            queue_sampler.eventQueueCapacity() ||
+        queue_sampler.droppedEvents() == 0 ||
+        !queue_sampler.dataIncomplete() ||
+        !queue_sampler.shutdown(error)) {
+        std::fprintf(
+            stderr,
+            "allocation pressure: queue did not saturate safely "
+            "(high-water=%llu capacity=%llu dropped=%llu error=%s)\n",
+            static_cast<unsigned long long>(
+                queue_sampler.eventQueueHighWaterMark()),
+            static_cast<unsigned long long>(queue_sampler.eventQueueCapacity()),
+            static_cast<unsigned long long>(queue_sampler.droppedEvents()),
+            error.c_str());
+        return false;
+    }
+
+    config.aggregator_delay_ms_for_testing = 0;
+    config.thread_state_limit_for_testing = 8;
+    spark::AllocationSampler registry_sampler;
+    if (!registry_sampler.start(config, error)) {
+        std::fprintf(stderr, "allocation pressure: registry start failed: %s\n",
+                     error.c_str());
+        return false;
+    }
+    std::atomic<int> registry_ready{0};
+    std::atomic<bool> release_registry_threads{false};
+    workers.clear();
+    for (int thread = 0; thread < 16; ++thread) {
+        workers.emplace_back([&]() {
+            void *pointer = std::malloc(128);
+            registry_ready.fetch_add(1, std::memory_order_release);
+            while (!release_registry_threads.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            std::free(pointer);
+        });
+    }
+    while (registry_ready.load(std::memory_order_acquire) != 16) {
+        std::this_thread::yield();
+    }
+    release_registry_threads.store(true, std::memory_order_release);
+    for (std::thread &worker_thread : workers) {
+        worker_thread.join();
+    }
+    if (!registry_sampler.stop(error) ||
+        registry_sampler.threadStateDrops() == 0 ||
+        !registry_sampler.dataIncomplete() ||
+        !registry_sampler.shutdown(error)) {
+        std::fprintf(
+            stderr,
+            "allocation pressure: thread registry did not fail bounded "
+            "(state-drops=%llu incomplete=%d error=%s)\n",
+            static_cast<unsigned long long>(registry_sampler.threadStateDrops()),
+            registry_sampler.dataIncomplete(), error.c_str());
+        return false;
+    }
+
+    config.live_only = true;
+    config.thread_state_limit_for_testing = 0;
+    spark::AllocationSampler live_sampler;
+    std::vector<void *> retained;
+    retained.reserve(static_cast<std::size_t>(live_sampler.liveIndexCapacity() +
+                                               1024));
+    if (!live_sampler.start(config, error)) {
+        std::fprintf(stderr, "allocation pressure: live start failed: %s\n",
+                     error.c_str());
+        return false;
+    }
+    for (std::uint64_t i = 0; i < live_sampler.liveIndexCapacity() + 1024; ++i) {
+        void *pointer = std::malloc(1);
+        if (pointer != nullptr) {
+            static_cast<volatile unsigned char *>(pointer)[0] = 1;
+            retained.push_back(pointer);
+        }
+    }
+    const bool stopped = live_sampler.stop(error);
+    const bool bounded = !stopped && live_sampler.lifecycleDropped() != 0 &&
+                         live_sampler.peakLiveSamples() <=
+                             live_sampler.liveIndexCapacity() &&
+                         live_sampler.dataIncomplete();
+    for (void *pointer : retained) {
+        std::free(pointer);
+    }
+    std::string shutdown_error;
+    const bool shutdown = live_sampler.shutdown(shutdown_error);
+    if (!bounded || !shutdown) {
+        std::fprintf(
+            stderr,
+            "allocation pressure: live index did not fail closed "
+            "(stopped=%d peak=%llu capacity=%llu lifecycle-dropped=%llu "
+            "error=%s shutdown=%s)\n",
+            stopped,
+            static_cast<unsigned long long>(live_sampler.peakLiveSamples()),
+            static_cast<unsigned long long>(live_sampler.liveIndexCapacity()),
+            static_cast<unsigned long long>(live_sampler.lifecycleDropped()),
+            error.c_str(), shutdown_error.c_str());
         return false;
     }
     return true;
@@ -826,11 +1233,73 @@ bool verifyAllocationLifecycle()
         std::fprintf(stderr, "allocation lifecycle: backend did not recover after failure\n");
         return false;
     }
+
+    if (!sampler.start(config, error)) {
+        std::fprintf(stderr, "allocation lifecycle: concurrent-stop start failed: %s\n",
+                     error.c_str());
+        return false;
+    }
+    std::atomic<bool> allocate{true};
+    std::vector<std::thread> concurrent_workers;
+    for (int i = 0; i < 4; ++i) {
+        concurrent_workers.emplace_back([&allocate]() {
+            while (allocate.load(std::memory_order_relaxed)) {
+                void *pointer = std::malloc(256);
+                if (pointer != nullptr) {
+                    static_cast<volatile unsigned char *>(pointer)[0] = 1;
+                    std::free(pointer);
+                }
+            }
+        });
+    }
+    std::this_thread::sleep_for(20ms);
+    const bool concurrent_stop = sampler.stop(error);
+    allocate.store(false, std::memory_order_relaxed);
+    for (std::thread &worker_thread : concurrent_workers) {
+        worker_thread.join();
+    }
+    if (!concurrent_stop) {
+        std::fprintf(stderr, "allocation lifecycle: concurrent stop failed: %s\n",
+                     error.c_str());
+        return false;
+    }
+
+#if defined(_WIN32)
+    HMODULE fixture = ::LoadLibraryA(SPARK_WINDOWS_ALLOCATION_FIXTURE_PATH);
+    using FixtureRun = void (*)(volatile LONG *);
+    auto fixture_run =
+        fixture == nullptr
+            ? nullptr
+            : reinterpret_cast<FixtureRun>(
+                  ::GetProcAddress(fixture, "sparkAllocationFixtureRun"));
+    volatile LONG fixture_running = 1;
+    std::thread fixture_worker;
+    if (fixture_run != nullptr) {
+        fixture_worker = std::thread(fixture_run, &fixture_running);
+        std::this_thread::sleep_for(20ms);
+    }
+    const bool shutdown = fixture_run != nullptr && sampler.shutdown(error);
+    ::InterlockedExchange(&fixture_running, 0);
+    if (fixture_worker.joinable()) {
+        fixture_worker.join();
+    }
+    if (fixture != nullptr) {
+        ::FreeLibrary(fixture);
+    }
+    if (!shutdown || sampler.hooksInstalled()) {
+        std::fprintf(
+            stderr,
+            "allocation lifecycle: concurrent hook shutdown failed: %s\n",
+            error.c_str());
+        return false;
+    }
+#else
     if (!sampler.shutdown(error) || sampler.hooksInstalled()) {
         std::fprintf(stderr, "allocation lifecycle: final hook cleanup failed: %s\n",
                      error.c_str());
         return false;
     }
+#endif
 
     // A second instance in the same process models plugin reload: the old
     // active-instance pointer and trampolines must not obstruct new setup.
@@ -911,6 +1380,18 @@ bool verifyRetainedAllocationProfile()
     }
     static_cast<volatile unsigned char *>(retained)[0] = 1;
     static_cast<volatile unsigned char *>(released)[0] = 2;
+    void *resized = std::realloc(retained, 16384);
+    if (resized != nullptr) {
+        retained = resized;
+    }
+    void *failed_resize =
+        std::realloc(retained, (std::numeric_limits<std::size_t>::max)());
+    if (failed_resize != nullptr) {
+        std::free(failed_resize);
+        std::free(released);
+        return false;
+    }
+    static_cast<volatile unsigned char *>(retained)[0] = 3;
     std::free(released);
     profiler.onTick(50.0);
     if (!profiler.stopSampling(error)) {
@@ -967,6 +1448,26 @@ bool verifyLinuxImportHooks()
         std::fprintf(stderr, "linux import hooks: replacement was not observed\n");
         return false;
     }
+
+    void *fixture = ::dlopen(SPARK_ELF_HOOK_FIXTURE_PATH, RTLD_NOW | RTLD_LOCAL);
+    auto fixture_getpid =
+        fixture == nullptr
+            ? nullptr
+            : reinterpret_cast<pid_t (*)()>(
+                  ::dlsym(fixture, "sparkElfHookFixtureGetpid"));
+    if (fixture_getpid == nullptr || fixture_getpid() != expected ||
+        !hooks.rescan(error) ||
+        fixture_getpid() != static_cast<pid_t>(-12345) ||
+        hooks.hookedModuleCount() < 2) {
+        std::fprintf(stderr, "linux import hooks: loaded-module rescan failed: %s\n",
+                     error.c_str());
+        if (fixture != nullptr) {
+            ::dlclose(fixture);
+        }
+        return false;
+    }
+    ::dlclose(fixture);
+
     if (!hooks.uninstall(error) || linux_getpid_call() != expected) {
         std::fprintf(stderr, "linux import hooks: restoration failed: %s\n", error.c_str());
         return false;
@@ -1006,6 +1507,30 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (argc > 1 && std::string(argv[1]) == "--allocation-only") {
+#if defined(_WIN32) || defined(__linux__)
+        if (!verifyAllocationLifecycle()) {
+            std::fprintf(stderr, "allocation-only: lifecycle test failed\n");
+            return 1;
+        }
+        if (!verifyRetainedAllocationProfile()) {
+            std::fprintf(stderr, "allocation-only: retained profile test failed\n");
+            return 1;
+        }
+        if (!verifyProcessWideAllocationSampling()) {
+            std::fprintf(stderr, "allocation-only: process-wide test failed\n");
+            return 1;
+        }
+        if (!verifyAllocationResourcePressure()) {
+            std::fprintf(stderr, "allocation-only: resource pressure test failed\n");
+            return 1;
+        }
+        return 0;
+#else
+        return 0;
+#endif
+    }
+
     int seconds = 4;
     bool upload = false;
     for (int i = 1; i < argc; ++i) {
@@ -1034,10 +1559,13 @@ int main(int argc, char **argv)
         !verifyStopResponsiveness() ||
         !verifySessionIsolation(g_worker_tid.load()) || !verifyTickFiltering(g_worker_tid.load())
 #if defined(_WIN32)
-        || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile()
+        || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile() ||
+        !verifyProcessWideAllocationSampling() ||
+        !verifyAllocationResourcePressure()
 #elif defined(__linux__)
         || !verifyLinuxImportHooks() || !verifyAllocationLifecycle() ||
-        !verifyRetainedAllocationProfile()
+        !verifyRetainedAllocationProfile() || !verifyProcessWideAllocationSampling() ||
+        !verifyAllocationResourcePressure()
 #endif
     ) {
         g_run.store(false);
