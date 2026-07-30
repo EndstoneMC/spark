@@ -25,8 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vector is being constructed.
 - Preserve sampled allocation identity across cross-thread free and realloc,
   including failure, zero-size, in-place, moved, and address-reuse cases.
-- Replace the Linux single-producer event ring with a bounded multi-producer queue
-  and shard the live-allocation index on both native backends.
+- Use a bounded multi-producer allocation event queue on Linux, enforce the declared
+  tick-event capacity on both native backends, and shard their live-allocation
+  indexes.
 - Suppress allocation sampling from aggregation, module scanning, export, and
   symbolization control paths.
 - Quiesce active Windows detours before restoring allocator entry points during

@@ -97,7 +97,7 @@ bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
 
     struct timespec ts{};
     clock_gettime(CLOCK_REALTIME, &ts);
-    ts.tv_sec += 1;  // generous timeout; a stuck main thread must not hang the sampler
+    ts.tv_sec += 1;  // generous timeout; a stuck target must not hang the sampler
     while (sem_timedwait(&g_done, &ts) != 0) {
         if (errno == EINTR) {
             continue;

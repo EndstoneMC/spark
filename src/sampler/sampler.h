@@ -42,11 +42,10 @@ struct ThreadCallTree {
     CallTree tree;
 };
 
-// Wall-clock sampling profiler for a single target thread. The sampler thread
-// captures stacks and hands them to an aggregator thread via a lock-free queue;
-// the aggregator builds the call tree, bucketing per tick so --only-ticks-over can
-// drop fast ticks. Samples are stamped with a per-second time window so the viewer
-// can scrub over time. Nothing here touches the Endstone API.
+// Wall-clock sampling profiler for the default, selected, or all matching process
+// threads. One stack is captured per interval and handed to an aggregator through
+// a lock-free queue. The aggregator builds per-thread call trees and can drop fast
+// ticks for --only-ticks-over. Nothing here touches the Endstone API.
 class Sampler {
 public:
     ~Sampler();

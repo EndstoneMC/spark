@@ -9,27 +9,12 @@
 #include <thread>
 #include <vector>
 
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <sys/syscall.h>
-#include <unistd.h>
-#endif
-
 #include "alloc/allocation_sampler.h"
+#include "sampler/thread_info.h"
 
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-std::uint64_t currentThreadId()
-{
-#if defined(_WIN32)
-    return static_cast<std::uint64_t>(::GetCurrentThreadId());
-#else
-    return static_cast<std::uint64_t>(::syscall(SYS_gettid));
-#endif
-}
 
 void allocationWork(std::size_t operations)
 {
@@ -93,7 +78,7 @@ bool runProfiledCase(spark::AllocationSampler &sampler, const char *name,
 {
     spark::AllocationSamplerConfig config;
     config.interval_bytes = interval;
-    config.target_tid = currentThreadId();
+    config.session_seed = spark::currentNativeThreadId();
     config.live_only = live_only;
 #if defined(SPARK_ALLOCATION_BENCHMARK_CURRENT)
     config.aggregator_delay_ms_for_testing = saturated ? 1000 : 0;

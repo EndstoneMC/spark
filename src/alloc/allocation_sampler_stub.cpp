@@ -21,7 +21,8 @@ AllocationSampler::~AllocationSampler() = default;
 
 bool AllocationSampler::start(const AllocationSamplerConfig &, std::string &error)
 {
-    error = "native allocation profiling is currently supported only on Windows";
+    error =
+        "native allocation profiling is supported only on Windows x64 and Linux x86-64";
     return false;
 }
 

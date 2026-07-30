@@ -306,8 +306,8 @@ private:
     void sendHelp(endstone::CommandSender &sender)
     {
         sender.sendMessage("{}endstone-spark {}v{}", ColorFormat::Gold, ColorFormat::Gray, spark::kVersion);
-        sender.sendMessage("{}/spark profiler start [flags] {}- start profiling the server thread", ColorFormat::Yellow,
-                           ColorFormat::Gray);
+        sender.sendMessage("{}/spark profiler start [flags] {}- start an execution or allocation profile",
+                           ColorFormat::Yellow, ColorFormat::Gray);
         sender.sendMessage("{}/spark profiler stop {}- stop profiling and finalize the profile", ColorFormat::Yellow,
                            ColorFormat::Gray);
         sender.sendMessage("{}/spark profiler info {}- show status of the running profiler", ColorFormat::Yellow,
@@ -319,11 +319,13 @@ private:
         sender.sendMessage("{}/spark health {}- server health report", ColorFormat::Yellow, ColorFormat::Gray);
         sender.sendMessage("{}/spark tickmonitor {}- report unusually long ticks", ColorFormat::Yellow,
                            ColorFormat::Gray);
-        sender.sendMessage("{}Flags: --alloc, --alloc-live-only, --interval <ms|bytes>, --timeout <seconds>",
+        sender.sendMessage("{}Modes: --alloc, --alloc-live-only", ColorFormat::Gray);
+        sender.sendMessage("{}Execution only: --thread <name|*>, --regex, --include-sleeping",
                            ColorFormat::Gray);
-        sender.sendMessage("{}       --thread <name|*>, --regex, --only-ticks-over <ms>", ColorFormat::Gray);
+        sender.sendMessage(
+            "{}Flags: --interval <ms|bytes>, --timeout <seconds>, --only-ticks-over <ms>",
+            ColorFormat::Gray);
         sender.sendMessage("{}       --save-to-file, --comment <text>", ColorFormat::Gray);
-        sender.sendMessage("{}       --include-sleeping", ColorFormat::Gray);
     }
 
     void cmdProfiler(endstone::CommandSender &sender, const spark::Arguments &args)
@@ -362,7 +364,8 @@ private:
         options.alloc = args.boolFlag("alloc") || options.alloc_live_only;
 #if !defined(_WIN32) && !defined(__linux__)
         if (options.alloc) {
-            sender.sendErrorMessage("The native allocation profiler is currently available only on Windows and Linux x86-64.");
+            sender.sendErrorMessage(
+                "The native allocation profiler is supported only on Windows x64 and Linux x86-64.");
             return;
         }
 #endif
@@ -373,7 +376,7 @@ private:
             return;
         }
         if (options.alloc && (!options.threads.empty() || options.regex)) {
-            sender.sendErrorMessage("Custom thread selection is not supported by the native allocation engine yet.");
+            sender.sendErrorMessage("Custom thread selection is not supported in allocation mode.");
             return;
         }
         if (!options.alloc && options.regex && options.threads.empty()) {
@@ -632,7 +635,7 @@ private:
                 unavailable += spark::allocationHookStatusName(capability.status);
             }
         }
-        sender.sendMessage("Native allocation hooks: {}/{} exports covered ({} patched targets, {} aliases).",
+        sender.sendMessage("Native allocation hooks: {}/{} entry points covered ({} patched targets, {} aliases).",
                            active + aliases, capabilities.size(),
                            profiler_.allocationHookTargetCount(), aliases);
         if (!unavailable.empty()) {
@@ -663,9 +666,8 @@ private:
         }
     }
 
-    // Fast on the main thread (join), then the slow export + network upload runs on a
-    // background thread so the server tick never stalls. The background task and its
-    // hop back to the main thread capture only `this` (params live in members) so the
+    // Stop and join on the main thread; export and network upload run in the
+    // background. That task and its main-thread hop capture only `this` so the
     // std::function handed to Endstone stays in libc++'s ABI-stable small-buffer form,
     // which matters when the plugin and the runtime are built with different libc++.
     void finishProfiler(const std::string &sender_name, bool save, const std::string &comment)

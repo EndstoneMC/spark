@@ -18,7 +18,7 @@ inline constexpr std::int32_t kMaxAllocationIntervalBytes = 0x7fffffff;
 
 struct AllocationSamplerConfig {
     std::int32_t interval_bytes = kDefaultAllocationIntervalBytes;
-    std::uint64_t target_tid = 0;
+    std::uint64_t session_seed = 0;
     std::int64_t only_ticks_over_ms = 0;
     bool live_only = false;
     // Deterministic fault injection used only by the offline selftest.

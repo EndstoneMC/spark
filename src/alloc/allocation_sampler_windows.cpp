@@ -583,7 +583,6 @@ struct AllocationSampler::Impl {
     std::vector<CodeRange> protected_code_ranges;
     std::vector<AllocationHookCapability> hook_capabilities;
     AllocationSamplerConfig config{};
-    std::atomic<std::uint64_t> target_tid{0};
     std::atomic<std::uint64_t> current_tick{0};
     std::atomic<std::uint64_t> generation{0};
     std::atomic<std::uint64_t> interval_bytes{kDefaultAllocationIntervalBytes};
@@ -2422,8 +2421,8 @@ struct AllocationSampler::Impl {
             error = "allocation hook state is unknown after an earlier lifecycle failure";
             return false;
         }
-        if (new_config.target_tid == 0) {
-            error = "the target server thread is not available";
+        if (new_config.session_seed == 0) {
+            error = "the allocation session seed is not available";
             return false;
         }
         if (new_config.interval_bytes <= 0) {
@@ -2433,11 +2432,10 @@ struct AllocationSampler::Impl {
 
         resetSession();
         config = new_config;
-        target_tid.store(new_config.target_tid, std::memory_order_relaxed);
         interval_bytes.store(static_cast<std::uint64_t>(new_config.interval_bytes), std::memory_order_relaxed);
         started_tick_ms.store(monotonicMs(), std::memory_order_relaxed);
         const std::uint64_t new_generation = generation.fetch_add(1, std::memory_order_relaxed) + 1;
-        sampling_seed.store(new_generation ^ monotonicMs() ^ new_config.target_tid,
+        sampling_seed.store(new_generation ^ monotonicMs() ^ new_config.session_seed,
                             std::memory_order_relaxed);
 
         if (!prepareHooks(error) || !allocateEventPool(error)) {

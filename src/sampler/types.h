@@ -38,7 +38,7 @@ struct FrameKeyHash {
     }
 };
 
-// Interns module path strings to small ids. Written only by the sampler thread.
+// Interns module path strings to small ids.
 class ModuleTable {
 public:
     explicit ModuleTable(std::size_t maximum_paths = 0)

@@ -366,7 +366,6 @@ struct AllocationSampler::Impl {
     std::atomic<bool> aggregator_failed{false};
     std::array<char, 256> aggregator_failure{};
     std::atomic<std::uint64_t> tracking_calls{0};
-    std::atomic<std::uint64_t> target_tid{0};
     std::atomic<std::uint64_t> current_tick{0};
     std::atomic<std::uint64_t> generation{0};
     std::atomic<std::uint64_t> interval_bytes{kDefaultAllocationIntervalBytes};
@@ -1447,20 +1446,19 @@ struct AllocationSampler::Impl {
             error = "the previous allocation session has not finished cleanup";
             return false;
         }
-        if (new_config.target_tid == 0 || new_config.interval_bytes <= 0) {
+        if (new_config.session_seed == 0 || new_config.interval_bytes <= 0) {
             error = "invalid Linux allocation sampler configuration";
             return false;
         }
         resetSession();
         config = new_config;
-        target_tid.store(new_config.target_tid, std::memory_order_relaxed);
         interval_bytes.store(static_cast<std::uint64_t>(new_config.interval_bytes),
                              std::memory_order_relaxed);
         started_ms.store(monotonicMs(), std::memory_order_relaxed);
         last_module_rescan_ms = started_ms.load(std::memory_order_relaxed);
         const std::uint64_t next_generation =
             generation.fetch_add(1, std::memory_order_relaxed) + 1;
-        sampling_seed.store(next_generation ^ monotonicMs() ^ new_config.target_tid,
+        sampling_seed.store(next_generation ^ monotonicMs() ^ new_config.session_seed,
                             std::memory_order_relaxed);
 
         if (!prepareHooks(error) || !events.allocate(error) ||

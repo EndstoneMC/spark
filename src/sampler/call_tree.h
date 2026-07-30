@@ -12,8 +12,8 @@
 
 namespace spark {
 
-// Aggregated profiling stack for a single thread. Each node accumulates a mode-
-// dependent weight per time window: execution microseconds or allocation bytes.
+// Aggregated profiling stack. Each node accumulates a mode-dependent weight per
+// time window: execution microseconds or allocation bytes.
 class CallTree {
 public:
     struct Node {

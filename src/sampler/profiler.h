@@ -25,11 +25,8 @@ struct ProfilerOptions {
     bool ignore_sleeping = true;
     bool regex = false;
     std::vector<std::string> threads;
-    bool combine_all = false;
-    bool not_combined = false;
     bool alloc = false;
     bool alloc_live_only = false;
-    bool force_java_sampler = false;  // accepted, unsupported (no Java engine)
     std::string comment;
     bool save_to_file = false;
     std::string creator_name = "Console";
@@ -54,8 +51,8 @@ struct ExportContext {
     WorldInfo world;
 };
 
-// Owns either the execution sampler or the Windows native allocation sampler and
-// turns its call tree into a spark SamplerData payload.
+// Owns either the execution sampler or the platform allocation sampler and turns
+// its call tree into a spark SamplerData payload.
 class Profiler {
 public:
     bool running() const
@@ -93,9 +90,9 @@ public:
     bool start(const ProfilerOptions &options, std::uint64_t main_tid, std::string &error);
     void onTick(double mspt_ms);
 
-    // Two-phase stop: stopSampling() is fast (joins threads) and runs on the main
-    // thread; exportData() does the slow symbolication + serialization and is safe
-    // to run on a background thread once sampling has stopped.
+    // Two-phase stop: stopSampling() joins service threads on the main thread;
+    // exportData() performs symbolication and serialization on a background thread
+    // once sampling has stopped.
     bool stopSampling(std::string &error);
     void stopSampling();  // compatibility helper for execution-only self-tests
     std::string exportData(const ExportContext &ctx) const;

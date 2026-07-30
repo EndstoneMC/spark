@@ -1,7 +1,5 @@
-// Offline end-to-end test for the sampler + spark serializer, with no BDS involved.
-// Spawns a worker thread with a recognizable nested call pattern plus a sleeping
-// phase, profiles it, and writes profile.pb (raw SamplerData) + profile.sparkprofile
-// (gzipped, loadable in the spark viewer). Pass --upload to POST to bytebin.
+// Offline integration tests for sampling, allocation hooks, and spark serialization;
+// no BDS is involved. The default mode writes profile.pb and profile.sparkprofile.
 
 #include <algorithm>
 #include <atomic>
@@ -854,7 +852,7 @@ bool verifyProcessWideAllocationSampling()
 
     spark::AllocationSamplerConfig config;
     config.interval_bytes = 1;
-    config.target_tid = spark::currentNativeThreadId();
+    config.session_seed = spark::currentNativeThreadId();
 
     spark::AllocationSampler sampler;
     std::string error;
@@ -1039,7 +1037,7 @@ bool verifyAllocationResourcePressure()
 {
     spark::AllocationSamplerConfig config;
     config.interval_bytes = 1;
-    config.target_tid = spark::currentNativeThreadId();
+    config.session_seed = spark::currentNativeThreadId();
     config.aggregator_delay_ms_for_testing = 1000;
 
     std::string error;
@@ -1204,11 +1202,8 @@ bool verifyAllocationLifecycle()
 
     spark::AllocationSamplerConfig config;
     config.interval_bytes = 256;
-#if defined(_WIN32)
-    config.target_tid = static_cast<std::uint64_t>(::GetCurrentThreadId());
-#else
-    config.target_tid = static_cast<std::uint64_t>(::syscall(SYS_gettid));
-#endif
+    const std::uint64_t server_tid = spark::currentNativeThreadId();
+    config.session_seed = server_tid;
     std::string error;
 
     spark::AllocationSampler sampler;
@@ -1345,7 +1340,7 @@ bool verifyAllocationLifecycle()
     options.alloc = true;
     options.allocation_interval_bytes = 256;
     options.fail_allocation_aggregator_for_testing = true;
-    if (!failed_profiler.start(options, config.target_tid, error)) {
+    if (!failed_profiler.start(options, server_tid, error)) {
         std::fprintf(stderr, "profiler failure state: injected start failed: %s\n",
                      error.c_str());
         return false;
@@ -1364,7 +1359,7 @@ bool verifyAllocationLifecycle()
         return false;
     }
     options.fail_allocation_aggregator_for_testing = false;
-    if (!failed_profiler.start(options, config.target_tid, error) ||
+    if (!failed_profiler.start(options, server_tid, error) ||
         !exerciseNativeAllocations() || !failed_profiler.stopSampling(error)) {
         std::fprintf(stderr, "profiler failure state: healthy restart failed: %s\n",
                      error.c_str());
@@ -1390,12 +1385,8 @@ bool verifyRetainedAllocationProfile()
     options.alloc_live_only = true;
     options.allocation_interval_bytes = 1;
     std::string error;
-#if defined(_WIN32)
-    const std::uint64_t target_tid = static_cast<std::uint64_t>(::GetCurrentThreadId());
-#else
-    const std::uint64_t target_tid = static_cast<std::uint64_t>(::syscall(SYS_gettid));
-#endif
-    if (!profiler.start(options, target_tid, error)) {
+    const std::uint64_t server_tid = spark::currentNativeThreadId();
+    if (!profiler.start(options, server_tid, error)) {
         std::fprintf(stderr, "retained allocation: start failed: %s\n", error.c_str());
         return false;
     }

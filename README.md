@@ -5,11 +5,11 @@ An implementation of the [spark](https://spark.lucko.me/) profiler for
 Bedrock Dedicated Server. Find out where your server is actually spending its tick
 time, in spark's own web viewer.
 
-It is a **native statistical sampling profiler**: it periodically snapshots the BDS
-server thread's real call stack, so it covers **all** of BDS's internal work (chunk
-gen, entity ticking, redstone, pathfinding, …), not just plugin code — even though
-the server binary is stripped. It produces genuine spark profiles, uploaded to
-spark's bytebin and opened as an interactive flame graph at
+It is a **native statistical sampling profiler**: execution profiles periodically
+snapshot selected BDS process threads (the server thread by default), covering native
+work such as chunk generation, entity ticking, redstone, and pathfinding, not just
+plugin code — even though the server binary is stripped. It produces genuine spark
+profiles, uploaded to spark's bytebin and opened as an interactive flame graph at
 `https://spark.lucko.me/<id>`.
 
 > This is spark, ported to Endstone. The profile format, protocol, and web viewer
@@ -47,8 +47,9 @@ Run the command again to disable the monitor.
 
 * `--interval <value>` — execution interval in milliseconds (default `4`, maximum
   `1000`), or allocation interval in bytes with `--alloc` (default `524287`).
-* `--timeout <seconds>` — auto-stop and finalize after more than 10 seconds. Omit
-  this flag to run until `stop` or `cancel` is issued.
+* `--timeout <seconds>` — auto-stop and finalize after the specified number of
+  seconds, which must be greater than `10`. Omit this flag to run until `stop` or
+  `cancel` is issued.
 * `--only-ticks-over <ms>` — retain samples only from ticks longer than the given
   positive whole number of milliseconds.
 * `--comment <text>` — attach a note to the profile; quote text containing spaces.
@@ -68,7 +69,7 @@ Run the command again to disable the monitor.
 * `--alloc` — record sampled native allocation call stacks instead of execution time.
   Custom thread selectors are not supported.
 * `--alloc-live-only` — record only sampled allocations retained at stop for leak
-  analysis; this implies `--alloc` .
+  analysis; this implies `--alloc`.
 
 Multi-thread execution profiles treat the interval as a global stack-walk budget and
 rotate fairly through matching threads. `/spark profiler stop` also accepts
@@ -77,17 +78,18 @@ final output.
 
 ## How it works
 
-* **Linux:** a dedicated sampler thread signals the server thread (`SIGPROF`) on the
-  chosen interval; the handler captures the stack async-signal-safely via
+* **Linux:** a dedicated sampler thread signals one selected target (`SIGPROF`) per
+  interval; the handler captures the stack async-signal-safely via
   [cpptrace](https://github.com/jeremy-rifkin/cpptrace)'s `safe_generate_raw_trace`.
   Frames are resolved with `dladdr` (dynamic symbols) and fall back to
   `module+0xRVA` for the stripped BDS internals — which you can symbolicate offline
   against an IDA database or the Windows PDB.
-* **Windows:** the sampler suspends the server thread and walks its context with
-  `StackWalk64`; frames resolve against the shipped PDB (real names).
-* Samples aggregate into a call tree, serialize to spark's protobuf, gzip, and
-  either upload to bytebin or write a local `.sparkprofile` file. Symbolization and
-  output processing run on a background thread so the server tick never stalls.
+* **Windows:** the sampler suspends one selected target per interval and walks its
+  context with `StackWalk64`; frames resolve against the shipped PDB (real names).
+* Samples aggregate into per-thread call trees, serialize to spark's protobuf,
+  gzip, and either upload to bytebin or write a local `.sparkprofile` file.
+  Symbolization and output processing run on a background thread so the server
+  tick never stalls.
   Execution samples use the measured elapsed time between sampling points, excluding
   the target thread's own stack-walk suspension, so multi-thread sweeps retain correct
   time weights even when their effective cadence is longer than the requested interval.

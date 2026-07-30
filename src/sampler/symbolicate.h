@@ -25,7 +25,7 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
                                                                         const std::vector<FrameKey> &keys);
 
 // True if the given runtime address resolves to a sleep/wait function (nanosleep,
-// futex, poll, …). Used to drop the server thread's inter-tick idle samples.
+// futex, poll, …). Used to drop idle execution samples.
 bool isSleepFrame(std::uint64_t raw_address);
 
 }  // namespace spark

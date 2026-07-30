@@ -5,7 +5,7 @@
 
 namespace spark {
 
-// Per-target-thread state for byte-based systematic sampling. Each session uses
+// Per-process-thread state for byte-based systematic sampling. Each session uses
 // a uniformly random initial phase and then samples every `interval` bytes. This
 // is unbiased for every allocation, has lower total-weight variance than
 // independent Poisson points, and counts a large allocation's crossings in O(1).

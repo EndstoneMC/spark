@@ -183,7 +183,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         interval_ = options.allocation_interval_bytes;
         AllocationSamplerConfig config;
         config.interval_bytes = options.allocation_interval_bytes;
-        config.target_tid = main_tid;
+        config.session_seed = main_tid;
         config.only_ticks_over_ms = options.only_ticks_over_ms > 0 ? options.only_ticks_over_ms : 0;
         config.live_only = options.alloc_live_only;
         config.fail_aggregator_for_testing = options.fail_allocation_aggregator_for_testing;
@@ -430,9 +430,9 @@ std::string Profiler::exportData(const ExportContext &ctx) const
             active += capability.status == AllocationHookStatus::Active ? 1 : 0;
             aliases += capability.status == AllocationHookStatus::Alias ? 1 : 0;
         }
-        meta.extra_platform_metadata["Allocation hook exports total"] =
+        meta.extra_platform_metadata["Allocation hook entry points total"] =
             std::to_string(capabilities.size());
-        meta.extra_platform_metadata["Allocation hook exports covered"] =
+        meta.extra_platform_metadata["Allocation hook entry points covered"] =
             std::to_string(active + aliases);
         meta.extra_platform_metadata["Allocation hook targets installed"] =
             std::to_string(allocation_sampler_.hookTargetCount());
