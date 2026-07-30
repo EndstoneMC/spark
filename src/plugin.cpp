@@ -31,6 +31,7 @@
 #include "sampler/profiler.h"
 #include "spark_constants.h"
 #include "stats/executable_hash.h"
+#include "stats/statistics_service.h"
 #include "stats/tick_monitor.h"
 
 namespace {
@@ -202,6 +203,7 @@ class SparkPlugin : public endstone::Plugin {
 public:
     void onEnable() override
     {
+        statistics_.start();
         std::string hash_error;
         bds_executable_sha256_ = spark::currentExecutableSha256(hash_error);
         if (bds_executable_sha256_.empty()) {
@@ -283,9 +285,8 @@ private:
         }
         const bool profiler_running = profiler_.running();
         const bool tick_monitor_running = tick_monitor_.running();
-        const double mspt = profiler_running || tick_monitor_running
-                                ? getServer().getCurrentMillisecondsPerTick()
-                                : 0.0;
+        const double mspt = getServer().getCurrentMillisecondsPerTick();
+        statistics_.onTick(mspt);
         if (tick_monitor_running) {
             processTickMonitor(mspt);
         }
@@ -1015,6 +1016,7 @@ private:
     }
 
     spark::Profiler profiler_;
+    spark::StatisticsService statistics_;
     spark::TickMonitor tick_monitor_;
     std::string tick_monitor_sender_ = "CONSOLE";
     std::string bds_executable_sha256_;

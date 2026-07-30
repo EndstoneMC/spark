@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Maintain a fixed-capacity 15-minute history of completed ticks and one-second
+  process/system CPU observations even when no profiler is running.
+- Calculate independent 5-second, 10-second, 1-minute, 5-minute, and 15-minute TPS
+  windows plus query-time MSPT distributions and rolling CPU usage.
+
+### Changed
+
+- Share one cross-platform process CPU normalization rule and keep allocation,
+  sorting, and percentile work out of the per-tick statistics path.
+
 ## [0.3.2] - 2026-07-30
 
 ### Added

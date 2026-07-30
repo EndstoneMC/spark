@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -46,6 +47,7 @@
 #include "sampler/types.h"
 #include "spark_constants.h"
 #include "stats/executable_hash.h"
+#include "stats/statistics_service.h"
 #include "stats/tick_monitor.h"
 
 namespace {
@@ -821,6 +823,100 @@ bool verifyAllThreadSampling()
     // without requiring a minimum number of scheduling turns within 200ms.
     if (sampler.tree().sampleCount() != thread_weight_sum) {
         std::fprintf(stderr, "all-thread sampling: combined tree lost elapsed-time weight\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifyStatisticsService()
+{
+    auto close = [](double actual, double expected) {
+        return std::abs(actual - expected) < 0.000001;
+    };
+    auto initialCpu = [] {
+        spark::CpuSnapshot snapshot;
+        snapshot.valid = true;
+        snapshot.process_ticks_per_second = 100.0;
+        snapshot.cpu_threads = 2;
+        snapshot.wall_ms = 0;
+        return snapshot;
+    };
+
+    auto tps_service = std::make_unique<spark::StatisticsService>();
+    tps_service->startAt(0, 1'000'000, initialCpu());
+    for (int second = 0; second < 900; ++second) {
+        const int rate = second < 600 ? 20
+                         : second < 840 ? 18
+                         : second < 890 ? 15
+                         : second < 895 ? 10
+                                        : 5;
+        for (int tick = 1; tick <= rate; ++tick) {
+            const std::int64_t timestamp =
+                static_cast<std::int64_t>(second) * 1000 +
+                static_cast<std::int64_t>(tick) * 1000 / rate;
+            tps_service->recordTickAt(2.0, timestamp);
+        }
+    }
+    const spark::StatisticsSnapshot tps = tps_service->snapshotAt(900'000);
+    if (!close(tps.tps.last_5s.value, 5.0) ||
+        !close(tps.tps.last_10s.value, 7.5) ||
+        !close(tps.tps.last_1m.value, 13.75) ||
+        !close(tps.tps.last_5m.value, 17.15) ||
+        !close(tps.tps.last_15m.value, 19.05) ||
+        tps.tps.last_5s.samples != 25 ||
+        tps.history_span_ms != spark::StatisticsService::kMaximumHistoryMs) {
+        std::fprintf(stderr,
+                     "statistics service: TPS windows were not independently "
+                     "time-weighted\n");
+        return false;
+    }
+
+    auto mspt_service = std::make_unique<spark::StatisticsService>();
+    mspt_service->startAt(0, 2'000'000, initialCpu());
+    for (int tick = 1; tick <= 1000; ++tick) {
+        mspt_service->recordTickAt(
+            static_cast<double>((tick - 1) % 100 + 1),
+            static_cast<std::int64_t>(tick) * 10);
+    }
+    const spark::StatisticsSnapshot mspt = mspt_service->snapshotAt(10'000);
+    const spark::DistributionValues &distribution = mspt.mspt.last_10s;
+    if (!distribution.present || distribution.samples != 1000 ||
+        !close(distribution.mean, 50.5) || !close(distribution.min, 1.0) ||
+        !close(distribution.median, 50.5) ||
+        !close(distribution.percentile95, 95.0) ||
+        !close(distribution.max, 100.0) ||
+        mspt.mspt.last_1m.span_ms != 10'000) {
+        std::fprintf(stderr,
+                     "statistics service: MSPT distribution or partial-window "
+                     "span was incorrect\n");
+        return false;
+    }
+
+    auto cpu_service = std::make_unique<spark::StatisticsService>();
+    spark::CpuSnapshot cpu = initialCpu();
+    cpu_service->startAt(0, 3'000'000, cpu);
+    for (int second = 1; second <= 900; ++second) {
+        const unsigned long long process_delta =
+            second <= 840 ? 20 : (second <= 890 ? 40 : 80);
+        const unsigned long long busy_delta =
+            second <= 840 ? 20 : (second <= 890 ? 40 : 80);
+        cpu.process_ticks += process_delta;
+        cpu.system_busy += busy_delta;
+        cpu.system_total += 100;
+        cpu.wall_ms = static_cast<std::int64_t>(second) * 1000;
+        cpu_service->recordCpuSnapshot(cpu);
+    }
+    const spark::StatisticsSnapshot cpu_stats =
+        cpu_service->snapshotAt(900'000);
+    if (!close(cpu_stats.cpu.process_last_10s.value, 0.4) ||
+        !close(cpu_stats.cpu.process_last_1m.value, 14.0 / 60.0) ||
+        !close(cpu_stats.cpu.process_last_15m.value, 98.0 / 900.0) ||
+        !close(cpu_stats.cpu.system_last_10s.value, 0.8) ||
+        !close(cpu_stats.cpu.system_last_1m.value, 28.0 / 60.0) ||
+        !close(cpu_stats.cpu.system_last_15m.value, 196.0 / 900.0)) {
+        std::fprintf(stderr,
+                     "statistics service: CPU windows were not independently "
+                     "time-weighted\n");
         return false;
     }
     return true;
@@ -1934,6 +2030,10 @@ int main(int argc, char **argv)
 #endif
     }
 
+    if (argc > 1 && std::string(argv[1]) == "--statistics-only") {
+        return verifyStatisticsService() ? 0 : 1;
+    }
+
     int seconds = 4;
     bool upload = false;
     for (int i = 1; i < argc; ++i) {
@@ -1952,7 +2052,8 @@ int main(int argc, char **argv)
     }
 
     if (!verifyArgumentParsing() || !verifyThreadSelectorSemantics() ||
-        !verifyTickMonitor() || !verifyThreadDiscovery() ||
+        !verifyTickMonitor() || !verifyStatisticsService() ||
+        !verifyThreadDiscovery() ||
         !verifyMultiThreadSerialization() || !verifyUploadFailure() || !verifyCaptureLifecycle() ||
 #if defined(_WIN32)
         !verifyWindowsThreadActivityDetection() ||

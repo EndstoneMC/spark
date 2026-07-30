@@ -93,6 +93,10 @@ final output.
   Execution samples use the measured elapsed time between sampling points, excluding
   the target thread's own stack-walk suspension, so multi-thread sweeps retain correct
   time weights even when their effective cadence is longer than the requested interval.
+* A profiler-independent statistics service continuously retains up to 15 minutes
+  of completed ticks and one-second process/system CPU observations in fixed-capacity
+  ring buffers. Tick recording does not allocate or sort; rolling TPS, MSPT
+  percentiles, and CPU averages are calculated only when a snapshot is requested.
 * Every profile includes the SHA-256 of the running BDS executable, allowing an
   offline analyst to select the exact matching binary without receiving the
   server owner's executable, paths, configuration, or world data.
@@ -177,6 +181,8 @@ free/realloc and live-only lifecycles, session reuse, thread overflow, and bound
 queue/index pressure. `spark_allocation_benchmark` prints repeatable CSV medians for
 unprofiled and disabled-hook baselines, default/4 KiB intervals,
 single/four-thread, live-only, and forced saturation cases.
+`spark_selftest --statistics-only` deterministically verifies independent TPS and
+CPU windows, true MSPT median/p95 calculations, and partial-history spans.
 
 On Linux, the bundled profile selects libunwind because the SIGPROF sampler
 requires cpptrace's async-signal-safe unwinding path. Windows does not use

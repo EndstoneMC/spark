@@ -1,5 +1,6 @@
 #include "stats/system_stats.h"
 
+#include <algorithm>
 #include <chrono>
 
 #if defined(_WIN32)
@@ -20,6 +21,41 @@
 #endif
 
 namespace spark {
+
+CpuUsage cpuUsageBetween(const CpuSnapshot &before, const CpuSnapshot &after)
+{
+    CpuUsage usage;
+    if (!before.valid || !after.valid || after.wall_ms <= before.wall_ms) {
+        return usage;
+    }
+
+    const double wall_seconds =
+        static_cast<double>(after.wall_ms - before.wall_ms) / 1000.0;
+    if (after.process_ticks >= before.process_ticks &&
+        after.process_ticks_per_second > 0.0 && after.cpu_threads > 0) {
+        const double process_seconds =
+            static_cast<double>(after.process_ticks - before.process_ticks) /
+            after.process_ticks_per_second;
+        usage.process = std::clamp(
+            process_seconds /
+                (wall_seconds * static_cast<double>(after.cpu_threads)),
+            0.0, 1.0);
+        usage.process_valid = true;
+    }
+    if (after.system_total >= before.system_total &&
+        after.system_busy >= before.system_busy) {
+        const unsigned long long total_delta =
+            after.system_total - before.system_total;
+        if (total_delta > 0) {
+            usage.system = std::clamp(
+                static_cast<double>(after.system_busy - before.system_busy) /
+                    static_cast<double>(total_delta),
+                0.0, 1.0);
+            usage.system_valid = true;
+        }
+    }
+    return usage;
+}
 
 #if !defined(_WIN32)
 
@@ -56,6 +92,13 @@ std::int64_t processVirtualBytes()
 CpuSnapshot captureCpuSnapshot()
 {
     CpuSnapshot s;
+    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    long ticks_per_second = sysconf(_SC_CLK_TCK);
+    s.cpu_threads = ncpu > 0 ? static_cast<int>(ncpu) : 1;
+    s.process_ticks_per_second =
+        ticks_per_second > 0 ? static_cast<double>(ticks_per_second) : 100.0;
+    bool process_valid = false;
+    bool system_valid = false;
 
     // Process CPU: utime + stime from /proc/self/stat (fields after the ')').
     {
@@ -73,6 +116,7 @@ CpuSnapshot captureCpuSnapshot()
                 }
                 else if (index == 12) {
                     stime = std::strtoull(tok.c_str(), nullptr, 10);  // field 15
+                    process_valid = true;
                     break;
                 }
                 ++index;
@@ -97,10 +141,11 @@ CpuSnapshot captureCpuSnapshot()
         }
         s.system_total = total;
         s.system_busy = total > idle_all ? total - idle_all : 0;
+        system_valid = label == "cpu" && index >= 4 && total > 0;
     }
 
     s.wall_ms = steadyNowMs();
-    s.valid = true;
+    s.valid = process_valid && system_valid;
     return s;
 }
 
@@ -113,27 +158,16 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
     if (ncpu < 1) {
         ncpu = 1;
     }
-    long clk = sysconf(_SC_CLK_TCK);
-    if (clk < 1) {
-        clk = 100;
-    }
     s.cpu_threads = static_cast<int>(ncpu);
 
     CpuSnapshot now = captureCpuSnapshot();
-    if (baseline.valid && now.valid) {
-        double wall_s = static_cast<double>(now.wall_ms - baseline.wall_ms) / 1000.0;
-        if (wall_s > 0.0) {
-            double proc_cpu_s = static_cast<double>(now.process_ticks - baseline.process_ticks) / clk;
-            s.cpu_process = proc_cpu_s / (wall_s * static_cast<double>(ncpu));
-        }
-        unsigned long long dt = now.system_total - baseline.system_total;
-        unsigned long long db = now.system_busy - baseline.system_busy;
-        if (dt > 0) {
-            s.cpu_system = static_cast<double>(db) / static_cast<double>(dt);
-        }
+    CpuUsage usage = cpuUsageBetween(baseline, now);
+    if (usage.process_valid) {
+        s.cpu_process = usage.process;
     }
-    s.cpu_process = s.cpu_process < 0 ? 0 : (s.cpu_process > 1 ? 1 : s.cpu_process);
-    s.cpu_system = s.cpu_system < 0 ? 0 : (s.cpu_system > 1 ? 1 : s.cpu_system);
+    if (usage.system_valid) {
+        s.cpu_system = usage.system;
+    }
 
     // CPU model.
     {
@@ -244,6 +278,13 @@ std::string nativeArchitecture(WORD architecture)
 CpuSnapshot captureCpuSnapshot()
 {
     CpuSnapshot s;
+    SYSTEM_INFO system_info{};
+    GetSystemInfo(&system_info);
+    s.cpu_threads =
+        system_info.dwNumberOfProcessors > 0
+            ? static_cast<int>(system_info.dwNumberOfProcessors)
+            : 1;
+    s.process_ticks_per_second = kWindowsTicksPerSecond;
 
     FILETIME creation{}, exit{}, process_kernel{}, process_user{};
     FILETIME idle{}, system_kernel{}, system_user{};
@@ -271,22 +312,13 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
     s.cpu_threads = system_info.dwNumberOfProcessors > 0 ? static_cast<int>(system_info.dwNumberOfProcessors) : 1;
 
     CpuSnapshot now = captureCpuSnapshot();
-    if (baseline.valid && now.valid && now.wall_ms > baseline.wall_ms &&
-        now.process_ticks >= baseline.process_ticks) {
-        double wall_s = static_cast<double>(now.wall_ms - baseline.wall_ms) / 1000.0;
-        double process_s = static_cast<double>(now.process_ticks - baseline.process_ticks) / kWindowsTicksPerSecond;
-        s.cpu_process = process_s / (wall_s * static_cast<double>(s.cpu_threads));
-
-        if (now.system_total >= baseline.system_total && now.system_busy >= baseline.system_busy) {
-            unsigned long long total_delta = now.system_total - baseline.system_total;
-            unsigned long long busy_delta = now.system_busy - baseline.system_busy;
-            if (total_delta > 0) {
-                s.cpu_system = static_cast<double>(busy_delta) / static_cast<double>(total_delta);
-            }
-        }
+    CpuUsage usage = cpuUsageBetween(baseline, now);
+    if (usage.process_valid) {
+        s.cpu_process = usage.process;
     }
-    s.cpu_process = s.cpu_process < 0 ? 0 : (s.cpu_process > 1 ? 1 : s.cpu_process);
-    s.cpu_system = s.cpu_system < 0 ? 0 : (s.cpu_system > 1 ? 1 : s.cpu_system);
+    if (usage.system_valid) {
+        s.cpu_system = usage.system;
+    }
 
     HKEY cpu_key = nullptr;
     if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_QUERY_VALUE,

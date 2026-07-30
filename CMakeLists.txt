@@ -57,6 +57,7 @@ add_library(spark_core STATIC
         src/sampler/thread_selector.cpp
         src/sampler/thread_info.cpp
         src/stats/executable_hash.cpp
+        src/stats/statistics_service.cpp
         src/stats/tick_monitor.cpp
         src/stats/system_stats.cpp)
 if (WIN32)

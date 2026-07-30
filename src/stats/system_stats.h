@@ -82,12 +82,22 @@ struct WindowStats {
 struct CpuSnapshot {
     bool valid = false;
     unsigned long long process_ticks = 0;  // utime + stime
+    double process_ticks_per_second = 0.0;
+    int cpu_threads = 1;
     unsigned long long system_busy = 0;
     unsigned long long system_total = 0;
     std::int64_t wall_ms = 0;
 };
 
+struct CpuUsage {
+    bool process_valid = false;
+    bool system_valid = false;
+    double process = 0.0;  // 0..1 of total host capacity
+    double system = 0.0;   // 0..1
+};
+
 CpuSnapshot captureCpuSnapshot();
+CpuUsage cpuUsageBetween(const CpuSnapshot &before, const CpuSnapshot &after);
 
 // Gather host stats; CPU usage is computed against `baseline`. `disk_path` selects
 // the filesystem to report (e.g. the server working directory).
