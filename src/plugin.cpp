@@ -204,6 +204,8 @@ public:
     void onEnable() override
     {
         statistics_.start();
+        statistics_.recordPlayerCount(
+            static_cast<long>(getServer().getOnlinePlayers().size()));
         std::string hash_error;
         bds_executable_sha256_ = spark::currentExecutableSha256(hash_error);
         if (bds_executable_sha256_.empty()) {
@@ -286,7 +288,10 @@ private:
         const bool profiler_running = profiler_.running();
         const bool tick_monitor_running = tick_monitor_.running();
         const double mspt = getServer().getCurrentMillisecondsPerTick();
-        statistics_.onTick(mspt);
+        if (statistics_.onTick(mspt)) {
+            statistics_.recordPlayerCount(
+                static_cast<long>(getServer().getOnlinePlayers().size()));
+        }
         if (tick_monitor_running) {
             processTickMonitor(mspt);
         }
@@ -723,9 +728,11 @@ private:
         pending_ctx_.minecraft_version = getServer().getMinecraftVersion();
         pending_ctx_.bds_executable_sha256 = bds_executable_sha256_;
         pending_ctx_.comment = comment;
-        pending_ctx_.tps = getServer().getAverageTicksPerSecond();
-        pending_ctx_.mspt = getServer().getAverageMillisecondsPerTick();
-        pending_ctx_.mspt_max = getServer().getCurrentMillisecondsPerTick();
+        pending_ctx_.statistics = statistics_.snapshot();
+        pending_ctx_.window_stats = statistics_.profileWindows(
+            profiler_.startTimeMs(), profiler_.endTimeMs());
+        pending_ctx_.system_stats =
+            spark::gatherSystemStats(spark::CpuSnapshot{}, ".");
         pending_ctx_.player_count = static_cast<long>(getServer().getOnlinePlayers().size());
         pending_ctx_.online_mode = getServer().getOnlineMode() ? 2 : 1;
         {

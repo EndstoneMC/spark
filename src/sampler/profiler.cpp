@@ -238,7 +238,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
 
     running_.store(true);
     start_time_ms_ = session_start_ms;
-    cpu_baseline_ = captureCpuSnapshot();
+    end_time_ms_ = 0;
     auto_end_time_ms_ = options.timeout_seconds > 0
                             ? start_time_ms_ + static_cast<std::int64_t>(options.timeout_seconds) * 1000
                             : -1;
@@ -264,6 +264,7 @@ bool Profiler::stopSampling(std::string &error)
     if (!running_.load()) {
         return true;
     }
+    const std::int64_t requested_end_time_ms = nowMs();
     if (mode_ == ProfileMode::Allocation) {
         if (!allocation_sampler_.stop(error)) {
             if (!allocation_sampler_.running()) {
@@ -276,6 +277,7 @@ bool Profiler::stopSampling(std::string &error)
         sampler_.stop();
     }
     running_.store(false);
+    end_time_ms_ = requested_end_time_ms;
     return true;
 }
 
@@ -295,11 +297,6 @@ const ModuleTable &Profiler::activeModules() const
     return mode_ == ProfileMode::Allocation ? allocation_sampler_.modules() : sampler_.modules();
 }
 
-const std::map<std::int32_t, WindowTickStats> &Profiler::activeWindowTicks() const
-{
-    return mode_ == ProfileMode::Allocation ? allocation_sampler_.windowTicks() : sampler_.windowTicks();
-}
-
 std::uint64_t Profiler::activeNumberOfTicks() const
 {
     return mode_ == ProfileMode::Allocation ? allocation_sampler_.numberOfTicks() : sampler_.numberOfTicks();
@@ -309,7 +306,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
 {
     ProfileMetadata meta;
     meta.start_time_ms = start_time_ms_;
-    meta.end_time_ms = nowMs();
+    meta.end_time_ms = end_time_ms_ > 0 ? end_time_ms_ : nowMs();
     meta.interval = interval_;
     meta.mode = mode_;
     meta.number_of_ticks = static_cast<std::int32_t>(activeNumberOfTicks());
@@ -472,28 +469,20 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     }
 
     meta.platform_stats.present = true;
-    meta.platform_stats.tps = ctx.tps;
-    meta.platform_stats.mspt = ctx.mspt;
-    meta.platform_stats.mspt_max = ctx.mspt_max;
     meta.platform_stats.player_count = ctx.player_count;
     meta.platform_stats.online_mode = ctx.online_mode;
     meta.platform_stats.uptime_ms = ctx.uptime_ms;
     meta.platform_stats.process_mem_bytes = processRssBytes();
     meta.platform_stats.process_virtual_bytes = processVirtualBytes();
 
-    meta.system_stats = gatherSystemStats(cpu_baseline_, ".");
+    meta.statistics = ctx.statistics;
+    meta.system_stats = ctx.system_stats;
     meta.system_stats.uptime_ms = ctx.uptime_ms;
     meta.plugins = ctx.plugins;
     meta.world = ctx.world;
-
-    for (const auto &[window, wt] : activeWindowTicks()) {
-        WindowStats ws;
-        ws.ticks = wt.ticks;
-        ws.tps = static_cast<double>(wt.ticks);
-        ws.mspt_max = wt.mspt_max;
-        ws.mspt_median = wt.ticks > 0 ? wt.mspt_sum / wt.ticks : 0.0;
-        meta.window_stats[window] = ws;
-    }
+    meta.window_stats = ctx.window_stats;
+    meta.extra_platform_metadata["Statistics history available ms"] =
+        std::to_string(ctx.statistics.history_span_ms);
 
     if (mode_ == ProfileMode::Allocation) {
         std::vector<ThreadTreeView> threads;

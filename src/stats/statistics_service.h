@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 
 #include "stats/system_stats.h"
 
@@ -66,6 +67,7 @@ public:
     static constexpr std::int64_t kMaximumHistoryMs = 15 * 60 * 1000;
     static constexpr std::size_t kTickCapacity = 15 * 60 * 20;
     static constexpr std::size_t kCpuCapacity = 15 * 60;
+    static constexpr std::size_t kGaugeCapacity = 15 * 60;
 
     void start();
 
@@ -74,12 +76,17 @@ public:
     bool onTick(double duration_ms);
 
     StatisticsSnapshot snapshot() const;
+    std::map<std::int32_t, WindowStats> profileWindows(
+        std::int64_t profile_start_unix_ms,
+        std::int64_t profile_end_unix_ms) const;
+    void recordPlayerCount(long players);
 
     // Deterministic clock/CPU entry points used by the offline self-test.
     void startAt(std::int64_t steady_ms, std::int64_t unix_ms,
                  const CpuSnapshot &initial_cpu);
     void recordTickAt(double duration_ms, std::int64_t steady_ms);
     void recordCpuSnapshot(const CpuSnapshot &current);
+    void recordPlayerCountAt(long players, std::int64_t steady_ms);
     StatisticsSnapshot snapshotAt(std::int64_t steady_ms) const;
 
     std::int64_t unixTimeFor(std::int64_t steady_ms) const;
@@ -104,6 +111,11 @@ private:
         bool system_valid = false;
     };
 
+    struct GaugeSample {
+        std::int64_t steady_ms = 0;
+        int players = 0;
+    };
+
     RollingValue tpsFor(std::int64_t now_ms, std::int64_t window_ms) const;
     DistributionValues msptFor(std::int64_t now_ms,
                                std::int64_t window_ms) const;
@@ -114,10 +126,13 @@ private:
 
     std::array<TickSample, kTickCapacity> ticks_{};
     std::array<CpuSample, kCpuCapacity> cpu_{};
+    std::array<GaugeSample, kGaugeCapacity> gauges_{};
     std::size_t tick_begin_ = 0;
     std::size_t tick_size_ = 0;
     std::size_t cpu_begin_ = 0;
     std::size_t cpu_size_ = 0;
+    std::size_t gauge_begin_ = 0;
+    std::size_t gauge_size_ = 0;
     std::int64_t start_steady_ms_ = 0;
     std::int64_t start_unix_ms_ = 0;
     std::int64_t last_observation_steady_ms_ = 0;

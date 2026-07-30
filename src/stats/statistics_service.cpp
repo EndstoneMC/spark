@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace spark {
@@ -43,6 +44,8 @@ void StatisticsService::startAt(std::int64_t steady_ms, std::int64_t unix_ms,
     tick_size_ = 0;
     cpu_begin_ = 0;
     cpu_size_ = 0;
+    gauge_begin_ = 0;
+    gauge_size_ = 0;
     start_steady_ms_ = steady_ms;
     start_unix_ms_ = unix_ms;
     last_observation_steady_ms_ = steady_ms;
@@ -124,6 +127,35 @@ void StatisticsService::recordCpuSnapshot(const CpuSnapshot &current)
     previous_cpu_ = current;
     last_observation_steady_ms_ =
         (std::max)(last_observation_steady_ms_, current.wall_ms);
+}
+
+void StatisticsService::recordPlayerCount(long players)
+{
+    recordPlayerCountAt(players, last_observation_steady_ms_);
+}
+
+void StatisticsService::recordPlayerCountAt(long players,
+                                            std::int64_t steady_ms)
+{
+    if (!started_ || players < 0) {
+        return;
+    }
+
+    GaugeSample sample;
+    sample.steady_ms = steady_ms;
+    sample.players = static_cast<int>((std::min)(
+        players, static_cast<long>((std::numeric_limits<int>::max)())));
+
+    std::size_t index =
+        (gauge_begin_ + gauge_size_) % gauges_.size();
+    if (gauge_size_ == gauges_.size()) {
+        index = gauge_begin_;
+        gauge_begin_ = (gauge_begin_ + 1) % gauges_.size();
+    }
+    else {
+        ++gauge_size_;
+    }
+    gauges_[index] = sample;
 }
 
 std::int64_t StatisticsService::effectiveStart(std::int64_t now_ms,
@@ -275,6 +307,168 @@ StatisticsSnapshot StatisticsService::snapshotAt(std::int64_t steady_ms) const
     result.cpu.system_last_1m = cpuFor(now_ms, 60 * 1000, false);
     result.cpu.system_last_15m =
         cpuFor(now_ms, 15 * 60 * 1000, false);
+    return result;
+}
+
+std::map<std::int32_t, WindowStats> StatisticsService::profileWindows(
+    std::int64_t profile_start_unix_ms,
+    std::int64_t profile_end_unix_ms) const
+{
+    std::map<std::int32_t, WindowStats> result;
+    if (!started_ || profile_end_unix_ms <= profile_start_unix_ms) {
+        return result;
+    }
+
+    const std::int64_t profile_start_steady =
+        start_steady_ms_ + (profile_start_unix_ms - start_unix_ms_);
+    const std::int64_t profile_end_steady =
+        start_steady_ms_ + (profile_end_unix_ms - start_unix_ms_);
+    const std::int64_t available_start =
+        (std::max)({profile_start_steady, start_steady_ms_,
+                    profile_end_steady - kMaximumHistoryMs});
+    if (available_start >= profile_end_steady) {
+        return result;
+    }
+
+    const std::int64_t first_window =
+        (available_start - profile_start_steady) / 1000;
+    const std::int64_t last_window =
+        (profile_end_steady - profile_start_steady - 1) / 1000;
+    if (first_window > (std::numeric_limits<std::int32_t>::max)() ||
+        last_window > (std::numeric_limits<std::int32_t>::max)()) {
+        return result;
+    }
+
+    struct Accumulator {
+        WindowStats stats;
+        std::vector<double> durations;
+        double process_weighted = 0.0;
+        double system_weighted = 0.0;
+        std::int64_t process_covered_ms = 0;
+        std::int64_t system_covered_ms = 0;
+    };
+    std::vector<Accumulator> accumulators(
+        static_cast<std::size_t>(last_window - first_window + 1));
+
+    for (std::int64_t window = first_window; window <= last_window;
+         ++window) {
+        Accumulator &accumulator =
+            accumulators[static_cast<std::size_t>(window - first_window)];
+        const std::int64_t nominal_start =
+            profile_start_steady + window * 1000;
+        const std::int64_t start =
+            (std::max)(available_start, nominal_start);
+        const std::int64_t end =
+            (std::min)(profile_end_steady, nominal_start + 1000);
+        accumulator.stats.ticks_present = true;
+        accumulator.stats.tps_present = true;
+        accumulator.stats.start_time_ms = unixTimeFor(start);
+        accumulator.stats.end_time_ms = unixTimeFor(end);
+        accumulator.stats.duration_ms =
+            static_cast<int>((std::max<std::int64_t>)(0, end - start));
+    }
+
+    for (std::size_t i = 0; i < tick_size_; ++i) {
+        const TickSample &sample =
+            ticks_[(tick_begin_ + i) % ticks_.size()];
+        if (sample.steady_ms < available_start ||
+            sample.steady_ms >= profile_end_steady) {
+            continue;
+        }
+        const std::int64_t window =
+            (sample.steady_ms - profile_start_steady) / 1000;
+        if (window < first_window || window > last_window) {
+            continue;
+        }
+        Accumulator &accumulator =
+            accumulators[static_cast<std::size_t>(window - first_window)];
+        ++accumulator.stats.ticks;
+        if (sample.duration_valid) {
+            accumulator.durations.push_back(sample.duration_ms);
+        }
+    }
+
+    for (std::size_t i = 0; i < cpu_size_; ++i) {
+        const CpuSample &sample = cpu_[(cpu_begin_ + i) % cpu_.size()];
+        for (std::int64_t window = first_window; window <= last_window;
+             ++window) {
+            Accumulator &accumulator =
+                accumulators[static_cast<std::size_t>(window - first_window)];
+            const std::int64_t window_start =
+                start_steady_ms_ +
+                (accumulator.stats.start_time_ms - start_unix_ms_);
+            const std::int64_t window_end =
+                start_steady_ms_ +
+                (accumulator.stats.end_time_ms - start_unix_ms_);
+            const std::int64_t overlap_start =
+                (std::max)(window_start, sample.start_steady_ms);
+            const std::int64_t overlap_end =
+                (std::min)(window_end, sample.end_steady_ms);
+            if (overlap_end <= overlap_start) {
+                continue;
+            }
+            const std::int64_t overlap_ms = overlap_end - overlap_start;
+            if (sample.process_valid) {
+                accumulator.process_weighted +=
+                    sample.process * static_cast<double>(overlap_ms);
+                accumulator.process_covered_ms += overlap_ms;
+            }
+            if (sample.system_valid) {
+                accumulator.system_weighted +=
+                    sample.system * static_cast<double>(overlap_ms);
+                accumulator.system_covered_ms += overlap_ms;
+            }
+        }
+    }
+
+    for (std::int64_t window = first_window; window <= last_window;
+         ++window) {
+        Accumulator &accumulator =
+            accumulators[static_cast<std::size_t>(window - first_window)];
+        WindowStats &stats = accumulator.stats;
+        if (stats.duration_ms > 0) {
+            stats.tps = static_cast<double>(stats.ticks) * 1000.0 /
+                        static_cast<double>(stats.duration_ms);
+        }
+
+        if (!accumulator.durations.empty()) {
+            std::sort(accumulator.durations.begin(),
+                      accumulator.durations.end());
+            stats.mspt_present = true;
+            stats.mspt_max = accumulator.durations.back();
+            const std::size_t middle = accumulator.durations.size() / 2;
+            stats.mspt_median =
+                accumulator.durations.size() % 2 == 0
+                    ? (accumulator.durations[middle - 1] +
+                       accumulator.durations[middle]) /
+                          2.0
+                    : accumulator.durations[middle];
+        }
+        if (accumulator.process_covered_ms > 0) {
+            stats.cpu_process_present = true;
+            stats.cpu_process =
+                accumulator.process_weighted /
+                static_cast<double>(accumulator.process_covered_ms);
+        }
+        if (accumulator.system_covered_ms > 0) {
+            stats.cpu_system_present = true;
+            stats.cpu_system =
+                accumulator.system_weighted /
+                static_cast<double>(accumulator.system_covered_ms);
+        }
+
+        for (std::size_t i = 0; i < gauge_size_; ++i) {
+            const GaugeSample &gauge =
+                gauges_[(gauge_begin_ + i) % gauges_.size()];
+            if (gauge.steady_ms <=
+                start_steady_ms_ +
+                    (stats.end_time_ms - start_unix_ms_)) {
+                stats.players_present = true;
+                stats.players = gauge.players;
+            }
+        }
+        result.emplace(static_cast<std::int32_t>(window), stats);
+    }
     return result;
 }
 

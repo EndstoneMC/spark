@@ -9,8 +9,10 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -53,6 +55,130 @@
 namespace {
 
 volatile double g_sink = 0.0;
+
+struct ProtoField {
+    int number = 0;
+    int wire_type = 0;
+    std::uint64_t varint = 0;
+    double real = 0.0;
+    std::string_view bytes;
+};
+
+bool readProtoVarint(std::string_view bytes, std::size_t &offset,
+                     std::uint64_t &value)
+{
+    value = 0;
+    for (int shift = 0; shift < 64 && offset < bytes.size(); shift += 7) {
+        const unsigned char byte =
+            static_cast<unsigned char>(bytes[offset++]);
+        value |= static_cast<std::uint64_t>(byte & 0x7f) << shift;
+        if ((byte & 0x80) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool nextProtoField(std::string_view bytes, std::size_t &offset,
+                    ProtoField &field)
+{
+    std::uint64_t tag = 0;
+    if (!readProtoVarint(bytes, offset, tag) || tag == 0) {
+        return false;
+    }
+    field = ProtoField{};
+    field.number = static_cast<int>(tag >> 3);
+    field.wire_type = static_cast<int>(tag & 7);
+    if (field.wire_type == 0) {
+        return readProtoVarint(bytes, offset, field.varint);
+    }
+    if (field.wire_type == 1) {
+        if (offset + sizeof(std::uint64_t) > bytes.size()) {
+            return false;
+        }
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, bytes.data() + offset, sizeof(bits));
+        std::memcpy(&field.real, &bits, sizeof(bits));
+        offset += sizeof(bits);
+        return true;
+    }
+    if (field.wire_type == 2) {
+        std::uint64_t size = 0;
+        if (!readProtoVarint(bytes, offset, size) ||
+            size > bytes.size() - offset) {
+            return false;
+        }
+        field.bytes = bytes.substr(offset, static_cast<std::size_t>(size));
+        offset += static_cast<std::size_t>(size);
+        return true;
+    }
+    if (field.wire_type == 5) {
+        if (offset + sizeof(std::uint32_t) > bytes.size()) {
+            return false;
+        }
+        offset += sizeof(std::uint32_t);
+        return true;
+    }
+    return false;
+}
+
+bool findProtoField(std::string_view bytes, int number, ProtoField &result,
+                    std::size_t occurrence = 0)
+{
+    std::size_t offset = 0;
+    std::size_t matched = 0;
+    while (offset < bytes.size()) {
+        ProtoField field;
+        if (!nextProtoField(bytes, offset, field)) {
+            return false;
+        }
+        if (field.number == number && matched++ == occurrence) {
+            result = field;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool nearlyEqual(double actual, double expected)
+{
+    return std::abs(actual - expected) < 0.000001;
+}
+
+bool findProtoPath(std::string_view bytes,
+                   std::initializer_list<int> path, ProtoField &result)
+{
+    std::size_t index = 0;
+    for (int number : path) {
+        if (!findProtoField(bytes, number, result)) {
+            return false;
+        }
+        if (++index < path.size()) {
+            if (result.wire_type != 2) {
+                return false;
+            }
+            bytes = result.bytes;
+        }
+    }
+    return true;
+}
+
+bool protoRealEquals(std::string_view bytes,
+                     std::initializer_list<int> path, double expected)
+{
+    ProtoField field;
+    return findProtoPath(bytes, path, field) && field.wire_type == 1 &&
+           nearlyEqual(field.real, expected);
+}
+
+bool protoVarintEquals(std::string_view bytes,
+                       std::initializer_list<int> path,
+                       std::uint64_t expected)
+{
+    ProtoField field;
+    return findProtoPath(bytes, path, field) && field.wire_type == 0 &&
+           field.varint == expected;
+}
 
 #if defined(_WIN32)
 void __cdecl ignoreInvalidParameter(const wchar_t *, const wchar_t *,
@@ -762,6 +888,100 @@ bool verifyMultiThreadSerialization()
     return true;
 }
 
+bool verifyStatisticsSerialization()
+{
+    spark::ModuleTable modules;
+    const spark::ModuleId module = modules.intern("statistics-module");
+    const spark::FrameKey frame{module, 0x10, 0x10};
+    spark::CallTree tree;
+    tree.log({frame}, 0);
+
+    spark::ProfileMetadata metadata;
+    metadata.start_time_ms = 1'000;
+    metadata.end_time_ms = 1'800;
+    metadata.platform_stats.present = true;
+    metadata.system_stats.present = true;
+    metadata.system_stats.cpu_threads = 8;
+
+    metadata.statistics.tps.last_1m = {true, 19.0, 60'000, 1140};
+    metadata.statistics.tps.last_5m = {true, 18.0, 300'000, 5400};
+    metadata.statistics.tps.last_15m = {true, 17.0, 900'000, 15300};
+    metadata.statistics.mspt.last_1m =
+        {true, 10.0, 1.0, 9.0, 20.0, 30.0, 60'000, 1140};
+    metadata.statistics.mspt.last_5m =
+        {true, 11.0, 2.0, 10.0, 22.0, 35.0, 300'000, 5400};
+    metadata.statistics.cpu.process_last_1m =
+        {true, 0.25, 60'000, 60};
+    metadata.statistics.cpu.process_last_15m =
+        {true, 0.20, 900'000, 900};
+    metadata.statistics.cpu.system_last_1m =
+        {true, 0.50, 60'000, 60};
+    metadata.statistics.cpu.system_last_15m =
+        {true, 0.40, 900'000, 900};
+
+    spark::WindowStats window;
+    window.ticks_present = true;
+    window.ticks = 17;
+    window.cpu_process_present = true;
+    window.cpu_process = 0.25;
+    window.cpu_system_present = true;
+    window.cpu_system = 0.50;
+    window.tps_present = true;
+    window.tps = 17.0;
+    window.mspt_present = true;
+    window.mspt_median = 9.0;
+    window.mspt_max = 30.0;
+    window.players_present = true;
+    window.players = 4;
+    window.start_time_ms = 1'000;
+    window.end_time_ms = 1'800;
+    window.duration_ms = 800;
+    metadata.window_stats[0] = window;
+
+    std::unordered_map<spark::FrameKey, spark::ResolvedFrame,
+                       spark::FrameKeyHash>
+        resolved;
+    resolved[frame] = {"statistics", "sample"};
+    const std::string profile =
+        spark::buildSamplerData(metadata, tree, resolved);
+
+    if (!protoRealEquals(profile, {1, 8, 4, 1}, 19.0) ||
+        !protoRealEquals(profile, {1, 8, 4, 2}, 18.0) ||
+        !protoRealEquals(profile, {1, 8, 4, 3}, 17.0) ||
+        !protoRealEquals(profile, {1, 8, 5, 1, 1}, 10.0) ||
+        !protoRealEquals(profile, {1, 8, 5, 1, 3}, 1.0) ||
+        !protoRealEquals(profile, {1, 8, 5, 1, 4}, 9.0) ||
+        !protoRealEquals(profile, {1, 8, 5, 1, 5}, 20.0) ||
+        !protoRealEquals(profile, {1, 9, 1, 2, 1}, 0.25) ||
+        !protoRealEquals(profile, {1, 9, 1, 2, 2}, 0.20)) {
+        std::fprintf(stderr,
+                     "statistics serialization: rolling metadata did not "
+                     "round-trip through the current protocol\n");
+        return false;
+    }
+
+    ProtoField statistics;
+    ProtoField omitted;
+    if (!protoVarintEquals(profile, {7, 1}, 0) ||
+        !protoVarintEquals(profile, {7, 2, 1}, 17) ||
+        !protoRealEquals(profile, {7, 2, 4}, 17.0) ||
+        !protoRealEquals(profile, {7, 2, 5}, 9.0) ||
+        !protoRealEquals(profile, {7, 2, 6}, 30.0) ||
+        !protoVarintEquals(profile, {7, 2, 7}, 4) ||
+        !protoVarintEquals(profile, {7, 2, 11}, 1'000) ||
+        !protoVarintEquals(profile, {7, 2, 12}, 1'800) ||
+        !protoVarintEquals(profile, {7, 2, 13}, 800) ||
+        !findProtoPath(profile, {7, 2}, statistics) ||
+        findProtoField(statistics.bytes, 8, omitted) ||
+        findProtoField(statistics.bytes, 10, omitted)) {
+        std::fprintf(stderr,
+                     "statistics serialization: per-second fields or omitted "
+                     "gauges were incorrect\n");
+        return false;
+    }
+    return true;
+}
+
 bool verifyAllThreadSampling()
 {
     using namespace std::chrono_literals;
@@ -917,6 +1137,87 @@ bool verifyStatisticsService()
         std::fprintf(stderr,
                      "statistics service: CPU windows were not independently "
                      "time-weighted\n");
+        return false;
+    }
+
+    auto window_service = std::make_unique<spark::StatisticsService>();
+    spark::CpuSnapshot window_cpu = initialCpu();
+    window_service->startAt(0, 4'000'000, window_cpu);
+    window_service->recordPlayerCountAt(2, 0);
+    window_service->recordTickAt(1.0, 100);
+    window_service->recordTickAt(9.0, 600);
+    window_cpu.process_ticks += 20;
+    window_cpu.system_busy += 20;
+    window_cpu.system_total += 100;
+    window_cpu.wall_ms = 1'000;
+    window_service->recordCpuSnapshot(window_cpu);
+    window_service->recordPlayerCountAt(3, 1'000);
+    window_service->recordTickAt(2.0, 1'100);
+    window_service->recordTickAt(8.0, 1'600);
+    window_cpu.process_ticks += 40;
+    window_cpu.system_busy += 40;
+    window_cpu.system_total += 100;
+    window_cpu.wall_ms = 2'000;
+    window_service->recordCpuSnapshot(window_cpu);
+    const auto windows =
+        window_service->profileWindows(4'000'000, 4'002'000);
+    auto first_window = windows.find(0);
+    auto second_window = windows.find(1);
+    if (windows.size() != 2 || first_window == windows.end() ||
+        second_window == windows.end() ||
+        first_window->second.ticks != 2 ||
+        !close(first_window->second.tps, 2.0) ||
+        !close(first_window->second.mspt_median, 5.0) ||
+        !close(first_window->second.mspt_max, 9.0) ||
+        !close(first_window->second.cpu_process, 0.1) ||
+        !close(first_window->second.cpu_system, 0.2) ||
+        first_window->second.players != 3 ||
+        first_window->second.start_time_ms != 4'000'000 ||
+        first_window->second.end_time_ms != 4'001'000 ||
+        first_window->second.duration_ms != 1'000 ||
+        second_window->second.players != 3 ||
+        second_window->second.entities_present ||
+        second_window->second.chunks_present) {
+        std::fprintf(stderr,
+                     "statistics service: per-second profile windows were "
+                     "incorrect (count=%zu first ticks=%d tps=%.3f "
+                     "median=%.3f max=%.3f process=%.3f system=%.3f "
+                     "players=%d start=%lld end=%lld duration=%d; "
+                     "second players=%d)\n",
+                     windows.size(),
+                     first_window == windows.end() ? -1
+                                                   : first_window->second.ticks,
+                     first_window == windows.end() ? -1.0
+                                                   : first_window->second.tps,
+                     first_window == windows.end()
+                         ? -1.0
+                         : first_window->second.mspt_median,
+                     first_window == windows.end()
+                         ? -1.0
+                         : first_window->second.mspt_max,
+                     first_window == windows.end()
+                         ? -1.0
+                         : first_window->second.cpu_process,
+                     first_window == windows.end()
+                         ? -1.0
+                         : first_window->second.cpu_system,
+                     first_window == windows.end()
+                         ? -1
+                         : first_window->second.players,
+                     static_cast<long long>(
+                         first_window == windows.end()
+                             ? -1
+                             : first_window->second.start_time_ms),
+                     static_cast<long long>(
+                         first_window == windows.end()
+                             ? -1
+                             : first_window->second.end_time_ms),
+                     first_window == windows.end()
+                         ? -1
+                         : first_window->second.duration_ms,
+                     second_window == windows.end()
+                         ? -1
+                         : second_window->second.players);
         return false;
     }
     return true;
@@ -2054,7 +2355,8 @@ int main(int argc, char **argv)
     if (!verifyArgumentParsing() || !verifyThreadSelectorSemantics() ||
         !verifyTickMonitor() || !verifyStatisticsService() ||
         !verifyThreadDiscovery() ||
-        !verifyMultiThreadSerialization() || !verifyUploadFailure() || !verifyCaptureLifecycle() ||
+        !verifyMultiThreadSerialization() || !verifyStatisticsSerialization() ||
+        !verifyUploadFailure() || !verifyCaptureLifecycle() ||
 #if defined(_WIN32)
         !verifyWindowsThreadActivityDetection() ||
 #endif

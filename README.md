@@ -97,6 +97,10 @@ final output.
   of completed ticks and one-second process/system CPU observations in fixed-capacity
   ring buffers. Tick recording does not allocate or sort; rolling TPS, MSPT
   percentiles, and CPU averages are calculated only when a snapshot is requested.
+  Profile metadata and Viewer time windows are derived from this same history.
+  Per-second windows include exact time bounds, tick count/rate, MSPT median/max,
+  CPU, and the latest low-cost player count. Entity and chunk histories are omitted
+  because obtaining them would require a main-thread world scan every second.
 * Every profile includes the SHA-256 of the running BDS executable, allowing an
   offline analyst to select the exact matching binary without receiving the
   server owner's executable, paths, configuration, or world data.
@@ -182,7 +186,9 @@ queue/index pressure. `spark_allocation_benchmark` prints repeatable CSV medians
 unprofiled and disabled-hook baselines, default/4 KiB intervals,
 single/four-thread, live-only, and forced saturation cases.
 `spark_selftest --statistics-only` deterministically verifies independent TPS and
-CPU windows, true MSPT median/p95 calculations, and partial-history spans.
+CPU windows, true MSPT median/p95 calculations, partial-history spans, and exact
+per-second profile boundaries. The default self-test also decodes key rolling and
+window fields from the generated current-protocol payload.
 
 On Linux, the bundled profile selects libunwind because the SIGPROF sampler
 requires cpptrace's async-signal-safe unwinding path. Windows does not use

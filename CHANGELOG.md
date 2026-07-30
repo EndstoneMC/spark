@@ -13,11 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process/system CPU observations even when no profiler is running.
 - Calculate independent 5-second, 10-second, 1-minute, 5-minute, and 15-minute TPS
   windows plus query-time MSPT distributions and rolling CPU usage.
+- Populate profile metadata and per-second Viewer windows from the shared history,
+  including exact time bounds, CPU, TPS, MSPT median/max, and low-cost player counts.
 
 ### Changed
 
 - Share one cross-platform process CPU normalization rule and keep allocation,
   sorting, and percentile work out of the per-tick statistics path.
+- Omit unavailable per-second entity and chunk fields instead of copying a final
+  world snapshot or serializing zero as though it were an observation.
+
+### Fixed
+
+- Stop copying one TPS/CPU average across every rolling field or labeling MSPT
+  means and maxima as median, minimum, and p95 values in profile metadata.
 
 ## [0.3.2] - 2026-07-30
 

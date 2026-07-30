@@ -12,6 +12,7 @@
 #include "sampler/profile_mode.h"
 #include "sampler/symbolicate.h"
 #include "sampler/types.h"
+#include "stats/statistics_service.h"
 #include "stats/system_stats.h"
 
 namespace spark {
@@ -43,6 +44,7 @@ struct ProfileMetadata {
     std::int64_t tick_threshold_ms = 0;
     PlatformStats platform_stats;
     SystemStats system_stats;
+    StatisticsSnapshot statistics;
     std::map<std::int32_t, WindowStats> window_stats;
     std::map<std::string, std::string> extra_platform_metadata;
     std::vector<PluginInfo> plugins;

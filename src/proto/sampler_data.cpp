@@ -165,27 +165,43 @@ std::string buildMetadata(const ProfileMetadata &m)
             pw.message(1, mem);
         }
         pw.int64(3, p.uptime_ms);
-        {  // tps (4)
+        if (m.statistics.tps.last_1m.present ||
+            m.statistics.tps.last_5m.present ||
+            m.statistics.tps.last_15m.present) {  // tps (4)
             std::string t;
             ProtoWriter tw(t);
-            tw.real(1, p.tps);
-            tw.real(2, p.tps);
-            tw.real(3, p.tps);
+            if (m.statistics.tps.last_1m.present) {
+                tw.real(1, m.statistics.tps.last_1m.value);
+            }
+            if (m.statistics.tps.last_5m.present) {
+                tw.real(2, m.statistics.tps.last_5m.value);
+            }
+            if (m.statistics.tps.last_15m.present) {
+                tw.real(3, m.statistics.tps.last_15m.value);
+            }
             tw.int32(4, p.target_tps);
             pw.message(4, t);
         }
-        {  // mspt (5): RollingAverageValues { mean, max, min, median, p95 } for last1m/last5m
-            std::string rav;
-            ProtoWriter rw(rav);
-            rw.real(1, p.mspt);
-            rw.real(2, p.mspt_max);
-            rw.real(3, p.mspt);
-            rw.real(4, p.mspt);
-            rw.real(5, p.mspt_max);
+        if (m.statistics.mspt.last_1m.present ||
+            m.statistics.mspt.last_5m.present) {
             std::string t;
             ProtoWriter tw(t);
-            tw.message(1, rav);
-            tw.message(2, rav);
+            auto write_distribution =
+                [&](int field, const DistributionValues &distribution) {
+                    if (!distribution.present) {
+                        return;
+                    }
+                    std::string values;
+                    ProtoWriter values_writer(values);
+                    values_writer.real(1, distribution.mean);
+                    values_writer.real(2, distribution.max);
+                    values_writer.real(3, distribution.min);
+                    values_writer.real(4, distribution.median);
+                    values_writer.real(5, distribution.percentile95);
+                    tw.message(field, values);
+                };
+            write_distribution(1, m.statistics.mspt.last_1m);
+            write_distribution(2, m.statistics.mspt.last_5m);
             tw.int32(3, p.max_ideal_mspt);
             pw.message(5, t);
         }
@@ -248,16 +264,34 @@ std::string buildMetadata(const ProfileMetadata &m)
             std::string c;
             ProtoWriter cw(c);
             cw.int32(1, s.cpu_threads);
-            std::string up;
-            ProtoWriter upw(up);
-            upw.real(1, s.cpu_process);
-            upw.real(2, s.cpu_process);
-            cw.message(2, up);
-            std::string us;
-            ProtoWriter usw(us);
-            usw.real(1, s.cpu_system);
-            usw.real(2, s.cpu_system);
-            cw.message(3, us);
+            if (m.statistics.cpu.process_last_1m.present ||
+                m.statistics.cpu.process_last_15m.present) {
+                std::string usage;
+                ProtoWriter usage_writer(usage);
+                if (m.statistics.cpu.process_last_1m.present) {
+                    usage_writer.real(
+                        1, m.statistics.cpu.process_last_1m.value);
+                }
+                if (m.statistics.cpu.process_last_15m.present) {
+                    usage_writer.real(
+                        2, m.statistics.cpu.process_last_15m.value);
+                }
+                cw.message(2, usage);
+            }
+            if (m.statistics.cpu.system_last_1m.present ||
+                m.statistics.cpu.system_last_15m.present) {
+                std::string usage;
+                ProtoWriter usage_writer(usage);
+                if (m.statistics.cpu.system_last_1m.present) {
+                    usage_writer.real(
+                        1, m.statistics.cpu.system_last_1m.value);
+                }
+                if (m.statistics.cpu.system_last_15m.present) {
+                    usage_writer.real(
+                        2, m.statistics.cpu.system_last_15m.value);
+                }
+                cw.message(3, usage);
+            }
             if (!s.cpu_model.empty()) {
                 cw.string(4, s.cpu_model);
             }
@@ -429,11 +463,36 @@ std::string buildSamplerData(const ProfileMetadata &meta, const std::vector<Thre
         WindowStats ws = it != meta.window_stats.end() ? it->second : WindowStats{};
         std::string wstat;
         ProtoWriter ww(wstat);
-        ww.int32(1, ws.ticks);
-        ww.real(4, ws.tps);
-        ww.real(5, ws.mspt_median);
-        ww.real(6, ws.mspt_max);
-        ww.int32(13, 1000);  // duration ms (per-second window)
+        if (ws.ticks_present) {
+            ww.int32(1, ws.ticks);
+        }
+        if (ws.cpu_process_present) {
+            ww.real(2, ws.cpu_process);
+        }
+        if (ws.cpu_system_present) {
+            ww.real(3, ws.cpu_system);
+        }
+        if (ws.tps_present) {
+            ww.real(4, ws.tps);
+        }
+        if (ws.mspt_present) {
+            ww.real(5, ws.mspt_median);
+            ww.real(6, ws.mspt_max);
+        }
+        if (ws.players_present) {
+            ww.int32(7, ws.players);
+        }
+        if (ws.entities_present) {
+            ww.int32(8, ws.entities);
+        }
+        if (ws.chunks_present) {
+            ww.int32(10, ws.chunks);
+        }
+        if (ws.duration_ms > 0) {
+            ww.int64(11, ws.start_time_ms);
+            ww.int64(12, ws.end_time_ms);
+            ww.int32(13, ws.duration_ms);
+        }
         std::string entry;
         ProtoWriter ew(entry);
         ew.int32(1, window);

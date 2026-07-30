@@ -44,10 +44,7 @@ struct WorldInfo {
 // Server-side statistics sourced from the Endstone API (on the main thread).
 struct PlatformStats {
     bool present = false;
-    double tps = 0.0;  // average tps (fanned out to last1m/5m/15m)
     int target_tps = 20;
-    double mspt = 0.0;  // average mspt (mean/median)
-    double mspt_max = 0.0;
     int max_ideal_mspt = 50;
     long player_count = -1;
     int online_mode = 0;  // 0 unknown, 1 offline, 2 online
@@ -72,10 +69,26 @@ struct SystemStats {
 
 // Per-time-window statistics for the viewer's timeline overlay.
 struct WindowStats {
+    bool ticks_present = false;
     int ticks = 0;
+    bool cpu_process_present = false;
+    double cpu_process = 0.0;
+    bool cpu_system_present = false;
+    double cpu_system = 0.0;
+    bool tps_present = false;
     double tps = 0.0;
+    bool mspt_present = false;
     double mspt_median = 0.0;
     double mspt_max = 0.0;
+    bool players_present = false;
+    int players = 0;
+    bool entities_present = false;
+    int entities = 0;
+    bool chunks_present = false;
+    int chunks = 0;
+    std::int64_t start_time_ms = 0;
+    std::int64_t end_time_ms = 0;
+    int duration_ms = 0;
 };
 
 // A point-in-time CPU-time reading; two of them yield a usage fraction.

@@ -10,6 +10,7 @@
 #include "alloc/allocation_sampler.h"
 #include "sampler/profile_mode.h"
 #include "sampler/sampler.h"
+#include "stats/statistics_service.h"
 #include "stats/system_stats.h"
 
 namespace spark {
@@ -41,12 +42,12 @@ struct ExportContext {
     std::string minecraft_version;
     std::string bds_executable_sha256;
     std::string comment;  // overrides the start-time comment when non-empty
-    double tps = 0.0;
-    double mspt = 0.0;
-    double mspt_max = 0.0;
     long player_count = -1;
     int online_mode = 0;  // 0 unknown, 1 offline, 2 online
     std::int64_t uptime_ms = 0;
+    StatisticsSnapshot statistics;
+    SystemStats system_stats;
+    std::map<std::int32_t, WindowStats> window_stats;
     std::vector<PluginInfo> plugins;
     WorldInfo world;
 };
@@ -66,6 +67,10 @@ public:
     std::int64_t autoEndTimeMs() const
     {
         return auto_end_time_ms_;
+    }
+    std::int64_t endTimeMs() const
+    {
+        return end_time_ms_;
     }
     const ProfilerOptions &options() const
     {
@@ -111,7 +116,6 @@ public:
 private:
     const CallTree &activeTree() const;
     const ModuleTable &activeModules() const;
-    const std::map<std::int32_t, WindowTickStats> &activeWindowTicks() const;
     std::uint64_t activeNumberOfTicks() const;
 
     Sampler sampler_;
@@ -120,9 +124,9 @@ private:
     ProfileMode mode_ = ProfileMode::Execution;
     std::atomic<bool> running_{false};
     std::int64_t start_time_ms_ = 0;
+    std::int64_t end_time_ms_ = 0;
     std::int64_t auto_end_time_ms_ = -1;
     std::int32_t interval_ = 4000;  // execution: microseconds; allocation: bytes
-    CpuSnapshot cpu_baseline_{};
 };
 
 }  // namespace spark
