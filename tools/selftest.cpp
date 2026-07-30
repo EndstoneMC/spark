@@ -764,6 +764,26 @@ bool verifyAllThreadSampling()
 {
     using namespace std::chrono_literals;
 
+    std::atomic<bool> keep_workers_running{true};
+    std::atomic<std::uint64_t> first_progress{0};
+    std::atomic<std::uint64_t> second_progress{0};
+    auto busy_worker = [&](std::atomic<std::uint64_t> &progress) {
+        while (keep_workers_running.load(std::memory_order_relaxed)) {
+            progress.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    std::thread first_worker(busy_worker, std::ref(first_progress));
+    std::thread second_worker(busy_worker, std::ref(second_progress));
+    while (first_progress.load(std::memory_order_relaxed) == 0 ||
+           second_progress.load(std::memory_order_relaxed) == 0) {
+        std::this_thread::yield();
+    }
+    auto stop_workers = [&] {
+        keep_workers_running.store(false, std::memory_order_relaxed);
+        first_worker.join();
+        second_worker.join();
+    };
+
     spark::SamplerConfig config;
     config.interval_us = 2000;
     config.ignore_sleeping = false;
@@ -772,10 +792,12 @@ bool verifyAllThreadSampling()
     spark::Sampler sampler;
     if (!sampler.start(config)) {
         std::fprintf(stderr, "all-thread sampling: sampler start failed\n");
+        stop_workers();
         return false;
     }
     std::this_thread::sleep_for(200ms);
     sampler.stop();
+    stop_workers();
 
     if (sampler.threadTrees().size() < 2 || sampler.sampleCount() == 0) {
         std::fprintf(stderr, "all-thread sampling: fewer than two process threads were captured\n");
