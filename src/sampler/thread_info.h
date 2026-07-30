@@ -2,6 +2,7 @@
 #define ENDSTONE_SPARK_THREAD_INFO_H
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,7 @@ struct ThreadInfo {
 };
 
 std::uint64_t currentNativeThreadId();
+std::optional<std::string> tryNativeThreadName(std::uint64_t id);
 std::string nativeThreadName(std::uint64_t id);
 std::vector<ThreadInfo> enumerateProcessThreads();
 

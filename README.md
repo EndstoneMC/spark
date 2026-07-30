@@ -55,19 +55,19 @@ Run the command again to disable the monitor.
 * `--comment <text>` — attach a note to the profile; quote text containing spaces.
 * `--save-to-file` — write a `.sparkprofile` file instead of uploading it (open the
   file by dragging it into the spark viewer).
-* `--thread <name>` — execution profiles only. Select a thread by case-insensitive
-  exact name; repeat the flag to select multiple threads and quote names containing
-  spaces.
-* `--thread *` — execution profiles only. Select all BDS process threads and emit a
-  separate viewer root for each sampled operating-system thread. It cannot be
+* `--thread <name>` — select a thread by case-insensitive exact name; repeat the
+  flag to select multiple threads and quote names containing spaces. This works for
+  execution and allocation profiles.
+* `--thread *` — select all BDS process threads and emit separate viewer roots. It
+  is equivalent to allocation mode's default all-thread selection and cannot be
   combined with another `--thread` or `--regex`.
-* `--regex` — execution profiles only. Interpret each `--thread <pattern>` as a
-  case-insensitive full-match regular expression; at least one pattern is required.
+* `--regex` — interpret each `--thread <pattern>` as a case-insensitive full-match
+  regular expression; at least one pattern is required. This works for execution
+  and allocation profiles.
 * `--include-sleeping` — execution profiles only. Also sample threads while they are
   idle. Without this flag, Linux task state and Windows per-thread CPU cycle deltas
   avoid capturing threads that did not run.
 * `--alloc` — record sampled native allocation call stacks instead of execution time.
-  Custom thread selectors are not supported.
 * `--alloc-live-only` — record only sampled allocations retained at stop for leak
   analysis; this implies `--alloc`.
 
@@ -106,6 +106,16 @@ not merge unrelated stacks. Samples are weighted by requested bytes using a
 fixed-byte interval (524287 bytes by default) and appear as separate thread roots
 in the same spark viewer used by execution profiles.
 
+Without `--thread`, allocation profiles include all covered process threads.
+Exact-name and regular-expression selectors use the same case-insensitive,
+full-name matching rules as execution profiles, including threads created while
+profiling. Allocation hooks still sample and maintain lifecycle state process-wide;
+the safe aggregator resolves the allocation-origin thread name and excludes
+non-matching samples before building the call tree. Consequently, no regular
+expression, string construction, or thread-name query runs in an allocator hook,
+and a free or realloc on an unselected thread can still retire an allocation
+created by a selected thread.
+
 `--alloc-live-only` follows sampled allocations through realloc and free calls,
 including releases from other threads, and reports only allocations still live
 when profiling stops. It is intended to identify retained-memory and leak
@@ -124,6 +134,11 @@ preallocated queue drops and reports excess samples instead of blocking allocato
 threads. Live records, thread roots, module entries, pending samples, and call-tree
 nodes are also capped; exported metadata reports capacities, high-water marks,
 overflow merging, drops, hook coverage, and whether the profile is incomplete.
+Profile sample/byte totals reflect samples accepted after thread and tick filters;
+hook, observed-byte, sampling-point, live/freed lifecycle, and drop diagnostics are
+explicitly labeled process-wide. If an allocation-origin thread exits before its
+name can be read, a named selector fails closed for that identity rather than
+attributing it using a possibly reused operating-system thread ID.
 Hooks remain disabled pass-throughs between sessions and are fully removed after
 in-flight calls finish during plugin shutdown, allowing a clean plugin reload.
 
@@ -156,9 +171,10 @@ cmake -S . -B build -G Ninja "-DCMAKE_TOOLCHAIN_FILE=build/RelWithDebInfo/genera
 cmake --build build
 ```
 
-With self-test tools enabled, `spark_selftest --allocation-only` exercises
-cross-thread lifecycles, session reuse, thread overflow, and bounded queue/index
-pressure. `spark_allocation_benchmark` prints repeatable CSV medians for
+With self-test tools enabled, `spark_selftest --allocation-only` exercises exact,
+regex, multiple, dynamic, and no-match allocation thread selection, cross-thread
+free/realloc and live-only lifecycles, session reuse, thread overflow, and bounded
+queue/index pressure. `spark_allocation_benchmark` prints repeatable CSV medians for
 unprofiled and disabled-hook baselines, default/4 KiB intervals,
 single/four-thread, live-only, and forced saturation cases.
 

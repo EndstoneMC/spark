@@ -37,6 +37,7 @@
 
 #include "alloc/bounded_event_queue.h"
 #include "alloc/byte_sampler.h"
+#include "alloc/allocation_thread_filter.h"
 #include "alloc/elf_import_hooks.h"
 #include "sampler/thread_info.h"
 
@@ -56,7 +57,6 @@ constexpr std::size_t kMaxPendingSamples = 32768;
 constexpr std::size_t kMaxTickDecisions = 100000;
 constexpr std::size_t kTickEventCapacity = 4096;
 constexpr std::int32_t kMaxProfileWindows = 86400;
-constexpr std::uint64_t kOverflowThreadId = 0;
 constexpr std::size_t kFramesToSkip = 4;
 
 std::uint64_t monotonicMs() noexcept
@@ -106,6 +106,7 @@ struct AllocationSampler::Impl {
         std::uint64_t os_thread_id = 0;
         std::int32_t window = 0;
         std::uint16_t depth = 0;
+        bool thread_observation = false;
         cpptrace::frame_ptr frames[kStackDepth]{};
     };
 
@@ -258,6 +259,7 @@ struct AllocationSampler::Impl {
         std::uint64_t os_thread_id = 0;
         bool inside_hook = false;
         bool tracking_suppressed = false;
+        bool identity_announced = false;
     };
 
     class HookCallGuard {
@@ -376,6 +378,7 @@ struct AllocationSampler::Impl {
     std::atomic<std::uint64_t> sample_count{0};
     std::atomic<std::uint64_t> sampling_points{0};
     std::atomic<std::uint64_t> sampled_bytes{0};
+    std::atomic<std::uint64_t> filtered_samples{0};
     std::atomic<std::uint64_t> observed_bytes{0};
     std::atomic<std::uint64_t> dropped_samples{0};
     std::atomic<std::uint64_t> dropped_events{0};
@@ -428,7 +431,8 @@ struct AllocationSampler::Impl {
     BoundedEventQueue<TickEvent, kTickEventCapacity> ticks;
     CallTree tree;
     std::map<std::uint64_t, ThreadCallTree> thread_trees;
-    std::unordered_map<std::uint64_t, std::string> thread_name_cache;
+    AllocationThreadFilter thread_filter{kMaxSampledThreads,
+                                         kLiveIndexCapacity};
     ModuleTable modules;
     std::map<std::int32_t, WindowTickStats> window_ticks;
     std::unordered_map<std::uint64_t, std::vector<Sample>> buckets;
@@ -571,6 +575,7 @@ struct AllocationSampler::Impl {
         claimed->os_thread_id = tid;
         claimed->inside_hook = true;
         claimed->tracking_suppressed = false;
+        claimed->identity_announced = false;
         if (::pthread_setspecific(thread_state_key, claimed) != 0) {
             claimed->inside_hook = false;
             claimed->owner_tid.store(0, std::memory_order_relaxed);
@@ -946,12 +951,12 @@ struct AllocationSampler::Impl {
             thread.os_thread_id = current_tid;
             const std::uint64_t next =
                 next_session_thread_id.fetch_add(1, std::memory_order_relaxed);
+            thread.session_thread_id = next;
+            thread.identity_announced = false;
             if (next <= kMaxSampledThreads) {
-                thread.session_thread_id = next;
                 registered_threads.fetch_add(1, std::memory_order_relaxed);
             }
             else {
-                thread.session_thread_id = kOverflowThreadId;
                 overflow_threads.fetch_add(1, std::memory_order_relaxed);
             }
         }
@@ -999,6 +1004,19 @@ struct AllocationSampler::Impl {
         }
 
         if (config.live_only) {
+            if (!thread.identity_announced) {
+                AllocationEvent observation;
+                observation.thread_id = allocation->thread_id;
+                observation.os_thread_id = allocation->os_thread_id;
+                observation.thread_observation = true;
+                if (events.enqueue(observation)) {
+                    thread.identity_announced = true;
+                }
+                else {
+                    dropped_samples.fetch_add(1, std::memory_order_relaxed);
+                    dropped_events.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
             return;
         }
 
@@ -1009,6 +1027,7 @@ struct AllocationSampler::Impl {
         event.os_thread_id = allocation->os_thread_id;
         event.window = allocation->window;
         event.depth = allocation->depth;
+        event.thread_observation = false;
         std::memcpy(event.frames, allocation->frames,
                     static_cast<std::size_t>(allocation->depth) *
                         sizeof(cpptrace::frame_ptr));
@@ -1221,21 +1240,14 @@ struct AllocationSampler::Impl {
                      std::uint64_t weight, Sample &sample)
     {
         sample.tick_id = tick_id;
-        sample.thread_id = thread_id;
-        auto cached_name = thread_name_cache.find(thread_id);
-        if (cached_name == thread_name_cache.end()) {
-            std::string name;
-            if (thread_id == kOverflowThreadId) {
-                name = "<other threads>";
-            }
-            else {
-                name = nativeThreadName(os_thread_id);
-                name += " (#" + std::to_string(os_thread_id) +
-                        ", session #" + std::to_string(thread_id) + ")";
-            }
-            cached_name = thread_name_cache.emplace(thread_id, std::move(name)).first;
+        const AllocationThreadSelection selection =
+            thread_filter.resolve(thread_id, os_thread_id);
+        if (!selection.selected) {
+            filtered_samples.fetch_add(1, std::memory_order_relaxed);
+            return false;
         }
-        sample.thread_name = cached_name->second;
+        sample.thread_id = selection.profile_thread_id;
+        sample.thread_name = selection.display_name;
         sample.window = window;
         sample.weight = weight;
         sample.frames.reserve(depth);
@@ -1262,6 +1274,10 @@ struct AllocationSampler::Impl {
 
     void processEvent(const AllocationEvent &event)
     {
+        if (event.thread_observation) {
+            thread_filter.resolve(event.thread_id, event.os_thread_id);
+            return;
+        }
         Sample sample;
         if (!buildSample(event.frames, event.depth, event.tick_id, event.thread_id,
                          event.os_thread_id, event.window, event.weight_bytes,
@@ -1302,11 +1318,6 @@ struct AllocationSampler::Impl {
                 continue;
             }
             const LiveAllocation &allocation = *entry.allocation;
-            const std::uint64_t age = stopped_ms >= allocation.allocated_ms
-                                          ? stopped_ms - allocation.allocated_ms
-                                          : 0;
-            total_age += age;
-            maximum_age = (std::max)(maximum_age, age);
             if (!tickAccepts(allocation.tick_id)) {
                 continue;
             }
@@ -1314,6 +1325,11 @@ struct AllocationSampler::Impl {
             if (buildSample(allocation.frames, allocation.depth, allocation.tick_id,
                             allocation.thread_id, allocation.os_thread_id,
                             allocation.window, allocation.weight_bytes, sample)) {
+                const std::uint64_t age = stopped_ms >= allocation.allocated_ms
+                                              ? stopped_ms - allocation.allocated_ms
+                                              : 0;
+                total_age += age;
+                maximum_age = (std::max)(maximum_age, age);
                 acceptSample(sample);
             }
         }
@@ -1395,7 +1411,7 @@ struct AllocationSampler::Impl {
         }
         tree = CallTree{};
         thread_trees.clear();
-        thread_name_cache.clear();
+        thread_filter.clear();
         modules = ModuleTable{kMaxAllocationModules};
         window_ticks.clear();
         buckets.clear();
@@ -1409,6 +1425,7 @@ struct AllocationSampler::Impl {
         sample_count.store(0, std::memory_order_relaxed);
         sampling_points.store(0, std::memory_order_relaxed);
         sampled_bytes.store(0, std::memory_order_relaxed);
+        filtered_samples.store(0, std::memory_order_relaxed);
         observed_bytes.store(0, std::memory_order_relaxed);
         dropped_samples.store(0, std::memory_order_relaxed);
         dropped_events.store(0, std::memory_order_relaxed);
@@ -1452,6 +1469,11 @@ struct AllocationSampler::Impl {
         }
         resetSession();
         config = new_config;
+        if (!thread_filter.configure(new_config.all_threads,
+                                     new_config.regex_threads,
+                                     new_config.thread_patterns, error)) {
+            return false;
+        }
         interval_bytes.store(static_cast<std::uint64_t>(new_config.interval_bytes),
                              std::memory_order_relaxed);
         started_ms.store(monotonicMs(), std::memory_order_relaxed);
@@ -1674,6 +1696,18 @@ std::uint64_t AllocationSampler::sampledBytes() const
 {
     return impl_->sampled_bytes.load(std::memory_order_relaxed);
 }
+std::uint64_t AllocationSampler::filteredSamples() const
+{
+    return impl_->filtered_samples.load(std::memory_order_relaxed);
+}
+std::uint64_t AllocationSampler::threadNameFailures() const
+{
+    return impl_->thread_filter.nameFailures();
+}
+std::uint64_t AllocationSampler::threadIdentityCacheDrops() const
+{
+    return impl_->thread_filter.cacheDrops();
+}
 std::uint64_t AllocationSampler::observedBytes() const
 {
     return impl_->observed_bytes.load(std::memory_order_relaxed);
@@ -1776,6 +1810,7 @@ bool AllocationSampler::dataIncomplete() const
            impl_->lifecycle_dropped.load(std::memory_order_relaxed) != 0 ||
            impl_->dropped_tick_events.load(std::memory_order_relaxed) != 0 ||
            impl_->thread_state_drops.load(std::memory_order_relaxed) != 0 ||
+           impl_->thread_filter.cacheDrops() != 0 ||
            impl_->profile_nodes_exhausted.load(std::memory_order_relaxed) ||
            impl_->hooks.failedModuleCount() != 0;
 }
@@ -1795,7 +1830,7 @@ std::uint64_t AllocationSampler::lifecycleDropped() const
 }
 std::uint64_t AllocationSampler::retainedAverageAgeMs() const
 {
-    const std::uint64_t count = impl_->live_samples.load(std::memory_order_relaxed);
+    const std::uint64_t count = impl_->sample_count.load(std::memory_order_relaxed);
     return count == 0 ? 0 :
                         impl_->retained_age_ms_total.load(std::memory_order_relaxed) / count;
 }

@@ -20,6 +20,11 @@ struct AllocationSamplerConfig {
     std::int32_t interval_bytes = kDefaultAllocationIntervalBytes;
     std::uint64_t session_seed = 0;
     std::int64_t only_ticks_over_ms = 0;
+    // Allocation-origin names are matched by the aggregator. Empty patterns with
+    // all_threads=true preserve the default process-wide behavior.
+    bool all_threads = true;
+    bool regex_threads = false;
+    std::vector<std::string> thread_patterns;
     bool live_only = false;
     // Deterministic fault injection used only by the offline selftest.
     bool fail_aggregator_for_testing = false;
@@ -56,8 +61,9 @@ struct AllocationHookCapability {
 };
 
 // Native allocation sampler. Tree weights are estimated allocation bytes, not
-// elapsed time. Each process thread is sampled independently and sampled
-// allocations are followed through realloc/free on any thread.
+// elapsed time. Each process thread is sampled independently. Thread names are
+// matched by the aggregator, while lifecycle tracking continues across every
+// covered thread so realloc/free may occur on a different thread.
 class AllocationSampler {
 public:
     AllocationSampler();
@@ -90,6 +96,9 @@ public:
     std::uint64_t sampleCount() const;
     std::uint64_t samplingPoints() const;
     std::uint64_t sampledBytes() const;
+    std::uint64_t filteredSamples() const;
+    std::uint64_t threadNameFailures() const;
+    std::uint64_t threadIdentityCacheDrops() const;
     std::uint64_t observedBytes() const;
     std::uint64_t droppedSamples() const;
     std::uint64_t droppedEvents() const;

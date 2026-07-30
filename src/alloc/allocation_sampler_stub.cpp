@@ -81,6 +81,9 @@ std::uint64_t AllocationSampler::sampledBytes() const
 {
     return 0;
 }
+std::uint64_t AllocationSampler::filteredSamples() const { return 0; }
+std::uint64_t AllocationSampler::threadNameFailures() const { return 0; }
+std::uint64_t AllocationSampler::threadIdentityCacheDrops() const { return 0; }
 
 std::uint64_t AllocationSampler::observedBytes() const
 {

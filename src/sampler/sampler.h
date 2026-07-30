@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
-#include <regex>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -16,6 +15,7 @@
 #include <moodycamel/concurrentqueue.h>
 
 #include "sampler/call_tree.h"
+#include "sampler/thread_selector.h"
 #include "sampler/types.h"
 
 namespace spark {
@@ -107,7 +107,7 @@ private:
     std::int32_t currentWindow() const;
 
     SamplerConfig config_;
-    std::vector<std::regex> thread_regexes_;
+    ThreadSelector thread_selector_;
     std::string last_error_;
     std::atomic<bool> running_{false};      // sampler (producer) thread
     std::atomic<bool> agg_running_{false};  // aggregator (consumer) thread

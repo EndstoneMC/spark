@@ -79,6 +79,8 @@ public:
     std::uint64_t sampledAllocationBytes() const;
     std::uint64_t observedAllocationBytes() const;
     std::uint64_t droppedSamples() const;
+    std::uint64_t filteredAllocationSamples() const;
+    std::uint64_t allocationThreadNameFailures() const;
     std::uint64_t freedAllocationSamples() const;
     std::uint64_t liveAllocationSamples() const;
     std::uint64_t liveAllocationBytes() const;

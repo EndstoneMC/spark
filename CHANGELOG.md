@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Support repeatable exact-name and case-insensitive full-match regular-expression
+  thread selection for native allocation profiles, including dynamically created
+  threads and `--thread *`.
+
+### Changed
+
+- Apply allocation thread matching in the safe aggregation path while retaining
+  process-wide lifecycle tracking, so cross-thread realloc/free remains correct and
+  allocator hooks never resolve names or run regular expressions.
+- Separate monotonic allocation-thread identities from the bounded overflow viewer
+  root so filtering remains correct after thread-ID reuse and beyond 256 roots.
+- Label profile-selected allocation totals separately from process-wide hook,
+  observed-byte, drop, and live/freed lifecycle diagnostics.
+
 ## [0.3.1] - 2026-07-30
 
 ### Added
@@ -124,10 +140,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Limitations
 
-- Native allocation profiling, sampled lifetimes, and retained/live analysis cover
-  the selected server thread on Windows and Linux x86-64.
-- Custom thread selection, direct virtual-memory calls, and custom allocator
-  activity below its backing Windows heap allocation are not yet supported.
+- Direct virtual-memory calls and custom allocator activity below its backing
+  Windows heap allocation are not supported.
 
 ## [0.1.1] - 2026-07-16
 

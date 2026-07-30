@@ -49,10 +49,12 @@ add_library(spark_core STATIC
         src/net/gzip.cpp
         src/net/bytebin.cpp
         src/net/profile_file.cpp
+        src/alloc/allocation_thread_filter.cpp
         src/sampler/call_tree.cpp
         src/sampler/symbolicate.cpp
         src/sampler/sampler.cpp
         src/sampler/profiler.cpp
+        src/sampler/thread_selector.cpp
         src/sampler/thread_info.cpp
         src/stats/executable_hash.cpp
         src/stats/tick_monitor.cpp

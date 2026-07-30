@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <utility>
 
 #if defined(_WIN32)
 // clang-format off
@@ -53,37 +54,40 @@ std::string utf8ThreadName(HANDLE thread)
     return name;
 }
 
-std::string platformThreadName(std::uint64_t id)
+std::optional<std::string> platformThreadName(std::uint64_t id)
 {
     HANDLE thread = ::OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(id));
     if (thread == nullptr) {
-        return fallbackThreadName(id);
+        return std::nullopt;
     }
     std::string name = utf8ThreadName(thread);
     ::CloseHandle(thread);
-    return name.empty() ? fallbackThreadName(id) : name;
+    return name.empty() ? std::nullopt
+                        : std::optional<std::string>(std::move(name));
 }
 
 #elif defined(__linux__)
 
-std::string platformThreadName(std::uint64_t id)
+std::optional<std::string> platformThreadName(std::uint64_t id)
 {
     std::string path = "/proc/self/task/" + std::to_string(id) + "/comm";
     int fd = ::open(path.c_str(), O_RDONLY);
     if (fd < 0) {
-        return fallbackThreadName(id);
+        return std::nullopt;
     }
     char buffer[256];
     ssize_t count = ::read(fd, buffer, sizeof(buffer));
     ::close(fd);
     if (count <= 0) {
-        return fallbackThreadName(id);
+        return std::nullopt;
     }
     while (count > 0 && (buffer[count - 1] == '\n' || buffer[count - 1] == '\r' || buffer[count - 1] == '\0')) {
         --count;
     }
-    return count == 0 ? fallbackThreadName(id)
-                      : std::string(buffer, static_cast<std::size_t>(count));
+    return count == 0
+               ? std::nullopt
+               : std::optional<std::string>(
+                     std::string(buffer, static_cast<std::size_t>(count)));
 }
 
 #endif
@@ -101,9 +105,15 @@ std::uint64_t currentNativeThreadId()
 #endif
 }
 
-std::string nativeThreadName(std::uint64_t id)
+std::optional<std::string> tryNativeThreadName(std::uint64_t id)
 {
     return platformThreadName(id);
+}
+
+std::string nativeThreadName(std::uint64_t id)
+{
+    auto name = tryNativeThreadName(id);
+    return name ? std::move(*name) : fallbackThreadName(id);
 }
 
 std::vector<ThreadInfo> enumerateProcessThreads()
@@ -122,7 +132,7 @@ std::vector<ThreadInfo> enumerateProcessThreads()
         do {
             if (entry.th32OwnerProcessID == process_id) {
                 const std::uint64_t id = static_cast<std::uint64_t>(entry.th32ThreadID);
-                threads.push_back({id, platformThreadName(id)});
+                threads.push_back({id, nativeThreadName(id)});
             }
             entry.dwSize = sizeof(entry);
         } while (::Thread32Next(snapshot, &entry));
@@ -145,7 +155,7 @@ std::vector<ThreadInfo> enumerateProcessThreads()
         }
         auto [parsed_end, error] = std::from_chars(begin, end, id);
         if (error == std::errc{} && parsed_end == end && id != 0) {
-            threads.push_back({id, platformThreadName(id)});
+            threads.push_back({id, nativeThreadName(id)});
         }
     }
     ::closedir(directory);

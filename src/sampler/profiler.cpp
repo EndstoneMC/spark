@@ -108,6 +108,20 @@ std::uint64_t Profiler::droppedSamples() const
     return mode_ == ProfileMode::Allocation ? allocation_sampler_.droppedSamples() : 0;
 }
 
+std::uint64_t Profiler::filteredAllocationSamples() const
+{
+    return mode_ == ProfileMode::Allocation
+               ? allocation_sampler_.filteredSamples()
+               : 0;
+}
+
+std::uint64_t Profiler::allocationThreadNameFailures() const
+{
+    return mode_ == ProfileMode::Allocation
+               ? allocation_sampler_.threadNameFailures()
+               : 0;
+}
+
 std::uint64_t Profiler::freedAllocationSamples() const
 {
     return mode_ == ProfileMode::Allocation ? allocation_sampler_.freedSamples() : 0;
@@ -149,16 +163,12 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         return false;
     }
 
-    if (options.alloc && (options.regex || !options.threads.empty())) {
-        error = "custom thread selection is not supported by the native allocation engine";
-        return false;
-    }
-    if (!options.alloc && options.regex && options.threads.empty()) {
+    if (options.regex && options.threads.empty()) {
         error = "--regex requires at least one --thread pattern";
         return false;
     }
-    if (!options.alloc && std::find(options.threads.begin(), options.threads.end(), "*") !=
-                              options.threads.end() &&
+    if (std::find(options.threads.begin(), options.threads.end(), "*") !=
+            options.threads.end() &&
         (options.regex || options.threads.size() != 1)) {
         error = "--thread * cannot be combined with other thread selectors or --regex";
         return false;
@@ -185,6 +195,13 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         config.interval_bytes = options.allocation_interval_bytes;
         config.session_seed = main_tid;
         config.only_ticks_over_ms = options.only_ticks_over_ms > 0 ? options.only_ticks_over_ms : 0;
+        config.all_threads =
+            options.threads.empty() ||
+            (options.threads.size() == 1 && options.threads.front() == "*");
+        config.regex_threads = options.regex;
+        if (!config.all_threads) {
+            config.thread_patterns = options.threads;
+        }
         config.live_only = options.alloc_live_only;
         config.fail_aggregator_for_testing = options.fail_allocation_aggregator_for_testing;
         started = allocation_sampler_.start(config, error);
@@ -314,9 +331,9 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.creator_name = options_.creator_name;
     meta.creator_is_player = options_.creator_is_player;
     meta.all_threads =
-        mode_ == ProfileMode::Allocation ||
+        (mode_ == ProfileMode::Allocation && options_.threads.empty()) ||
         (options_.threads.size() == 1 && options_.threads.front() == "*");
-    meta.regex_threads = mode_ == ProfileMode::Execution && options_.regex;
+    meta.regex_threads = options_.regex;
     if (meta.regex_threads) {
         meta.thread_patterns = options_.threads;
     }
@@ -343,14 +360,20 @@ std::string Profiler::exportData(const ExportContext &ctx) const
             "process threads reaching patched malloc/calloc/realloc/reallocarray/aligned_alloc/"
             "posix_memalign imports in supported loaded ELF modules");
 #endif
-        meta.extra_platform_metadata["Allocation hook calls"] =
+        meta.extra_platform_metadata["Allocation hook calls (process-wide)"] =
             std::to_string(allocation_sampler_.hookCalls());
-        meta.extra_platform_metadata["Allocation successful allocation calls"] =
+        meta.extra_platform_metadata["Allocation successful allocation calls (process-wide)"] =
             std::to_string(allocation_sampler_.successfulAllocationCalls());
-        meta.extra_platform_metadata["Allocation sampling points hit"] =
+        meta.extra_platform_metadata["Allocation sampling points hit (process-wide)"] =
             std::to_string(allocation_sampler_.samplingPoints());
-        meta.extra_platform_metadata["Allocation samples captured"] =
+        meta.extra_platform_metadata["Allocation profile samples accepted"] =
             std::to_string(allocation_sampler_.sampleCount());
+        meta.extra_platform_metadata["Allocation samples excluded by thread selector"] =
+            std::to_string(allocation_sampler_.filteredSamples());
+        meta.extra_platform_metadata["Allocation thread name lookup failures"] =
+            std::to_string(allocation_sampler_.threadNameFailures());
+        meta.extra_platform_metadata["Allocation thread identity cache drops"] =
+            std::to_string(allocation_sampler_.threadIdentityCacheDrops());
         meta.extra_platform_metadata["Allocation samples dropped"] =
             std::to_string(allocation_sampler_.droppedSamples());
         meta.extra_platform_metadata["Allocation sample events dropped"] =
@@ -365,15 +388,15 @@ std::string Profiler::exportData(const ExportContext &ctx) const
             std::to_string(allocation_sampler_.eventQueueHighWaterMark());
         meta.extra_platform_metadata["Allocation event queue capacity"] =
             std::to_string(allocation_sampler_.eventQueueCapacity());
-        meta.extra_platform_metadata["Allocation sampled frees"] =
+        meta.extra_platform_metadata["Allocation tracked sampled frees (process-wide)"] =
             std::to_string(allocation_sampler_.freedSamples());
-        meta.extra_platform_metadata["Allocation sampled freed bytes"] =
+        meta.extra_platform_metadata["Allocation tracked sampled freed bytes (process-wide)"] =
             std::to_string(allocation_sampler_.freedBytes());
-        meta.extra_platform_metadata["Allocation sampled live allocations"] =
+        meta.extra_platform_metadata["Allocation tracked live allocations (process-wide)"] =
             std::to_string(allocation_sampler_.liveSamples());
-        meta.extra_platform_metadata["Allocation sampled live bytes"] =
+        meta.extra_platform_metadata["Allocation tracked live bytes (process-wide)"] =
             std::to_string(allocation_sampler_.liveBytes());
-        meta.extra_platform_metadata["Allocation sampled live peak"] =
+        meta.extra_platform_metadata["Allocation tracked live peak (process-wide)"] =
             std::to_string(allocation_sampler_.peakLiveSamples());
         meta.extra_platform_metadata["Allocation live index capacity"] =
             std::to_string(allocation_sampler_.liveIndexCapacity());
@@ -401,19 +424,25 @@ std::string Profiler::exportData(const ExportContext &ctx) const
 #endif
         meta.extra_platform_metadata["Allocation data incomplete"] =
             allocation_sampler_.dataIncomplete() ? "true" : "false";
-        meta.extra_platform_metadata["Allocation average sampled lifetime ms"] =
+        meta.extra_platform_metadata["Allocation average tracked lifetime ms (process-wide)"] =
             std::to_string(allocation_sampler_.averageLifetimeMs());
-        meta.extra_platform_metadata["Allocation maximum sampled lifetime ms"] =
+        meta.extra_platform_metadata["Allocation maximum tracked lifetime ms (process-wide)"] =
             std::to_string(allocation_sampler_.maximumLifetimeMs());
         meta.extra_platform_metadata["Allocation lifecycle records dropped"] =
             std::to_string(allocation_sampler_.lifecycleDropped());
-        meta.extra_platform_metadata["Allocation sampled bytes"] =
+        meta.extra_platform_metadata["Allocation profile sampled bytes"] =
             std::to_string(allocation_sampler_.sampledBytes());
-        meta.extra_platform_metadata["Allocation observed request bytes"] =
+        meta.extra_platform_metadata["Allocation observed request bytes (process-wide)"] =
             std::to_string(allocation_sampler_.observedBytes());
         meta.extra_platform_metadata["Allocation interval bytes"] = std::to_string(interval_);
         meta.extra_platform_metadata["Allocation live-only"] =
             options_.alloc_live_only ? "true" : "false";
+        meta.extra_platform_metadata["Allocation thread filter stage"] =
+            jsonString("aggregation");
+        meta.extra_platform_metadata["Allocation thread selection"] =
+            jsonString(meta.all_threads ? "all"
+                                       : (meta.regex_threads ? "regex"
+                                                             : "exact-name"));
         if (options_.alloc_live_only) {
             meta.extra_platform_metadata["Allocation analysis"] = jsonString(
                 "retained sampled allocations at profile stop; candidates require repeated growth verification");
@@ -470,6 +499,9 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         std::vector<ThreadTreeView> threads;
         for (const auto &[id, thread] : allocation_sampler_.threadTrees()) {
             threads.push_back({thread.thread_name, &thread.tree});
+            if (!meta.all_threads && !meta.regex_threads && id != 0) {
+                meta.thread_ids.push_back(static_cast<std::int64_t>(id));
+            }
         }
         if (threads.empty()) {
             threads.push_back({meta.thread_name, &allocation_sampler_.tree()});

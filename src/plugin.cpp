@@ -320,8 +320,8 @@ private:
         sender.sendMessage("{}/spark tickmonitor {}- report unusually long ticks", ColorFormat::Yellow,
                            ColorFormat::Gray);
         sender.sendMessage("{}Modes: --alloc, --alloc-live-only", ColorFormat::Gray);
-        sender.sendMessage("{}Execution only: --thread <name|*>, --regex, --include-sleeping",
-                           ColorFormat::Gray);
+        sender.sendMessage("{}Thread selection: --thread <name|*>, --regex", ColorFormat::Gray);
+        sender.sendMessage("{}Execution only: --include-sleeping", ColorFormat::Gray);
         sender.sendMessage(
             "{}Flags: --interval <ms|bytes>, --timeout <seconds>, --only-ticks-over <ms>",
             ColorFormat::Gray);
@@ -375,16 +375,12 @@ private:
             sender.sendErrorMessage("--thread requires a thread name, pattern, or *.");
             return;
         }
-        if (options.alloc && (!options.threads.empty() || options.regex)) {
-            sender.sendErrorMessage("Custom thread selection is not supported in allocation mode.");
-            return;
-        }
-        if (!options.alloc && options.regex && options.threads.empty()) {
+        if (options.regex && options.threads.empty()) {
             sender.sendErrorMessage("--regex requires at least one --thread pattern.");
             return;
         }
         const auto all_selector = std::find(options.threads.begin(), options.threads.end(), "*");
-        if (!options.alloc && all_selector != options.threads.end() &&
+        if (all_selector != options.threads.end() &&
             (options.regex || options.threads.size() != 1)) {
             sender.sendErrorMessage("--thread * cannot be combined with another --thread or --regex.");
             return;
@@ -478,8 +474,19 @@ private:
                 sender.sendMessage("{}Allocation Profiler is now running!{} (async)",
                                    ColorFormat::Gold, ColorFormat::Gray);
             }
-            sender.sendMessage("Sampling approximately every {} of native allocations across process threads.",
-                               formatBytes(static_cast<std::uint64_t>(options.allocation_interval_bytes)));
+            if (options.threads.empty() ||
+                (options.threads.size() == 1 && options.threads.front() == "*")) {
+                sender.sendMessage(
+                    "Sampling approximately every {} of native allocations across process threads.",
+                    formatBytes(static_cast<std::uint64_t>(
+                        options.allocation_interval_bytes)));
+            }
+            else {
+                sender.sendMessage(
+                    "Sampling approximately every {} of native allocations from matching threads.",
+                    formatBytes(static_cast<std::uint64_t>(
+                        options.allocation_interval_bytes)));
+            }
             if (options.alloc_live_only) {
                 sender.sendMessage("The result will contain only sampled allocations still live when profiling stops.");
             }
@@ -574,6 +581,17 @@ private:
                 sender.sendMessage("{}Allocation Profiler is already running!", ColorFormat::Gold);
             }
             sendAllocationHookCoverage(sender);
+            const auto &threads = profiler_.options().threads;
+            if (threads.empty() ||
+                (threads.size() == 1 && threads.front() == "*")) {
+                sender.sendMessage("Thread selection: all process threads.");
+            }
+            else {
+                sender.sendMessage(
+                    "Thread selection: {} {} selector{} (matched at aggregation).",
+                    threads.size(), profiler_.options().regex ? "regex" : "exact-name",
+                    threads.size() == 1 ? "" : "s");
+            }
         }
         else {
             sender.sendMessage("{}Profiler is already running!", ColorFormat::Gold);
@@ -581,22 +599,31 @@ private:
         std::int64_t ran = (nowMs() - profiler_.startTimeMs()) / 1000;
         if (allocation) {
             if (profiler_.options().alloc_live_only) {
-                sender.sendMessage("So far it has profiled for {} ({} sampled allocations still live, {} estimated).",
+                sender.sendMessage("So far it has profiled for {} ({} tracked sampled allocations still live process-wide, {} estimated).",
                                    formatDuration(ran), profiler_.liveAllocationSamples(),
                                    formatBytes(profiler_.liveAllocationBytes()));
             }
             else {
-                sender.sendMessage("So far it has profiled for {} ({} allocation samples, {} estimated from {} observed).",
+                sender.sendMessage("So far it has profiled for {} ({} selected allocation samples, {} estimated; {} observed process-wide).",
                                    formatDuration(ran), profiler_.sampleCount(),
                                    formatBytes(profiler_.sampledAllocationBytes()),
                                    formatBytes(profiler_.observedAllocationBytes()));
             }
-            sender.sendMessage("Sampled lifecycle: {} freed, {} still live ({}).",
+            sender.sendMessage("Process-wide tracked lifecycle: {} freed, {} still live ({}).",
                                profiler_.freedAllocationSamples(),
                                profiler_.liveAllocationSamples(),
                                formatBytes(profiler_.liveAllocationBytes()));
             if (profiler_.droppedSamples() != 0) {
                 sender.sendMessage("Dropped allocation samples: {}", profiler_.droppedSamples());
+            }
+            if (profiler_.filteredAllocationSamples() != 0) {
+                sender.sendMessage("Allocation samples excluded by thread selector: {}.",
+                                   profiler_.filteredAllocationSamples());
+            }
+            if (profiler_.allocationThreadNameFailures() != 0) {
+                sender.sendMessage(
+                    "Allocation-origin thread names unavailable (failed closed for named selectors): {}.",
+                    profiler_.allocationThreadNameFailures());
             }
         }
         else {
