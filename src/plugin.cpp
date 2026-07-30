@@ -1033,7 +1033,7 @@ private:
     ExportOutcome pending_outcome_ = ExportOutcome::Failed;
 };
 
-ENDSTONE_PLUGIN("spark", "0.3.1", SparkPlugin)
+ENDSTONE_PLUGIN("spark", "0.3.2", SparkPlugin)
 {
     description = "spark profiler for Endstone — find what's slowing your server down.";
     authors = {"endstone-spark (profiler format & viewer by lucko/spark)"};
