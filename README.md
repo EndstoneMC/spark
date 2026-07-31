@@ -25,8 +25,8 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 | `/spark profiler stop`          | Stop profiling and finalize the profile.                |
 | `/spark profiler info`          | Show status of the running profiler.                    |
 | `/spark profiler cancel`        | Stop profiling without generating a profile.            |
-| `/spark tps`                    | Show ticks-per-second and tick duration (MSPT).         |
-| `/spark health`                 | Show TPS/MSPT plus process memory, threads, and uptime. |
+| `/spark tps`                    | Show rolling TPS, MSPT distributions, and CPU usage.    |
+| `/spark health`                 | Add process and host resources to the performance report. |
 | `/spark tickmonitor`            | Report ticks that exceed a duration or baseline change. |
 
 By default, stopping a profiler uploads the generated profile to spark's bytebin
@@ -35,6 +35,22 @@ as a `.sparkprofile` file instead. If an upload fails, Spark automatically
 preserves the compressed profile in its data folder and reports the local path.
 
 Permission: `endstone.command.spark` (operators by default).
+
+### `/spark tps` and `/spark health`
+
+`/spark tps` reads the same profiler-independent history used by exported
+profiles. It reports TPS over 5 seconds, 10 seconds, 1 minute, 5 minutes, and
+15 minutes; MSPT mean/minimum/median/p95/maximum over 10 seconds, 1 minute, and
+5 minutes; and process/system CPU over 10 seconds, 1 minute, and 15 minutes.
+Until enough server history exists, each label uses the data actually available
+and the command explicitly reports the shorter history span.
+
+`/spark health` includes that report, then adds server uptime and players plus
+available process RSS, virtual address space, thread count, physical memory,
+swap/page-file, disk, CPU/OS details. Resource-query failures are omitted instead
+of being displayed as zero. On Windows, the virtual-memory value is the process's
+reserved or committed address space; swap/page-file usage follows Windows commit
+limit semantics. On Linux, these values use `VmSize` and `/proc/meminfo`.
 
 ### `/spark tickmonitor`
 
@@ -100,6 +116,8 @@ final output.
   ring buffers. Tick recording does not allocate or sort; rolling TPS, MSPT
   percentiles, and CPU averages are calculated only when a snapshot is requested.
   Profile metadata and Viewer time windows are derived from this same history.
+  `/spark tps` and `/spark health` also read this snapshot, so commands and
+  profiles cannot silently use different TPS, MSPT, or CPU definitions.
   Per-second windows include exact time bounds, tick count/rate, MSPT median/max,
   CPU, and the latest low-cost player count. Entity and chunk histories are omitted
   because obtaining them would require a main-thread world scan every second.

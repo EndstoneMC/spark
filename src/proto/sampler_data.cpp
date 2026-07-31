@@ -152,13 +152,16 @@ std::string buildMetadata(const ProfileMetadata &m)
         const PlatformStats &p = m.platform_stats;
         std::string ps;
         ProtoWriter pw(ps);
-        {  // memory (1) -> heap (1) MemoryUsage { used, committed }  (viewer renders this widget unconditionally)
+        if (p.process_mem_present ||
+            p.process_virtual_present) {  // memory (1) -> heap (1)
             std::string heap;
             ProtoWriter hw(heap);
-            hw.int64(1, p.process_mem_bytes);  // used = VmRSS (matches /status "Used memory")
-            // committed = the widget's denominator = VmSize, so the "process" memory widget
-            // matches Endstone's /status ("Used memory" = RSS, "Total memory" = VmSize).
-            hw.int64(2, p.process_virtual_bytes > 0 ? p.process_virtual_bytes : p.process_mem_bytes);
+            if (p.process_mem_present) {
+                hw.int64(1, p.process_mem_bytes);
+            }
+            if (p.process_virtual_present) {
+                hw.int64(2, p.process_virtual_bytes);
+            }
             std::string mem;
             ProtoWriter mw(mem);
             mw.message(1, heap);
@@ -260,10 +263,16 @@ std::string buildMetadata(const ProfileMetadata &m)
         const SystemStats &s = m.system_stats;
         std::string ss;
         ProtoWriter sw(ss);
-        {  // cpu (1)
+        if (s.cpu_present ||
+            m.statistics.cpu.process_last_1m.present ||
+            m.statistics.cpu.process_last_15m.present ||
+            m.statistics.cpu.system_last_1m.present ||
+            m.statistics.cpu.system_last_15m.present) {  // cpu (1)
             std::string c;
             ProtoWriter cw(c);
-            cw.int32(1, s.cpu_threads);
+            if (s.cpu_present && s.cpu_threads > 0) {
+                cw.int32(1, s.cpu_threads);
+            }
             if (m.statistics.cpu.process_last_1m.present ||
                 m.statistics.cpu.process_last_15m.present) {
                 std::string usage;
@@ -297,15 +306,18 @@ std::string buildMetadata(const ProfileMetadata &m)
             }
             sw.message(1, c);
         }
-        {  // memory (2): physical (1), swap (2) MemoryPool { used, total }
+        if (s.memory_present ||
+            s.swap_present) {  // memory (2): physical (1), swap (2)
             std::string mem;
             ProtoWriter mw(mem);
-            std::string phys;
-            ProtoWriter pp(phys);
-            pp.int64(1, s.mem_used);
-            pp.int64(2, s.mem_total);
-            mw.message(1, phys);
-            {  // swap (always emitted; the viewer renders a swap widget unconditionally)
+            if (s.memory_present) {
+                std::string phys;
+                ProtoWriter pp(phys);
+                pp.int64(1, s.mem_used);
+                pp.int64(2, s.mem_total);
+                mw.message(1, phys);
+            }
+            if (s.swap_present) {
                 std::string sw2;
                 ProtoWriter sp(sw2);
                 sp.int64(1, s.swap_used);
@@ -314,26 +326,34 @@ std::string buildMetadata(const ProfileMetadata &m)
             }
             sw.message(2, mem);
         }
-        {  // disk (4)
+        if (s.disk_present) {  // disk (4)
             std::string d;
             ProtoWriter dw(d);
             dw.int64(1, s.disk_used);
             dw.int64(2, s.disk_total);
             sw.message(4, d);
         }
-        {  // os (5)
+        if (s.os_present) {  // os (5)
             std::string o;
             ProtoWriter ow(o);
-            ow.string(1, s.os_arch);
-            ow.string(2, s.os_name);
-            ow.string(3, s.os_version);
+            if (!s.os_arch.empty()) {
+                ow.string(1, s.os_arch);
+            }
+            if (!s.os_name.empty()) {
+                ow.string(2, s.os_name);
+            }
+            if (!s.os_version.empty()) {
+                ow.string(3, s.os_version);
+            }
             sw.message(5, o);
         }
         // java (6): the viewer's Platform view renders "using Java <version>..."
         // unconditionally with a non-null assertion. BDS is native (no JVM), so emit an
         // empty-but-present message to avoid the viewer dereferencing undefined.
         sw.message(6, std::string());
-        sw.int64(7, s.uptime_ms);
+        if (s.uptime_present) {
+            sw.int64(7, s.uptime_ms);
+        }
         w.message(9, ss);
     }
 

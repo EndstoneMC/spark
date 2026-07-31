@@ -472,12 +472,17 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.platform_stats.player_count = ctx.player_count;
     meta.platform_stats.online_mode = ctx.online_mode;
     meta.platform_stats.uptime_ms = ctx.uptime_ms;
-    meta.platform_stats.process_mem_bytes = processRssBytes();
-    meta.platform_stats.process_virtual_bytes = processVirtualBytes();
+    const ProcessStats process = gatherProcessStats();
+    meta.platform_stats.process_mem_present = process.rss_present;
+    meta.platform_stats.process_mem_bytes = process.rss_bytes;
+    meta.platform_stats.process_virtual_present = process.virtual_present;
+    meta.platform_stats.process_virtual_bytes = process.virtual_bytes;
 
     meta.statistics = ctx.statistics;
     meta.system_stats = ctx.system_stats;
+    meta.system_stats.uptime_present = true;
     meta.system_stats.uptime_ms = ctx.uptime_ms;
+    meta.system_stats.present = true;
     meta.plugins = ctx.plugins;
     meta.world = ctx.world;
     meta.window_stats = ctx.window_stats;

@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <limits>
 
 #if defined(_WIN32)
 #include <windows.h>
 #include <psapi.h>
+#include <tlhelp32.h>
 
 #include <string>
 #else
@@ -69,24 +71,36 @@ std::int64_t steadyNowMs()
 
 }  // namespace
 
-std::int64_t processRssBytes()
+ProcessStats gatherProcessStats()
 {
+    ProcessStats stats;
     std::ifstream f("/proc/self/statm");
-    long pages_total = 0, pages_res = 0;  // statm: field0 = VmSize, field1 = VmRSS (in pages)
-    if (f >> pages_total >> pages_res) {
-        return static_cast<std::int64_t>(pages_res) * sysconf(_SC_PAGESIZE);
+    long pages_total = 0, pages_resident = 0;
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size > 0 && f >> pages_total >> pages_resident) {
+        stats.virtual_bytes =
+            static_cast<std::int64_t>(pages_total) * page_size;
+        stats.rss_bytes =
+            static_cast<std::int64_t>(pages_resident) * page_size;
+        stats.virtual_present = true;
+        stats.rss_present = true;
     }
-    return 0;
-}
 
-std::int64_t processVirtualBytes()
-{
-    std::ifstream f("/proc/self/statm");
-    long pages_total = 0;
-    if (f >> pages_total) {
-        return static_cast<std::int64_t>(pages_total) * sysconf(_SC_PAGESIZE);
+    std::ifstream status("/proc/self/status");
+    std::string key;
+    while (status >> key) {
+        if (key == "Threads:") {
+            long threads = 0;
+            if (status >> threads && threads > 0 &&
+                threads <= (std::numeric_limits<int>::max)()) {
+                stats.threads = static_cast<int>(threads);
+                stats.threads_present = true;
+            }
+            break;
+        }
+        std::getline(status, key);
     }
-    return 0;
+    return stats;
 }
 
 CpuSnapshot captureCpuSnapshot()
@@ -149,24 +163,14 @@ CpuSnapshot captureCpuSnapshot()
     return s;
 }
 
-SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &disk_path)
+SystemStats gatherSystemStats(const std::string &disk_path)
 {
     SystemStats s;
-    s.present = true;
 
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
-    if (ncpu < 1) {
-        ncpu = 1;
-    }
-    s.cpu_threads = static_cast<int>(ncpu);
-
-    CpuSnapshot now = captureCpuSnapshot();
-    CpuUsage usage = cpuUsageBetween(baseline, now);
-    if (usage.process_valid) {
-        s.cpu_process = usage.process;
-    }
-    if (usage.system_valid) {
-        s.cpu_system = usage.system;
+    if (ncpu > 0 && ncpu <= (std::numeric_limits<int>::max)()) {
+        s.cpu_threads = static_cast<int>(ncpu);
+        s.cpu_present = true;
     }
 
     // CPU model.
@@ -180,6 +184,7 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
                     std::size_t start = line.find_first_not_of(" \t", colon + 1);
                     if (start != std::string::npos) {
                         s.cpu_model = line.substr(start);
+                        s.cpu_present = true;
                     }
                 }
                 break;
@@ -192,6 +197,8 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
         std::ifstream f("/proc/meminfo");
         std::string line;
         long long mem_total = 0, mem_avail = 0, swap_total = 0, swap_free = 0;
+        bool have_mem_total = false, have_mem_available = false;
+        bool have_swap_total = false, have_swap_free = false;
         while (std::getline(f, line)) {
             std::istringstream iss(line);
             std::string key;
@@ -199,21 +206,31 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
             iss >> key >> value;
             if (key == "MemTotal:") {
                 mem_total = value;
+                have_mem_total = true;
             }
             else if (key == "MemAvailable:") {
                 mem_avail = value;
+                have_mem_available = true;
             }
             else if (key == "SwapTotal:") {
                 swap_total = value;
+                have_swap_total = true;
             }
             else if (key == "SwapFree:") {
                 swap_free = value;
+                have_swap_free = true;
             }
         }
-        s.mem_total = mem_total * 1024;
-        s.mem_used = (mem_total - mem_avail) * 1024;
-        s.swap_total = swap_total * 1024;
-        s.swap_used = (swap_total - swap_free) * 1024;
+        if (have_mem_total && have_mem_available && mem_total >= mem_avail) {
+            s.mem_total = mem_total * 1024;
+            s.mem_used = (mem_total - mem_avail) * 1024;
+            s.memory_present = true;
+        }
+        if (have_swap_total && have_swap_free && swap_total >= swap_free) {
+            s.swap_total = swap_total * 1024;
+            s.swap_used = (swap_total - swap_free) * 1024;
+            s.swap_present = true;
+        }
     }
 
     // Disk.
@@ -223,6 +240,7 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
             s.disk_total = static_cast<std::int64_t>(st.f_blocks) * static_cast<std::int64_t>(st.f_frsize);
             s.disk_used =
                 static_cast<std::int64_t>(st.f_blocks - st.f_bfree) * static_cast<std::int64_t>(st.f_frsize);
+            s.disk_present = true;
         }
     }
 
@@ -233,9 +251,12 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
             s.os_name = u.sysname;
             s.os_version = u.release;
             s.os_arch = u.machine;
+            s.os_present = true;
         }
     }
 
+    s.present = s.cpu_present || s.memory_present || s.swap_present ||
+                s.disk_present || s.os_present;
     return s;
 }
 
@@ -302,22 +323,15 @@ CpuSnapshot captureCpuSnapshot()
     return s;
 }
 
-SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &disk_path)
+SystemStats gatherSystemStats(const std::string &disk_path)
 {
     SystemStats s;
-    s.present = true;
 
     SYSTEM_INFO system_info{};
     GetSystemInfo(&system_info);
-    s.cpu_threads = system_info.dwNumberOfProcessors > 0 ? static_cast<int>(system_info.dwNumberOfProcessors) : 1;
-
-    CpuSnapshot now = captureCpuSnapshot();
-    CpuUsage usage = cpuUsageBetween(baseline, now);
-    if (usage.process_valid) {
-        s.cpu_process = usage.process;
-    }
-    if (usage.system_valid) {
-        s.cpu_system = usage.system;
+    if (system_info.dwNumberOfProcessors > 0) {
+        s.cpu_threads = static_cast<int>(system_info.dwNumberOfProcessors);
+        s.cpu_present = true;
     }
 
     HKEY cpu_key = nullptr;
@@ -334,6 +348,7 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
             std::size_t start = s.cpu_model.find_first_not_of(" \t");
             std::size_t end = s.cpu_model.find_last_not_of(" \t");
             s.cpu_model = start == std::string::npos ? std::string() : s.cpu_model.substr(start, end - start + 1);
+            s.cpu_present = true;
         }
         RegCloseKey(cpu_key);
     }
@@ -345,6 +360,7 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
         unsigned long long physical_used =
             memory.ullTotalPhys > memory.ullAvailPhys ? memory.ullTotalPhys - memory.ullAvailPhys : 0;
         s.mem_used = static_cast<std::int64_t>(physical_used);
+        s.memory_present = true;
 
         // Windows exposes commit limit/availability rather than Linux-style swap
         // counters. Approximate page-file capacity as commit limit beyond physical
@@ -360,6 +376,7 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
         }
         s.swap_total = static_cast<std::int64_t>(swap_total);
         s.swap_used = static_cast<std::int64_t>(swap_used);
+        s.swap_present = true;
     }
 
     ULARGE_INTEGER free_available{}, disk_total{}, disk_free{};
@@ -367,12 +384,14 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
     if (GetDiskFreeSpaceExA(path, &free_available, &disk_total, &disk_free)) {
         s.disk_total = static_cast<std::int64_t>(disk_total.QuadPart);
         s.disk_used = static_cast<std::int64_t>(disk_total.QuadPart - disk_free.QuadPart);
+        s.disk_present = true;
     }
 
     SYSTEM_INFO native_info{};
     GetNativeSystemInfo(&native_info);
     s.os_arch = nativeArchitecture(native_info.wProcessorArchitecture);
     s.os_name = "Windows";
+    s.os_present = true;
 
     using RtlGetVersionFn = LONG(WINAPI *)(OSVERSIONINFOW *);
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -388,26 +407,78 @@ SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &di
         }
     }
 
+    s.present = s.cpu_present || s.memory_present || s.swap_present ||
+                s.disk_present || s.os_present;
     return s;
 }
 
-std::int64_t processRssBytes()
+ProcessStats gatherProcessStats()
 {
+    ProcessStats stats;
     PROCESS_MEMORY_COUNTERS counters{};
     if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) {
-        return static_cast<std::int64_t>(counters.WorkingSetSize);
+        stats.rss_bytes = static_cast<std::int64_t>(counters.WorkingSetSize);
+        stats.rss_present = true;
     }
-    return 0;
-}
 
-std::int64_t processVirtualBytes()
-{
-    PROCESS_MEMORY_COUNTERS_EX counters{};
-    if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&counters),
-                             sizeof(counters))) {
-        return static_cast<std::int64_t>(counters.PrivateUsage);
+    SYSTEM_INFO system_info{};
+    GetNativeSystemInfo(&system_info);
+    std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(system_info.lpMinimumApplicationAddress);
+    const std::uintptr_t maximum =
+        reinterpret_cast<std::uintptr_t>(system_info.lpMaximumApplicationAddress);
+    std::uint64_t virtual_bytes = 0;
+    bool virtual_query_succeeded = false;
+    while (address < maximum) {
+        MEMORY_BASIC_INFORMATION region{};
+        if (VirtualQuery(reinterpret_cast<const void *>(address), &region,
+                         sizeof(region)) == 0) {
+            break;
+        }
+        virtual_query_succeeded = true;
+        if (region.State != MEM_FREE) {
+            virtual_bytes += static_cast<std::uint64_t>(region.RegionSize);
+        }
+        const std::uintptr_t base =
+            reinterpret_cast<std::uintptr_t>(region.BaseAddress);
+        if (region.RegionSize == 0 ||
+            base > (std::numeric_limits<std::uintptr_t>::max)() -
+                       region.RegionSize) {
+            break;
+        }
+        const std::uintptr_t next = base + region.RegionSize;
+        if (next <= address) {
+            break;
+        }
+        address = next;
     }
-    return 0;
+    if (virtual_query_succeeded &&
+        virtual_bytes <=
+            static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
+        stats.virtual_bytes = static_cast<std::int64_t>(virtual_bytes);
+        stats.virtual_present = true;
+    }
+
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 entry{};
+        entry.dwSize = sizeof(entry);
+        int count = 0;
+        const DWORD process_id = GetCurrentProcessId();
+        if (Thread32First(snapshot, &entry)) {
+            do {
+                if (entry.th32OwnerProcessID == process_id &&
+                    count < (std::numeric_limits<int>::max)()) {
+                    ++count;
+                }
+            } while (Thread32Next(snapshot, &entry));
+            stats.threads = count;
+            stats.threads_present = count > 0;
+        }
+        CloseHandle(snapshot);
+    }
+
+    return stats;
 }
 
 #endif

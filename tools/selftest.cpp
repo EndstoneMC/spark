@@ -979,6 +979,54 @@ bool verifyStatisticsSerialization()
                      "gauges were incorrect\n");
         return false;
     }
+
+    ProtoField platform;
+    ProtoField system;
+    if (!findProtoPath(profile, {1, 8}, platform) ||
+        findProtoField(platform.bytes, 1, omitted) ||
+        !findProtoPath(profile, {1, 9}, system) ||
+        findProtoField(system.bytes, 2, omitted) ||
+        findProtoField(system.bytes, 4, omitted) ||
+        findProtoField(system.bytes, 5, omitted)) {
+        std::fprintf(stderr,
+                     "statistics serialization: unavailable resource fields "
+                     "were serialized as real observations\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifySystemResourceStats()
+{
+    const spark::ProcessStats process = spark::gatherProcessStats();
+    if (!process.rss_present || process.rss_bytes <= 0 ||
+        !process.virtual_present ||
+        process.virtual_bytes < process.rss_bytes ||
+        !process.threads_present || process.threads < 1) {
+        std::fprintf(
+            stderr,
+            "system resources: process RSS/virtual memory/thread query failed "
+            "(rss=%lld virtual=%lld threads=%d)\n",
+            static_cast<long long>(process.rss_bytes),
+            static_cast<long long>(process.virtual_bytes), process.threads);
+        return false;
+    }
+
+    const spark::SystemStats system = spark::gatherSystemStats(".");
+    if (!system.present || !system.cpu_present || system.cpu_threads < 1 ||
+        !system.memory_present || system.mem_total <= 0 ||
+        system.mem_used < 0 || system.mem_used > system.mem_total ||
+        !system.swap_present || system.swap_total < 0 ||
+        system.swap_used < 0 || system.swap_used > system.swap_total ||
+        !system.disk_present || system.disk_total <= 0 ||
+        system.disk_used < 0 || system.disk_used > system.disk_total ||
+        !system.os_present || system.os_name.empty() ||
+        system.os_arch.empty()) {
+        std::fprintf(stderr,
+                     "system resources: host availability/value validation "
+                     "failed\n");
+        return false;
+    }
     return true;
 }
 
@@ -2336,7 +2384,8 @@ int main(int argc, char **argv)
     }
 
     if (argc > 1 && std::string(argv[1]) == "--statistics-only") {
-        return verifyStatisticsService() ? 0 : 1;
+        return verifyStatisticsService() && verifySystemResourceStats() ? 0
+                                                                        : 1;
     }
 
     int seconds = 4;
@@ -2358,6 +2407,7 @@ int main(int argc, char **argv)
 
     if (!verifyArgumentParsing() || !verifyThreadSelectorSemantics() ||
         !verifyTickMonitor() || !verifyStatisticsService() ||
+        !verifySystemResourceStats() ||
         !verifyThreadDiscovery() ||
         !verifyMultiThreadSerialization() || !verifyStatisticsSerialization() ||
         !verifyUploadFailure() || !verifyCaptureLifecycle() ||

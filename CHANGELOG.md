@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   windows plus query-time MSPT distributions and rolling CPU usage.
 - Populate profile metadata and per-second Viewer windows from the shared history,
   including exact time bounds, CPU, TPS, MSPT median/max, and low-cost player counts.
+- Report real rolling TPS, MSPT distributions, and process/system CPU from
+  `/spark tps`, with the available history duration shown during warm-up.
 
 ### Changed
 
@@ -22,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sorting, and percentile work out of the per-tick statistics path.
 - Omit unavailable per-second entity and chunk fields instead of copying a final
   world snapshot or serializing zero as though it were an observation.
+- Make `/spark health` use the shared performance snapshot and consistently report
+  available process RSS/virtual memory, threads, physical memory, swap/page-file,
+  disk, uptime, players, CPU, and OS resources on Windows and Linux.
+- Track resource-field availability explicitly and omit failed system/profile
+  queries rather than presenting synthetic zero values.
 
 ### Fixed
 
@@ -29,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   means and maxima as median, minimum, and p95 values in profile metadata.
 - Preserve the suspended thread's top instruction address on Windows when
   `StackWalk64` cannot unwind a caller, instead of discarding the whole sample.
+- Report reserved/committed process virtual address space on Windows instead of
+  incorrectly labeling private commit charge as virtual memory.
 
 ## [0.3.2] - 2026-07-30
 

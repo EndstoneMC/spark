@@ -5,7 +5,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -140,62 +139,86 @@ std::string dimensionName(const Dimension &dimension)
     }
 }
 
-const std::string &tpsColor(float tps)
+const std::string &tpsColor(double tps)
 {
-    if (tps >= 19.5f) {
+    if (tps >= 19.5) {
         return ColorFormat::Green;
     }
-    if (tps >= 18.0f) {
+    if (tps >= 18.0) {
         return ColorFormat::Yellow;
     }
-    if (tps >= 15.0f) {
+    if (tps >= 15.0) {
         return ColorFormat::Gold;
     }
     return ColorFormat::Red;
 }
 
-const std::string &msptColor(float mspt)
+const std::string &msptColor(double mspt)
 {
-    if (mspt <= 25.0f) {
+    if (mspt <= 25.0) {
         return ColorFormat::Green;
     }
-    if (mspt <= 40.0f) {
+    if (mspt <= 40.0) {
         return ColorFormat::Yellow;
     }
-    if (mspt <= 50.0f) {
+    if (mspt <= 50.0) {
         return ColorFormat::Gold;
     }
     return ColorFormat::Red;
 }
 
-#if !defined(_WIN32)
-struct ProcInfo {
-    bool ok = false;
-    long rss_kb = 0;
-    long threads = 0;
-};
-
-ProcInfo readProcStatus()
+const std::string &cpuColor(double usage)
 {
-    ProcInfo info;
-    std::ifstream f("/proc/self/status");
-    if (!f) {
-        return info;
+    if (usage < 0.65) {
+        return ColorFormat::Green;
     }
-    std::string key;
-    while (f >> key) {
-        if (key == "VmRSS:") {
-            f >> info.rss_kb;
-            info.ok = true;
-        }
-        else if (key == "Threads:") {
-            f >> info.threads;
-        }
-        std::getline(f, key);
+    if (usage < 0.85) {
+        return ColorFormat::Yellow;
     }
-    return info;
+    return ColorFormat::Red;
 }
-#endif
+
+std::string formatNumber(double value, int precision)
+{
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), precision == 1 ? "%.1f" : "%.2f",
+                  value);
+    return buffer;
+}
+
+std::string formatTpsValue(const spark::RollingValue &value)
+{
+    if (!value.present) {
+        return ColorFormat::Gray + std::string("n/a");
+    }
+    return tpsColor(value.value) + formatNumber(value.value, 1) +
+           ColorFormat::Gray;
+}
+
+std::string formatCpuValue(const spark::RollingValue &value)
+{
+    if (!value.present) {
+        return ColorFormat::Gray + std::string("n/a");
+    }
+    return cpuColor(value.value) + formatNumber(value.value * 100.0, 1) +
+           "%" + ColorFormat::Gray;
+}
+
+std::string formatMsptValue(double value)
+{
+    return msptColor(value) + formatNumber(value, 2) + ColorFormat::Gray;
+}
+
+std::string formatMsptDistribution(const spark::DistributionValues &values)
+{
+    if (!values.present) {
+        return ColorFormat::Gray + std::string("n/a");
+    }
+    return formatMsptValue(values.mean) + "/" + formatMsptValue(values.min) +
+           "/" + formatMsptValue(values.median) + "/" +
+           formatMsptValue(values.percentile95) + "/" +
+           formatMsptValue(values.max);
+}
 
 }  // namespace
 
@@ -320,9 +343,12 @@ private:
                            ColorFormat::Gray);
         sender.sendMessage("{}/spark profiler cancel {}- stop profiling without generating a profile", ColorFormat::Yellow,
                            ColorFormat::Gray);
-        sender.sendMessage("{}/spark tps {}- ticks per second & tick duration", ColorFormat::Yellow,
-                           ColorFormat::Gray);
-        sender.sendMessage("{}/spark health {}- server health report", ColorFormat::Yellow, ColorFormat::Gray);
+        sender.sendMessage(
+            "{}/spark tps {}- rolling TPS, MSPT percentiles, and CPU usage",
+            ColorFormat::Yellow, ColorFormat::Gray);
+        sender.sendMessage(
+            "{}/spark health {}- performance and host resource report",
+            ColorFormat::Yellow, ColorFormat::Gray);
         sender.sendMessage("{}/spark tickmonitor {}- report unusually long ticks", ColorFormat::Yellow,
                            ColorFormat::Gray);
         sender.sendMessage("{}Modes: --alloc, --alloc-live-only", ColorFormat::Gray);
@@ -731,8 +757,7 @@ private:
         pending_ctx_.statistics = statistics_.snapshot();
         pending_ctx_.window_stats = statistics_.profileWindows(
             profiler_.startTimeMs(), profiler_.endTimeMs());
-        pending_ctx_.system_stats =
-            spark::gatherSystemStats(spark::CpuSnapshot{}, ".");
+        pending_ctx_.system_stats = spark::gatherSystemStats(".");
         pending_ctx_.player_count = static_cast<long>(getServer().getOnlinePlayers().size());
         pending_ctx_.online_mode = getServer().getOnlineMode() ? 2 : 1;
         {
@@ -919,33 +944,135 @@ private:
 
     void cmdTps(endstone::CommandSender &sender)
     {
-        endstone::Server &s = getServer();
-        float ctps = s.getCurrentTicksPerSecond();
-        float atps = s.getAverageTicksPerSecond();
-        float cmspt = s.getCurrentMillisecondsPerTick();
-        float amspt = s.getAverageMillisecondsPerTick();
-        sender.sendMessage("{}TPS {}(cur/avg){}: {}{:.1f}{} / {}{:.1f}", ColorFormat::Gold, ColorFormat::Gray,
-                           ColorFormat::Reset, tpsColor(ctps), ctps, ColorFormat::Gray, tpsColor(atps), atps);
-        sender.sendMessage("{}MSPT {}(cur/avg){}: {}{:.2f}ms{} / {}{:.2f}ms", ColorFormat::Gold, ColorFormat::Gray,
-                           ColorFormat::Reset, msptColor(cmspt), cmspt, ColorFormat::Gray, msptColor(amspt), amspt);
+        sendPerformanceReport(sender, statistics_.snapshot());
+    }
+
+    void sendPerformanceReport(endstone::CommandSender &sender,
+                               const spark::StatisticsSnapshot &stats)
+    {
+        sender.sendMessage(
+            "{}TPS {}(5s/10s/1m/5m/15m){}: {} / {} / {} / {} / {}",
+            ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
+            formatTpsValue(stats.tps.last_5s),
+            formatTpsValue(stats.tps.last_10s),
+            formatTpsValue(stats.tps.last_1m),
+            formatTpsValue(stats.tps.last_5m),
+            formatTpsValue(stats.tps.last_15m));
+        sender.sendMessage(
+            "{}MSPT 10s {}(mean/min/median/p95/max){}: {}",
+            ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
+            formatMsptDistribution(stats.mspt.last_10s));
+        sender.sendMessage(
+            "{}MSPT 1m  {}(mean/min/median/p95/max){}: {}",
+            ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
+            formatMsptDistribution(stats.mspt.last_1m));
+        sender.sendMessage(
+            "{}MSPT 5m  {}(mean/min/median/p95/max){}: {}",
+            ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
+            formatMsptDistribution(stats.mspt.last_5m));
+        sender.sendMessage(
+            "{}Process CPU {}(10s/1m/15m){}: {} / {} / {}",
+            ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
+            formatCpuValue(stats.cpu.process_last_10s),
+            formatCpuValue(stats.cpu.process_last_1m),
+            formatCpuValue(stats.cpu.process_last_15m));
+        sender.sendMessage(
+            "{}System CPU {}(10s/1m/15m){}: {} / {} / {}",
+            ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
+            formatCpuValue(stats.cpu.system_last_10s),
+            formatCpuValue(stats.cpu.system_last_1m),
+            formatCpuValue(stats.cpu.system_last_15m));
+
+        const std::int64_t history_seconds =
+            (stats.history_span_ms + 999) / 1000;
+        if (stats.history_span_ms < spark::StatisticsService::kMaximumHistoryMs) {
+            sender.sendMessage(
+                "{}Statistics history: {}{} {}(longer windows currently use the available history)",
+                ColorFormat::Gold, ColorFormat::Gray,
+                formatDuration(history_seconds), ColorFormat::Gray);
+        }
     }
 
     void cmdHealth(endstone::CommandSender &sender)
     {
-        cmdTps(sender);
-        long uptime = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now() -
-                                                                       getServer().getStartTime())
-                          .count();
-        sender.sendMessage("{}Uptime: {}{}", ColorFormat::Gold, ColorFormat::Gray, formatDuration(uptime));
-        sender.sendMessage("{}Players online: {}{}", ColorFormat::Gold, ColorFormat::Gray,
+        const spark::StatisticsSnapshot statistics = statistics_.snapshot();
+        sendPerformanceReport(sender, statistics);
+
+        const spark::ProcessStats process = spark::gatherProcessStats();
+        const spark::SystemStats system = spark::gatherSystemStats(".");
+        const std::int64_t uptime = std::chrono::duration_cast<std::chrono::seconds>(
+                                        std::chrono::system_clock::now() -
+                                        getServer().getStartTime())
+                                        .count();
+        sender.sendMessage("{}Uptime: {}{}", ColorFormat::Gold,
+                           ColorFormat::Gray, formatDuration(uptime));
+        sender.sendMessage("{}Players online: {}{}", ColorFormat::Gold,
+                           ColorFormat::Gray,
                            getServer().getOnlinePlayers().size());
-#if !defined(_WIN32)
-        ProcInfo info = readProcStatus();
-        if (info.ok) {
-            sender.sendMessage("{}Memory (RSS): {}{} MB", ColorFormat::Gold, ColorFormat::Gray, info.rss_kb / 1024);
-            sender.sendMessage("{}Threads: {}{}", ColorFormat::Gold, ColorFormat::Gray, info.threads);
+
+        if (process.rss_present && process.virtual_present) {
+            sender.sendMessage(
+                "{}Process memory {}(RSS/virtual){}: {} / {}",
+                ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
+                formatBytes(static_cast<std::uint64_t>(process.rss_bytes)),
+                formatBytes(
+                    static_cast<std::uint64_t>(process.virtual_bytes)));
         }
-#endif
+        else if (process.rss_present) {
+            sender.sendMessage("{}Process RSS: {}{}", ColorFormat::Gold,
+                               ColorFormat::Gray,
+                               formatBytes(static_cast<std::uint64_t>(
+                                   process.rss_bytes)));
+        }
+        else if (process.virtual_present) {
+            sender.sendMessage("{}Process virtual memory: {}{}",
+                               ColorFormat::Gold, ColorFormat::Gray,
+                               formatBytes(static_cast<std::uint64_t>(
+                                   process.virtual_bytes)));
+        }
+        if (process.threads_present) {
+            sender.sendMessage("{}Process threads: {}{}", ColorFormat::Gold,
+                               ColorFormat::Gray, process.threads);
+        }
+        if (system.memory_present) {
+            sender.sendMessage("{}System memory {}(used/total){}: {} / {}",
+                               ColorFormat::Gold, ColorFormat::Gray,
+                               ColorFormat::Reset,
+                               formatBytes(static_cast<std::uint64_t>(
+                                   system.mem_used)),
+                               formatBytes(static_cast<std::uint64_t>(
+                                   system.mem_total)));
+        }
+        if (system.swap_present) {
+            sender.sendMessage(
+                "{}Swap/page file {}(used/total){}: {} / {}",
+                ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
+                formatBytes(
+                    static_cast<std::uint64_t>(system.swap_used)),
+                formatBytes(
+                    static_cast<std::uint64_t>(system.swap_total)));
+        }
+        if (system.disk_present) {
+            sender.sendMessage("{}Disk {}(used/total){}: {} / {}",
+                               ColorFormat::Gold, ColorFormat::Gray,
+                               ColorFormat::Reset,
+                               formatBytes(static_cast<std::uint64_t>(
+                                   system.disk_used)),
+                               formatBytes(static_cast<std::uint64_t>(
+                                   system.disk_total)));
+        }
+        if (system.cpu_present) {
+            sender.sendMessage("{}CPU: {}{} {}({} logical processors)",
+                               ColorFormat::Gold, ColorFormat::Gray,
+                               system.cpu_model.empty() ? "unknown model"
+                                                        : system.cpu_model,
+                               ColorFormat::Gray, system.cpu_threads);
+        }
+        if (system.os_present) {
+            sender.sendMessage("{}OS: {}{} {} {}", ColorFormat::Gold,
+                               ColorFormat::Gray, system.os_name,
+                               system.os_version, system.os_arch);
+        }
     }
 
     void cmdTickMonitor(endstone::CommandSender &sender, const spark::Arguments &args)

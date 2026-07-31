@@ -49,21 +49,40 @@ struct PlatformStats {
     long player_count = -1;
     int online_mode = 0;  // 0 unknown, 1 offline, 2 online
     std::int64_t uptime_ms = 0;
-    std::int64_t process_mem_bytes = 0;      // VmRSS, reported as "used" of the process pool
-    std::int64_t process_virtual_bytes = 0;  // VmSize, reported as the pool's total (like /status)
+    bool process_mem_present = false;
+    std::int64_t process_mem_bytes = 0;      // resident working set / VmRSS
+    bool process_virtual_present = false;
+    std::int64_t process_virtual_bytes = 0;  // reserved or committed virtual address space / VmSize
 };
 
-// Host statistics gathered from /proc, statvfs and uname.
+// Point-in-time process resources. Availability is explicit so a failed OS query
+// is never presented as a real zero.
+struct ProcessStats {
+    bool rss_present = false;
+    std::int64_t rss_bytes = 0;
+    bool virtual_present = false;
+    std::int64_t virtual_bytes = 0;
+    bool threads_present = false;
+    int threads = 0;
+};
+
+// Point-in-time host resources gathered through the native platform APIs.
+// CPU usage is deliberately absent: rolling CPU values come only from
+// StatisticsService.
 struct SystemStats {
     bool present = false;
+    bool cpu_present = false;
     int cpu_threads = 0;
     std::string cpu_model;
-    double cpu_process = 0.0;  // 0..1 of total capacity
-    double cpu_system = 0.0;   // 0..1
+    bool memory_present = false;
     std::int64_t mem_used = 0, mem_total = 0;
+    bool swap_present = false;
     std::int64_t swap_used = 0, swap_total = 0;
+    bool disk_present = false;
     std::int64_t disk_used = 0, disk_total = 0;
+    bool os_present = false;
     std::string os_arch, os_name, os_version;
+    bool uptime_present = false;
     std::int64_t uptime_ms = 0;
 };
 
@@ -112,12 +131,10 @@ struct CpuUsage {
 CpuSnapshot captureCpuSnapshot();
 CpuUsage cpuUsageBetween(const CpuSnapshot &before, const CpuSnapshot &after);
 
-// Gather host stats; CPU usage is computed against `baseline`. `disk_path` selects
-// the filesystem to report (e.g. the server working directory).
-SystemStats gatherSystemStats(const CpuSnapshot &baseline, const std::string &disk_path);
-
-std::int64_t processRssBytes();      // VmRSS
-std::int64_t processVirtualBytes();  // VmSize
+// `disk_path` selects the filesystem to report (for example the server working
+// directory). These queries run only for health reports and profile export.
+SystemStats gatherSystemStats(const std::string &disk_path);
+ProcessStats gatherProcessStats();
 
 }  // namespace spark
 
