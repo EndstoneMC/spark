@@ -1017,7 +1017,11 @@ bool verifyAllThreadSampling()
         stop_workers();
         return false;
     }
-    std::this_thread::sleep_for(200ms);
+    // Hosted Windows runners can spend most of a short observation interval
+    // inside one expensive StackWalk64 attempt. Keep two active targets and
+    // allow a full second so all-thread rotation itself, rather than runner
+    // scheduling latency, determines whether both threads are captured.
+    std::this_thread::sleep_for(1s);
     sampler.stop();
     stop_workers();
 
@@ -1025,7 +1029,7 @@ bool verifyAllThreadSampling()
         std::fprintf(stderr, "all-thread sampling: fewer than two process threads were captured\n");
         return false;
     }
-    if (sampler.sampleCount() > 150) {
+    if (sampler.sampleCount() > 750) {
         std::fprintf(stderr, "all-thread sampling: stack-walk interval budget was exceeded\n");
         return false;
     }
