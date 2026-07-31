@@ -517,6 +517,8 @@ public:
     }
 
     // True when `pointer` is an absolute virtual address inside a mapped segment.
+    // For a non-PIE image the load bias is 0 and stored pointers already equal the
+    // p_vaddr-based RVAs, so subtracting the bias is correct in both cases.
     bool toRva(std::uint64_t pointer, std::uint64_t &rva) const
     {
         if (pointer < bias_) {
