@@ -19,3 +19,4 @@ CMakeUserPresets.json
 .vscode/
 __pycache__/
 .conan-test
+/.conan2
