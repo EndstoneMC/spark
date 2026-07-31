@@ -101,7 +101,7 @@ public:
     // exportData() performs symbolication and serialization on a background thread
     // once sampling has stopped.
     bool stopSampling(std::string &error);
-    void stopSampling();  // compatibility helper for execution-only self-tests
+    void stopSampling();  // compatibility helper that discards the error
     std::string exportData(const ExportContext &ctx) const;
 
     // Convenience (used by the self-test): stopSampling() + exportData().
