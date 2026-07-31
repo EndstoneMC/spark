@@ -2033,12 +2033,20 @@ struct AllocationSampler::Impl {
             std::string resume_error;
             const bool resumed = suspended.resume(resume_error);
             if (!inspected) {
-                error = "GetThreadContext failed for thread " + std::to_string(inspect_thread) +
-                        ": " + std::to_string(inspect_failure);
-                if (!resume_error.empty()) {
-                    error += "; " + resume_error;
+                if (!resumed) {
+                    error = resume_error;
+                    return false;
                 }
-                return false;
+                if (monotonicMs() >= deadline) {
+                    error =
+                        "timed out waiting for stable thread contexts; "
+                        "GetThreadContext failed for thread " +
+                        std::to_string(inspect_thread) + ": " +
+                        std::to_string(inspect_failure);
+                    return false;
+                }
+                ::Sleep(1);
+                continue;
             }
             if (!resumed) {
                 error = resume_error;
@@ -2567,10 +2575,18 @@ struct AllocationSampler::Impl {
 
         if (hooks_installed.load(std::memory_order_acquire)) {
             std::string last_error;
-            for (int attempt = 0;
-                 attempt < 100 && hooks_installed.load(std::memory_order_acquire); ++attempt) {
+            const std::uint64_t uninstall_deadline = monotonicMs() + 30000;
+            while (hooks_installed.load(std::memory_order_acquire)) {
                 if (!uninstallHooks(last_error)) {
-                    ::Sleep(10);
+                    // A thread can be observed while it is starting or exiting:
+                    // SuspendThread succeeds but GetThreadContext temporarily
+                    // reports ERROR_GEN_FAILURE. Resume every thread and retry a
+                    // fresh stable snapshot until the same bounded shutdown
+                    // deadline used for trampoline quiescence.
+                    if (monotonicMs() >= uninstall_deadline) {
+                        break;
+                    }
+                    ::Sleep(1);
                 }
             }
             if (hooks_installed.load(std::memory_order_acquire)) {

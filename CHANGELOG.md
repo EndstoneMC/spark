@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StackWalk64` cannot unwind a caller, instead of discarding the whole sample.
 - Report reserved/committed process virtual address space on Windows instead of
   incorrectly labeling private commit charge as virtual memory.
+- Retry Windows hook removal within the existing bounded shutdown interval when
+  a concurrently starting or exiting thread temporarily rejects context capture.
 
 ## [0.3.2] - 2026-07-30
 

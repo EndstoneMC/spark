@@ -169,6 +169,9 @@ name can be read, a named selector fails closed for that identity rather than
 attributing it using a possibly reused operating-system thread ID.
 Hooks remain disabled pass-throughs between sessions and are fully removed after
 in-flight calls finish during plugin shutdown, allowing a clean plugin reload.
+Windows retries fresh suspended-thread snapshots for up to 30 seconds when a
+thread is concurrently starting or exiting, without patching while any context
+cannot be inspected.
 
 Coverage is limited to the listed allocator entry points/imports. Static CRT
 copies, inlined or private allocators, arenas and object pools that do not reach a
