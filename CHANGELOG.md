@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stop copying one TPS/CPU average across every rolling field or labeling MSPT
   means and maxima as median, minimum, and p95 values in profile metadata.
+- Preserve the suspended thread's top instruction address on Windows when
+  `StackWalk64` cannot unwind a caller, instead of discarding the whole sample.
 
 ## [0.3.2] - 2026-07-30
 

@@ -84,8 +84,10 @@ final output.
   Frames are resolved with `dladdr` (dynamic symbols) and fall back to
   `module+0xRVA` for the stripped BDS internals — which you can symbolicate offline
   against an IDA database or the Windows PDB.
-* **Windows:** the sampler suspends one selected target per interval and walks its
-  context with `StackWalk64`; frames resolve against the shipped PDB (real names).
+* **Windows:** the sampler suspends one selected target per interval, retains its
+  current instruction address, and walks callers with `StackWalk64`; frames resolve
+  against the shipped PDB (real names). A failed caller unwind therefore shortens
+  the sample instead of discarding it.
 * Samples aggregate into per-thread call trees, serialize to spark's protobuf,
   gzip, and either upload to bytebin or write a local `.sparkprofile` file.
   Symbolization and output processing run on a background thread so the server

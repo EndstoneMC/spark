@@ -81,6 +81,12 @@ bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
 
         HANDLE process = GetCurrentProcess();
         std::size_t n = 0;
+        // The suspended CONTEXT is already a valid sample. Keep its instruction
+        // pointer even when StackWalk64 cannot unwind a caller (for example in
+        // optimized system/runtime code without usable unwind metadata).
+        if (context.Rip != 0) {
+            out.ips[n++] = static_cast<cpptrace::frame_ptr>(context.Rip);
+        }
         while (n < CaptureBuffer::kMax) {
             if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, process, thread, &frame, &context, nullptr,
                              SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) {
@@ -89,7 +95,10 @@ bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
             if (frame.AddrPC.Offset == 0) {
                 break;
             }
-            out.ips[n++] = static_cast<cpptrace::frame_ptr>(frame.AddrPC.Offset);
+            const auto ip = static_cast<cpptrace::frame_ptr>(frame.AddrPC.Offset);
+            if (n == 0 || ip != out.ips[n - 1]) {
+                out.ips[n++] = ip;
+            }
         }
         out.count = n;
     }
