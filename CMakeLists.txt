@@ -52,6 +52,7 @@ add_library(spark_core STATIC
         src/alloc/allocation_thread_filter.cpp
         src/sampler/call_tree.cpp
         src/sampler/symbolicate.cpp
+        src/sampler/symbol_guess.cpp
         src/sampler/sampler.cpp
         src/sampler/profiler.cpp
         src/sampler/thread_selector.cpp

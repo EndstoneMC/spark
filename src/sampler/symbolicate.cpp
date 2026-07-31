@@ -3,6 +3,8 @@
 #include <cctype>
 #include <string_view>
 
+#include "sampler/symbol_guess.h"
+
 #if defined(_WIN32)
 // clang-format off
 #include <windows.h>
@@ -221,6 +223,10 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
     HANDLE process = GetCurrentProcess();
     SymSetOptions(SymGetOptions() | SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME | SYMOPT_LOAD_LINES);
     DbgHelpSession session(process);
+    char executable_path[MAX_PATH] = {};
+    const DWORD executable_length = GetModuleFileNameA(nullptr, executable_path, MAX_PATH);
+    const std::string executable_name =
+        executable_length != 0 ? basename(std::string(executable_path, executable_length)) : std::string();
     std::unordered_map<ModuleId, SYM_TYPE> module_symbol_types;
     module_symbol_types.reserve(modules.size());
 
@@ -262,6 +268,12 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
 
         if (rf.method_name.empty()) {
             rf.method_name = hex(key.rva);
+            if (!executable_name.empty() && equalsIgnoreCase(rf.class_name, executable_name)) {
+                const std::string guess = guessMainModuleSymbol(key.rva);
+                if (!guess.empty()) {
+                    rf.method_name += " (" + guess + ")";
+                }
+            }
         }
         out.emplace(key, std::move(rf));
     }
