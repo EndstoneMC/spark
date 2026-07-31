@@ -11,10 +11,12 @@
 #include <dbghelp.h>
 // clang-format on
 #else
+#include <climits>
 #include <cstdlib>
 
 #include <cxxabi.h>
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 
 namespace spark {
@@ -159,6 +161,12 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
     std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> out;
     out.reserve(keys.size());
 
+    char executable_path[PATH_MAX] = {};
+    const ssize_t executable_length = ::readlink("/proc/self/exe", executable_path, sizeof(executable_path) - 1);
+    const std::string executable_name =
+        executable_length > 0 ? basename(std::string(executable_path, static_cast<std::size_t>(executable_length)))
+                              : std::string();
+
     for (const FrameKey &key : keys) {
         ResolvedFrame rf;
         rf.class_name = basename(modules.path(key.module));
@@ -174,8 +182,15 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
                 rf.class_name = basename(info.dli_fname);
             }
         }
-        else {
+
+        if (rf.method_name.empty()) {
             rf.method_name = hex(key.rva);
+            if (!executable_name.empty() && rf.class_name == executable_name) {
+                const std::string guess = guessMainModuleSymbol(key.rva);
+                if (!guess.empty()) {
+                    rf.method_name += " (" + guess + ")";
+                }
+            }
         }
         out.emplace(key, std::move(rf));
     }
