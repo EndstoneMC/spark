@@ -16,13 +16,18 @@ find_package(Threads REQUIRED)
 
 include(FetchContent)
 
-# --- Windows hook backend ---
+# --- x86-64 instruction decoder and Windows hook backend ---
 # funchook 1.1.3 is not available from Conan Center. Fetch the same upstream
-# version used by Endstone and build only its static library. Its distorm
-# dependency is a git submodule, so recursive submodule checkout is required.
-if (WIN32)
+# version used by Endstone. Its small distorm dependency provides the strict
+# instruction-boundary decoder used by both native symbol guessers; Windows
+# additionally links funchook itself for allocation profiling.
+if (WIN32 OR (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64"))
     set(FUNCHOOK_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-    set(FUNCHOOK_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    if (WIN32)
+        set(FUNCHOOK_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    else ()
+        set(FUNCHOOK_BUILD_STATIC OFF CACHE BOOL "" FORCE)
+    endif ()
     set(FUNCHOOK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(FUNCHOOK_INSTALL OFF CACHE BOOL "" FORCE)
     set(FUNCHOOK_DISASM distorm CACHE STRING "" FORCE)
@@ -51,6 +56,7 @@ add_library(spark_core STATIC
         src/net/profile_file.cpp
         src/alloc/allocation_thread_filter.cpp
         src/sampler/call_tree.cpp
+        src/sampler/symbol_guess_evidence.cpp
         src/sampler/symbolicate.cpp
         src/sampler/symbol_guess.cpp
         src/sampler/sampler.cpp
@@ -89,6 +95,9 @@ endif ()
 if (WIN32)
     target_include_directories(spark_core PRIVATE "${funchook_SOURCE_DIR}/distorm/include")
     target_link_libraries(spark_core PUBLIC dbghelp psapi advapi32 funchook-static distorm)
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    target_include_directories(spark_core PRIVATE "${funchook_SOURCE_DIR}/distorm/include")
+    target_link_libraries(spark_core PUBLIC distorm)
 endif ()
 
 # --- the Endstone plugin (links only its own static core + Endstone headers) ---

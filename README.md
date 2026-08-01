@@ -18,16 +18,16 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 
 ## Commands
 
-| Command                           | Description                                             |
-| --------------------------------- | ------------------------------------------------------- |
-| `/spark profiler start [flags]` | Start profiling selected native threads (background).   |
-| `/spark profiler start --alloc` | Profile native allocation call stacks.                  |
-| `/spark profiler stop`          | Stop profiling and finalize the profile.                |
-| `/spark profiler info`          | Show status of the running profiler.                    |
-| `/spark profiler cancel`        | Stop profiling without generating a profile.            |
-| `/spark tps`                    | Show rolling TPS, MSPT distributions, and CPU usage.    |
+| Command                           | Description                                               |
+| --------------------------------- | --------------------------------------------------------- |
+| `/spark profiler start [flags]` | Start profiling selected native threads (background).     |
+| `/spark profiler start --alloc` | Profile native allocation call stacks.                    |
+| `/spark profiler stop`          | Stop profiling and finalize the profile.                  |
+| `/spark profiler info`          | Show status of the running profiler.                      |
+| `/spark profiler cancel`        | Stop profiling without generating a profile.              |
+| `/spark tps`                    | Show rolling TPS, MSPT distributions, and CPU usage.      |
 | `/spark health`                 | Add process and host resources to the performance report. |
-| `/spark tickmonitor`            | Report ticks that exceed a duration or baseline change. |
+| `/spark tickmonitor`            | Report ticks that exceed a duration or baseline change.   |
 
 By default, stopping a profiler uploads the generated profile to spark's bytebin
 and prints the viewer link. With `--save-to-file`, the profile is written locally
@@ -36,6 +36,38 @@ fails, Spark automatically preserves the compressed profile in the same director
 and reports the local path.
 
 Permission: `endstone.command.spark` (operators by default).
+
+### Viewing and reading a profile
+
+Open the URL printed when an uploaded profile finishes. For `--save-to-file`,
+open [spark.lucko.me](https://spark.lucko.me/) and drag the `.sparkprofile` file
+from `plugins/spark/profiles/` into the page. The viewer's call tree and flame
+graph show callers above callees. **Total** is the inclusive sampled time or
+bytes attributed to a node and all of its children; **Self** is work attributed
+to that frame itself. Percentages are shares of the selected thread/root, not a
+probability that a symbol name is correct.
+
+Native frames use the following forms:
+
+```text
+bedrock_server.Level::_subTick()                       resolved symbol
+bedrock_server.0x116d77e (str: Level - tick redstone)() strong runtime guess
+bedrock_server.0x123456 (vtable?: Level::<virtual>)()   tentative runtime guess
+bedrock_server.0x654321()                               unresolved RVA
+```
+
+A resolved PDB or dynamic symbol replaces the RVA completely. Runtime guesses
+retain the RVA and name their evidence source: `rtti` is a verified runtime type,
+`vtable` is a class and virtual-table slot, `str` is a referenced semantic string,
+and `thunk` is a verified jump wrapper. A `?` after the source, such as `str?:`
+or `vtable?:`, means the evidence is useful but cannot identify an exact member.
+Conflicting or unsafe evidence is omitted rather than displayed as tentative.
+
+Profiles may contain one root per selected native thread. Execution-profile
+weights are elapsed sampled microseconds; allocation-profile weights are sampled
+requested bytes. The metadata pages report the BDS hash and version, loaded
+plugins, configured interval and filters, TPS/MSPT/CPU windows, and any sampling,
+queue, unwind, or allocation-hook drops that make a profile incomplete.
 
 ### `/spark tps` and `/spark health`
 
@@ -99,13 +131,17 @@ final output.
 * **Linux:** a dedicated sampler thread signals one selected target (`SIGPROF`) per
   interval; the handler captures the stack async-signal-safely via
   [cpptrace](https://github.com/jeremy-rifkin/cpptrace)'s `safe_generate_raw_trace`.
-  Frames are resolved with `dladdr` (dynamic symbols) and fall back to
-  `module+0xRVA` for the stripped BDS internals — which you can symbolicate offline
-  against an IDA database or the Windows PDB.
+  Frames are resolved with `dladdr` (dynamic symbols). Unresolved frames in the
+  stripped BDS main executable retain `module+0xRVA` and may receive evidence-tagged
+  class/slot or string guesses recovered from ELF unwind metadata, Itanium RTTI,
+  vtables, and decoded instructions. Matching Linux debug data or an IDA database
+  can replace those RVAs offline; Windows PDB addresses are not interchangeable.
 * **Windows:** the sampler suspends one selected target per interval, retains its
   current instruction address, and walks callers with `StackWalk64`; frames resolve
-  against the shipped PDB (real names). A failed caller unwind therefore shortens
-  the sample instead of discarding it.
+  against the shipped PDB (real names). Without a PDB, unresolved main-executable
+  frames use evidence-tagged guesses recovered from PE exception data, MSVC RTTI,
+  vtables, thunks, and decoded string references. A failed caller unwind therefore
+  shortens the sample instead of discarding it.
 * Samples aggregate into per-thread call trees, serialize to spark's protobuf,
   gzip, and either upload to bytebin or write a local `.sparkprofile` file under
   `plugins/spark/profiles/`.
@@ -184,7 +220,10 @@ coverage.
 
 ## Building
 
-> Windows allocation profiler: CMake fetches and statically builds upstream funchook `v1.1.3`; it is not a Conan requirement. Linux uses atomic ELF import-slot redirection and does not link funchook.
+> CMake fetches upstream funchook `v1.1.3` because its bundled distorm decoder is
+> used by both x86-64 symbol guessers. The Windows allocation profiler also links
+> funchook itself; Linux allocation profiling still uses atomic ELF import-slot
+> redirection and does not link the funchook hook library.
 
 The platform requirements are:
 

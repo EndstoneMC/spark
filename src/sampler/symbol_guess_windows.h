@@ -12,46 +12,41 @@
 #include <unordered_map>
 #include <vector>
 
+#include "sampler/symbol_guess_evidence.h"
+
 namespace spark::symbol_guess::windows {
 
 struct FunctionRange {
-    std::uint32_t begin = 0;
-    std::uint32_t end = 0;
-    std::uint32_t root = 0;
+  std::uint32_t begin = 0;
+  std::uint32_t end = 0;
+  std::uint32_t root = 0;
 
-    bool operator==(const FunctionRange &) const = default;
+  bool operator==(const FunctionRange &) const = default;
 };
 
-struct VtableEvidence {
-    std::string class_name;
-    std::uint32_t slot = 0;
-    bool secondary = false;
-    bool via_thunk = false;
-
-    bool operator==(const VtableEvidence &) const = default;
-};
+using VtableEvidence = ::spark::symbol_guess::VtableEvidence;
 
 struct BuildStats {
-    bool initialized = false;
-    std::uint64_t build_microseconds = 0;
-    std::uint64_t batch_microseconds = 0;
-    std::size_t image_bytes = 0;
-    std::size_t function_ranges = 0;
-    std::size_t chained_ranges = 0;
-    std::size_t rejected_ranges = 0;
-    std::size_t overlap_ranges = 0;
-    std::size_t vtables = 0;
-    std::size_t vtable_candidates = 0;
-    std::size_t vtable_labels = 0;
-    std::size_t vtable_conflicts = 0;
-    std::size_t thunk_candidates = 0;
-    std::size_t thunk_resolved = 0;
-    std::size_t sampled_functions = 0;
-    std::size_t decoded_instructions = 0;
-    std::size_t string_candidates = 0;
-    std::size_t shared_strings = 0;
-    std::size_t string_labels = 0;
-    std::size_t approximate_bytes = 0;
+  bool initialized = false;
+  std::uint64_t build_microseconds = 0;
+  std::uint64_t batch_microseconds = 0;
+  std::size_t image_bytes = 0;
+  std::size_t function_ranges = 0;
+  std::size_t chained_ranges = 0;
+  std::size_t rejected_ranges = 0;
+  std::size_t overlap_ranges = 0;
+  std::size_t vtables = 0;
+  std::size_t vtable_candidates = 0;
+  std::size_t vtable_labels = 0;
+  std::size_t vtable_conflicts = 0;
+  std::size_t thunk_candidates = 0;
+  std::size_t thunk_resolved = 0;
+  std::size_t sampled_functions = 0;
+  std::size_t decoded_instructions = 0;
+  std::size_t string_candidates = 0;
+  std::size_t shared_strings = 0;
+  std::size_t string_labels = 0;
+  std::size_t approximate_bytes = 0;
 };
 
 // Analyzer for one already-mapped PE64 image. The byte span is bounded and all
@@ -59,22 +54,24 @@ struct BuildStats {
 // synthetic images can exercise the production parser without touching the
 // current process module.
 class Engine {
-  public:
-    Engine(const std::uint8_t *image, std::size_t mapped_size, std::uint64_t load_address);
-    ~Engine();
-    Engine(Engine &&) noexcept;
-    Engine &operator=(Engine &&) noexcept;
-    Engine(const Engine &) = delete;
-    Engine &operator=(const Engine &) = delete;
+public:
+  Engine(const std::uint8_t *image, std::size_t mapped_size,
+         std::uint64_t load_address);
+  ~Engine();
+  Engine(Engine &&) noexcept;
+  Engine &operator=(Engine &&) noexcept;
+  Engine(const Engine &) = delete;
+  Engine &operator=(const Engine &) = delete;
 
-    bool valid() const;
-    const FunctionRange *functionContaining(std::uint64_t rva) const;
-    std::unordered_map<std::uint64_t, std::string> guess(std::span<const std::uint64_t> rvas);
-    BuildStats stats() const;
+  bool valid() const;
+  const FunctionRange *functionContaining(std::uint64_t rva) const;
+  std::unordered_map<std::uint64_t, std::string>
+  guess(std::span<const std::uint64_t> rvas);
+  BuildStats stats() const;
 
-  private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 // Pure ranking helpers kept in the internal Windows component so formal tests
@@ -83,7 +80,8 @@ std::string chooseVtableLabel(std::vector<VtableEvidence> evidence);
 int scoreStringHint(std::string_view value);
 std::string formatStringHint(std::string_view value);
 
-std::unordered_map<std::uint64_t, std::string> guessCurrentModuleSymbols(std::span<const std::uint64_t> rvas);
+std::unordered_map<std::uint64_t, std::string>
+guessCurrentModuleSymbols(std::span<const std::uint64_t> rvas);
 BuildStats currentModuleStats();
 
 } // namespace spark::symbol_guess::windows

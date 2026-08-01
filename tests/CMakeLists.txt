@@ -13,6 +13,12 @@ target_link_libraries(spark_allocation_benchmark PRIVATE spark_core)
 set_target_properties(spark_allocation_benchmark PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
+add_executable(spark_symbol_guess_evidence_test symbol_guess_evidence_test.cpp)
+target_link_libraries(spark_symbol_guess_evidence_test PRIVATE spark_core)
+set_target_properties(spark_symbol_guess_evidence_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_symbol_guess_evidence_test COMMAND spark_symbol_guess_evidence_test)
+
 if (WIN32)
     add_executable(spark_symbol_guess_windows_test symbol_guess_windows_test.cpp)
     target_link_libraries(spark_symbol_guess_windows_test PRIVATE spark_core)
@@ -30,6 +36,12 @@ if (WIN32)
             spark_selftest PRIVATE
             SPARK_WINDOWS_ALLOCATION_FIXTURE_PATH="$<TARGET_FILE:spark_windows_allocation_fixture>")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    add_executable(spark_symbol_guess_linux_test symbol_guess_linux_test.cpp)
+    target_link_libraries(spark_symbol_guess_linux_test PRIVATE spark_core)
+    set_target_properties(spark_symbol_guess_linux_test PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_test(NAME spark_symbol_guess_linux_test COMMAND spark_symbol_guess_linux_test)
+
     add_library(spark_elf_hook_fixture MODULE elf_hook_fixture.cpp)
     set_target_properties(spark_elf_hook_fixture PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

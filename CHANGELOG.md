@@ -5,22 +5,25 @@ All notable changes to endstone-spark are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased][Unreleased]
 
 ### Added
 
-- Append best-effort native name guesses to unresolved main-executable frames on
-  Windows, shown as `0x<rva> (Guess)` in the viewer. Guesses are recovered at
-  runtime with no symbol file: function extents from the x64 exception directory,
-  class-level names from RTTI vtables (`ServerLevel::vfn[3]`), and otherwise a
-  string literal referenced only by that function.
+- Append evidence-tagged native name guesses to unresolved main-executable frames
+  on Windows and Linux while preserving the RVA. Function
+  extents come from PE exception data or ELF unwind metadata, with class/slot and
+  semantic hints recovered from validated RTTI, vtables, thunks, and decoded
+  string references.
 
 ### Changed
 
 - Store profiles created by `--save-to-file` or upload-failure recovery under
   `plugins/spark/profiles/` instead of the plugin data root.
+- Make Linux vtable guesses deterministic and reject conflicting class owners;
+  decode string references only at real x86-64 instruction boundaries and only
+  for functions present in the exported profile.
 
-## [0.4.0] - 2026-07-31
+## [0.4.0][0.4.0] - 2026-07-31
 
 ### Added
 
@@ -56,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retry Windows hook removal within the existing bounded shutdown interval when
   a concurrently starting or exiting thread temporarily rejects context capture.
 
-## [0.3.2] - 2026-07-30
+## [0.3.2][0.3.2] - 2026-07-30
 
 ### Added
 
@@ -74,7 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Label profile-selected allocation totals separately from process-wide hook,
   observed-byte, drop, and live/freed lifecycle diagnostics.
 
-## [0.3.1] - 2026-07-30
+## [0.3.1][0.3.1] - 2026-07-30
 
 ### Added
 
@@ -108,7 +111,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VirtualAlloc`/`VirtualFree`, `mmap`/`munmap`, or module lifetimes that begin and
   end entirely between Linux rescans.
 
-## [0.3.0] - 2026-07-19
+## [0.3.0][0.3.0] - 2026-07-19
 
 ### Added
 
@@ -131,7 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Schedule matching execution threads round-robin with at most one stack-walk attempt
   per interval, bounding profiler overhead as the process thread count grows.
 
-## [0.2.0] - 2026-07-18
+## [0.2.0][0.2.0] - 2026-07-18
 
 ### Added
 
@@ -194,7 +197,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Direct virtual-memory calls and custom allocator activity below its backing
   Windows heap allocation are not supported.
 
-## [0.1.1] - 2026-07-16
+## [0.1.1][0.1.1] - 2026-07-16
 
 ### Fixed
 
@@ -207,7 +210,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support manually building a selected Git ref for release testing.
 - Generate release notes and changelog entries from one normalized release section.
 
-## [0.1.0] - 2026-07-16
+## [0.1.0][0.1.0] - 2026-07-16
 
 ### Fixed
 
