@@ -105,26 +105,6 @@ endif ()
 
 # --- offline self-test (no BDS needed) ---
 if (ENDSTONE_SPARK_BUILD_SELFTEST)
-    add_executable(spark_selftest tools/selftest.cpp src/command/arguments.cpp)
-    target_link_libraries(spark_selftest PRIVATE spark_core)
-    add_executable(spark_allocation_benchmark tools/allocation_benchmark.cpp)
-    target_compile_definitions(
-            spark_allocation_benchmark PRIVATE
-            SPARK_ALLOCATION_BENCHMARK_CURRENT)
-    target_link_libraries(spark_allocation_benchmark PRIVATE spark_core)
-    if (WIN32)
-        add_library(spark_windows_allocation_fixture MODULE
-                tools/windows_allocation_fixture.cpp)
-        add_dependencies(spark_selftest spark_windows_allocation_fixture)
-        target_compile_definitions(
-                spark_selftest PRIVATE
-                SPARK_WINDOWS_ALLOCATION_FIXTURE_PATH="$<TARGET_FILE:spark_windows_allocation_fixture>")
-    elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        add_library(spark_elf_hook_fixture MODULE tools/elf_hook_fixture.cpp)
-        add_dependencies(spark_selftest spark_elf_hook_fixture)
-        target_compile_definitions(
-                spark_selftest PRIVATE
-                _GNU_SOURCE
-                SPARK_ELF_HOOK_FIXTURE_PATH="$<TARGET_FILE:spark_elf_hook_fixture>")
-    endif ()
+    enable_testing()
+    add_subdirectory(tests)
 endif ()
