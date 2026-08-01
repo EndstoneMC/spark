@@ -7,6 +7,9 @@
 
 #include "proto/sampler_data.h"
 #include "spark_constants.h"
+#if defined(_WIN32)
+#include "sampler/symbol_guess_windows.h"
+#endif
 
 namespace spark {
 namespace {
@@ -66,8 +69,7 @@ std::string jsonString(std::string_view value)
     return out;
 }
 
-std::string allocationHookSummary(
-    const std::vector<AllocationHookCapability> &capabilities)
+std::string allocationHookSummary(const std::vector<AllocationHookCapability> &capabilities)
 {
     std::string summary;
     for (const AllocationHookCapability &capability : capabilities) {
@@ -86,7 +88,35 @@ std::string allocationHookSummary(
     return summary;
 }
 
-}  // namespace
+void addSymbolGuessMetadata(ProfileMetadata &meta)
+{
+#if defined(_WIN32)
+    const symbol_guess::windows::BuildStats stats = symbol_guess::windows::currentModuleStats();
+    if (!stats.initialized) {
+        return;
+    }
+    meta.extra_platform_metadata["Symbol guess function ranges"] = std::to_string(stats.function_ranges);
+    meta.extra_platform_metadata["Symbol guess chained ranges"] = std::to_string(stats.chained_ranges);
+    meta.extra_platform_metadata["Symbol guess rejected ranges"] = std::to_string(stats.rejected_ranges);
+    meta.extra_platform_metadata["Symbol guess vtables"] = std::to_string(stats.vtables);
+    meta.extra_platform_metadata["Symbol guess vtable candidates"] = std::to_string(stats.vtable_candidates);
+    meta.extra_platform_metadata["Symbol guess vtable labels"] = std::to_string(stats.vtable_labels);
+    meta.extra_platform_metadata["Symbol guess vtable conflicts"] = std::to_string(stats.vtable_conflicts);
+    meta.extra_platform_metadata["Symbol guess resolved thunks"] = std::to_string(stats.thunk_resolved);
+    meta.extra_platform_metadata["Symbol guess sampled functions"] = std::to_string(stats.sampled_functions);
+    meta.extra_platform_metadata["Symbol guess decoded instructions"] = std::to_string(stats.decoded_instructions);
+    meta.extra_platform_metadata["Symbol guess string candidates"] = std::to_string(stats.string_candidates);
+    meta.extra_platform_metadata["Symbol guess string labels"] = std::to_string(stats.string_labels);
+    meta.extra_platform_metadata["Symbol guess shared strings"] = std::to_string(stats.shared_strings);
+    meta.extra_platform_metadata["Symbol guess index build microseconds"] = std::to_string(stats.build_microseconds);
+    meta.extra_platform_metadata["Symbol guess batch microseconds"] = std::to_string(stats.batch_microseconds);
+    meta.extra_platform_metadata["Symbol guess approximate bytes"] = std::to_string(stats.approximate_bytes);
+#else
+    (void)meta;
+#endif
+}
+
+} // namespace
 
 std::uint64_t Profiler::sampleCount() const
 {
@@ -110,16 +140,12 @@ std::uint64_t Profiler::droppedSamples() const
 
 std::uint64_t Profiler::filteredAllocationSamples() const
 {
-    return mode_ == ProfileMode::Allocation
-               ? allocation_sampler_.filteredSamples()
-               : 0;
+    return mode_ == ProfileMode::Allocation ? allocation_sampler_.filteredSamples() : 0;
 }
 
 std::uint64_t Profiler::allocationThreadNameFailures() const
 {
-    return mode_ == ProfileMode::Allocation
-               ? allocation_sampler_.threadNameFailures()
-               : 0;
+    return mode_ == ProfileMode::Allocation ? allocation_sampler_.threadNameFailures() : 0;
 }
 
 std::uint64_t Profiler::freedAllocationSamples() const
@@ -151,10 +177,7 @@ const std::vector<AllocationHookCapability> &Profiler::allocationHookCapabilitie
     return allocation_sampler_.hookCapabilities();
 }
 
-std::size_t Profiler::allocationHookTargetCount() const
-{
-    return allocation_sampler_.hookTargetCount();
-}
+std::size_t Profiler::allocationHookTargetCount() const { return allocation_sampler_.hookTargetCount(); }
 
 bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std::string &error)
 {
@@ -167,8 +190,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         error = "--regex requires at least one --thread pattern";
         return false;
     }
-    if (std::find(options.threads.begin(), options.threads.end(), "*") !=
-            options.threads.end() &&
+    if (std::find(options.threads.begin(), options.threads.end(), "*") != options.threads.end() &&
         (options.regex || options.threads.size() != 1)) {
         error = "--thread * cannot be combined with other thread selectors or --regex";
         return false;
@@ -195,9 +217,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         config.interval_bytes = options.allocation_interval_bytes;
         config.session_seed = main_tid;
         config.only_ticks_over_ms = options.only_ticks_over_ms > 0 ? options.only_ticks_over_ms : 0;
-        config.all_threads =
-            options.threads.empty() ||
-            (options.threads.size() == 1 && options.threads.front() == "*");
+        config.all_threads = options.threads.empty() || (options.threads.size() == 1 && options.threads.front() == "*");
         config.regex_threads = options.regex;
         if (!config.all_threads) {
             config.thread_patterns = options.threads;
@@ -226,9 +246,8 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         sampler_.setTarget(main_tid);
         started = sampler_.start(config);
         if (!started) {
-            error = sampler_.lastError().empty()
-                        ? "the platform stack-capture backend could not be initialized"
-                        : sampler_.lastError();
+            error = sampler_.lastError().empty() ? "the platform stack-capture backend could not be initialized"
+                                                 : sampler_.lastError();
         }
     }
 
@@ -239,9 +258,8 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
     running_.store(true);
     start_time_ms_ = session_start_ms;
     end_time_ms_ = 0;
-    auto_end_time_ms_ = options.timeout_seconds > 0
-                            ? start_time_ms_ + static_cast<std::int64_t>(options.timeout_seconds) * 1000
-                            : -1;
+    auto_end_time_ms_ =
+        options.timeout_seconds > 0 ? start_time_ms_ + static_cast<std::int64_t>(options.timeout_seconds) * 1000 : -1;
     return true;
 }
 
@@ -327,9 +345,8 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.comment = !ctx.comment.empty() ? ctx.comment : options_.comment;
     meta.creator_name = options_.creator_name;
     meta.creator_is_player = options_.creator_is_player;
-    meta.all_threads =
-        (mode_ == ProfileMode::Allocation && options_.threads.empty()) ||
-        (options_.threads.size() == 1 && options_.threads.front() == "*");
+    meta.all_threads = (mode_ == ProfileMode::Allocation && options_.threads.empty()) ||
+                       (options_.threads.size() == 1 && options_.threads.front() == "*");
     meta.regex_threads = options_.regex;
     if (meta.regex_threads) {
         meta.thread_patterns = options_.threads;
@@ -338,8 +355,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.tick_threshold_ms = options_.only_ticks_over_ms > 0 ? options_.only_ticks_over_ms : 0;
 
     if (!ctx.bds_executable_sha256.empty()) {
-        meta.extra_platform_metadata["BDS executable SHA-256"] =
-            jsonString(ctx.bds_executable_sha256);
+        meta.extra_platform_metadata["BDS executable SHA-256"] = jsonString(ctx.bds_executable_sha256);
     }
 
     if (mode_ == ProfileMode::Allocation) {
@@ -348,14 +364,16 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         // as JSON string literals; numbers and booleans are already valid JSON.
 #if defined(_WIN32)
         meta.extra_platform_metadata["Allocation backend"] = jsonString("Windows UCRT/funchook");
-        meta.extra_platform_metadata["Allocation coverage"] = jsonString(
-            "process threads reaching hooked UCRT allocation entry points plus aligned/base "
-            "and direct process HeapAlloc/HeapReAlloc entry points when available");
+        meta.extra_platform_metadata["Allocation coverage"] =
+            jsonString("process threads reaching hooked UCRT allocation entry points plus "
+                       "aligned/base "
+                       "and direct process HeapAlloc/HeapReAlloc entry points when available");
 #elif defined(__linux__)
         meta.extra_platform_metadata["Allocation backend"] = jsonString("Linux glibc/ELF import slots");
-        meta.extra_platform_metadata["Allocation coverage"] = jsonString(
-            "process threads reaching patched malloc/calloc/realloc/reallocarray/aligned_alloc/"
-            "posix_memalign imports in supported loaded ELF modules");
+        meta.extra_platform_metadata["Allocation coverage"] =
+            jsonString("process threads reaching patched "
+                       "malloc/calloc/realloc/reallocarray/aligned_alloc/"
+                       "posix_memalign imports in supported loaded ELF modules");
 #endif
         meta.extra_platform_metadata["Allocation hook calls (process-wide)"] =
             std::to_string(allocation_sampler_.hookCalls());
@@ -432,17 +450,14 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         meta.extra_platform_metadata["Allocation observed request bytes (process-wide)"] =
             std::to_string(allocation_sampler_.observedBytes());
         meta.extra_platform_metadata["Allocation interval bytes"] = std::to_string(interval_);
-        meta.extra_platform_metadata["Allocation live-only"] =
-            options_.alloc_live_only ? "true" : "false";
-        meta.extra_platform_metadata["Allocation thread filter stage"] =
-            jsonString("aggregation");
+        meta.extra_platform_metadata["Allocation live-only"] = options_.alloc_live_only ? "true" : "false";
+        meta.extra_platform_metadata["Allocation thread filter stage"] = jsonString("aggregation");
         meta.extra_platform_metadata["Allocation thread selection"] =
-            jsonString(meta.all_threads ? "all"
-                                       : (meta.regex_threads ? "regex"
-                                                             : "exact-name"));
+            jsonString(meta.all_threads ? "all" : (meta.regex_threads ? "regex" : "exact-name"));
         if (options_.alloc_live_only) {
-            meta.extra_platform_metadata["Allocation analysis"] = jsonString(
-                "retained sampled allocations at profile stop; candidates require repeated growth verification");
+            meta.extra_platform_metadata["Allocation analysis"] =
+                jsonString("retained sampled allocations at profile stop; candidates "
+                           "require repeated growth verification");
             meta.extra_platform_metadata["Allocation retained average age ms"] =
                 std::to_string(allocation_sampler_.retainedAverageAgeMs());
             meta.extra_platform_metadata["Allocation retained maximum age ms"] =
@@ -456,16 +471,12 @@ std::string Profiler::exportData(const ExportContext &ctx) const
             active += capability.status == AllocationHookStatus::Active ? 1 : 0;
             aliases += capability.status == AllocationHookStatus::Alias ? 1 : 0;
         }
-        meta.extra_platform_metadata["Allocation hook entry points total"] =
-            std::to_string(capabilities.size());
-        meta.extra_platform_metadata["Allocation hook entry points covered"] =
-            std::to_string(active + aliases);
+        meta.extra_platform_metadata["Allocation hook entry points total"] = std::to_string(capabilities.size());
+        meta.extra_platform_metadata["Allocation hook entry points covered"] = std::to_string(active + aliases);
         meta.extra_platform_metadata["Allocation hook targets installed"] =
             std::to_string(allocation_sampler_.hookTargetCount());
-        meta.extra_platform_metadata["Allocation hook aliases"] =
-            std::to_string(aliases);
-        meta.extra_platform_metadata["Allocation hook capabilities"] =
-            jsonString(allocationHookSummary(capabilities));
+        meta.extra_platform_metadata["Allocation hook aliases"] = std::to_string(aliases);
+        meta.extra_platform_metadata["Allocation hook capabilities"] = jsonString(allocationHookSummary(capabilities));
     }
 
     meta.platform_stats.present = true;
@@ -486,8 +497,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.plugins = ctx.plugins;
     meta.world = ctx.world;
     meta.window_stats = ctx.window_stats;
-    meta.extra_platform_metadata["Statistics history available ms"] =
-        std::to_string(ctx.statistics.history_span_ms);
+    meta.extra_platform_metadata["Statistics history available ms"] = std::to_string(ctx.statistics.history_span_ms);
 
     if (mode_ == ProfileMode::Allocation) {
         std::vector<ThreadTreeView> threads;
@@ -502,6 +512,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         }
         std::vector<FrameKey> keys = collectFrameKeys(threads);
         auto resolved = resolveFrames(allocation_sampler_.modules(), keys);
+        addSymbolGuessMetadata(meta);
         return buildSamplerData(meta, threads, resolved);
     }
 
@@ -517,6 +528,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     }
     std::vector<FrameKey> keys = collectFrameKeys(threads);
     auto resolved = resolveFrames(sampler_.modules(), keys);
+    addSymbolGuessMetadata(meta);
     return buildSamplerData(meta, threads, resolved);
 }
 
@@ -578,4 +590,4 @@ bool Profiler::shutdown(std::string &error)
     return allocation_sampler_.shutdown(error);
 }
 
-}  // namespace spark
+} // namespace spark

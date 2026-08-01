@@ -1,6 +1,7 @@
 #include "sampler/symbolicate.h"
 
 #include <cctype>
+#include <limits>
 #include <string_view>
 
 #include "sampler/symbol_guess.h"
@@ -9,6 +10,7 @@
 // clang-format off
 #include <windows.h>
 #include <dbghelp.h>
+#include <psapi.h>
 // clang-format on
 #else
 #include <climits>
@@ -51,10 +53,8 @@ bool startsWithIgnoreCase(std::string_view value, std::string_view prefix)
 
 bool isAmbiguousCrtModule(std::string_view module)
 {
-    return equalsIgnoreCase(module, "ucrtbase.dll") ||
-           equalsIgnoreCase(module, "vcruntime140.dll") ||
-           equalsIgnoreCase(module, "vcruntime140_1.dll") ||
-           equalsIgnoreCase(module, "msvcp140.dll") ||
+    return equalsIgnoreCase(module, "ucrtbase.dll") || equalsIgnoreCase(module, "vcruntime140.dll") ||
+           equalsIgnoreCase(module, "vcruntime140_1.dll") || equalsIgnoreCase(module, "msvcp140.dll") ||
            startsWithIgnoreCase(module, "api-ms-win-crt-");
 }
 
@@ -67,9 +67,9 @@ bool isWindowsSystemModule(std::string_view module)
 // SymFromAddr returns the nearest symbol at or below an address. When only a
 // DLL export table is available (common for ucrtbase.dll), an unrelated export
 // can therefore be reported for a private routine many bytes later. Accept CRT
-// names only when DbgHelp knows the symbol extent, or when the address is exactly
-// at the exported entry point. Otherwise module+RVA is more honest than a false
-// function name such as ucrtbase.dll!wcsrchr.
+// names only when DbgHelp knows the symbol extent, or when the address is
+// exactly at the exported entry point. Otherwise module+RVA is more honest than
+// a false function name such as ucrtbase.dll!wcsrchr.
 bool trustworthyWindowsSymbol(std::string_view module, const SYMBOL_INFO &symbol, DWORD64 displacement,
                               SYM_TYPE module_symbol_type)
 {
@@ -101,10 +101,8 @@ bool trustworthyWindowsSymbol(std::string_view module, const SYMBOL_INFO &symbol
 }
 
 class DbgHelpSession {
-public:
-    explicit DbgHelpSession(HANDLE process) : process_(process), initialized_(SymInitialize(process, nullptr, TRUE))
-    {
-    }
+  public:
+    explicit DbgHelpSession(HANDLE process) : process_(process), initialized_(SymInitialize(process, nullptr, TRUE)) {}
 
     ~DbgHelpSession()
     {
@@ -113,12 +111,9 @@ public:
         }
     }
 
-    bool initialized() const
-    {
-        return initialized_ != FALSE;
-    }
+    bool initialized() const { return initialized_ != FALSE; }
 
-private:
+  private:
     HANDLE process_;
     BOOL initialized_;
 };
@@ -147,14 +142,37 @@ std::string hex(std::uint64_t value)
     return std::string(buf + i, 18 - i + 1);
 }
 
-}  // namespace
+} // namespace
+
+bool frameMatchesMainModule(std::uint64_t raw_address, std::uint64_t rva, std::uint64_t module_base,
+                            std::uint64_t module_size)
+{
+    if (raw_address < module_base || module_size == 0 || rva >= module_size ||
+        module_size > (std::numeric_limits<std::uint64_t>::max)() - module_base) {
+        return false;
+    }
+    return raw_address < module_base + module_size && raw_address - module_base == rva;
+}
+
+void applySymbolGuessFallback(ResolvedFrame &frame, std::uint64_t rva, bool main_module, std::string_view guess)
+{
+    const std::string address = hex(rva);
+    if (frame.method_name.empty()) {
+        frame.method_name = address;
+    }
+    if (main_module && !guess.empty() && frame.method_name == address) {
+        frame.method_name += " (";
+        frame.method_name += guess;
+        frame.method_name += ')';
+    }
+}
 
 #if !defined(_WIN32)
 
-// Linux: resolve against the live process with dladdr. This reads only the dynamic
-// symbol table (never DWARF), so it is safe on a huge stripped binary like BDS where
-// cpptrace's libdwarf backend can fault, and it degrades gracefully to module+RVA for
-// unknown addresses.
+// Linux: resolve against the live process with dladdr. This reads only the
+// dynamic symbol table (never DWARF), so it is safe on a huge stripped binary
+// like BDS where cpptrace's libdwarf backend can fault, and it degrades
+// gracefully to module+RVA for unknown addresses.
 std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const ModuleTable &modules,
                                                                         const std::vector<FrameKey> &keys)
 {
@@ -207,16 +225,16 @@ bool isSleepFrame(std::uint64_t raw_address)
         return false;
     }
     std::string_view name = info.dli_sname;
-    for (std::string_view sub : {std::string_view("nanosleep"), std::string_view("futex"),
-                                 std::string_view("epoll_wait"), std::string_view("epoll_pwait"),
-                                 std::string_view("cond_wait"), std::string_view("cond_timedwait")}) {
+    for (std::string_view sub :
+         {std::string_view("nanosleep"), std::string_view("futex"), std::string_view("epoll_wait"),
+          std::string_view("epoll_pwait"), std::string_view("cond_wait"), std::string_view("cond_timedwait")}) {
         if (name.find(sub) != std::string_view::npos) {
             return true;
         }
     }
-    for (std::string_view exact : {std::string_view("poll"), std::string_view("ppoll"),
-                                   std::string_view("select"), std::string_view("pselect"),
-                                   std::string_view("sched_yield"), std::string_view("usleep")}) {
+    for (std::string_view exact :
+         {std::string_view("poll"), std::string_view("ppoll"), std::string_view("select"), std::string_view("pselect"),
+          std::string_view("sched_yield"), std::string_view("usleep")}) {
         if (name == exact) {
             return true;
         }
@@ -226,9 +244,9 @@ bool isSleepFrame(std::uint64_t raw_address)
 
 #else
 
-// Windows: resolve directly through DbgHelp. Sampling has already stopped and the
-// capture session has been cleaned up, so use a short-lived symbol session for the
-// export batch.
+// Windows: resolve directly through DbgHelp. Sampling has already stopped and
+// the capture session has been cleaned up, so use a short-lived symbol session
+// for the export batch.
 std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const ModuleTable &modules,
                                                                         const std::vector<FrameKey> &keys)
 {
@@ -238,12 +256,17 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
     HANDLE process = GetCurrentProcess();
     SymSetOptions(SymGetOptions() | SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME | SYMOPT_LOAD_LINES);
     DbgHelpSession session(process);
-    char executable_path[MAX_PATH] = {};
-    const DWORD executable_length = GetModuleFileNameA(nullptr, executable_path, MAX_PATH);
-    const std::string executable_name =
-        executable_length != 0 ? basename(std::string(executable_path, executable_length)) : std::string();
+    HMODULE executable_module = GetModuleHandleW(nullptr);
+    MODULEINFO executable_info{};
+    const bool have_executable_range =
+        executable_module != nullptr &&
+        GetModuleInformation(process, executable_module, &executable_info, sizeof(executable_info)) != FALSE;
+    const std::uint64_t executable_base =
+        have_executable_range ? reinterpret_cast<std::uint64_t>(executable_info.lpBaseOfDll) : 0;
     std::unordered_map<ModuleId, SYM_TYPE> module_symbol_types;
     module_symbol_types.reserve(modules.size());
+    std::vector<std::uint64_t> unresolved_main_rvas;
+    unresolved_main_rvas.reserve(keys.size());
 
     for (const FrameKey &key : keys) {
         ResolvedFrame rf;
@@ -282,15 +305,27 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
         }
 
         if (rf.method_name.empty()) {
-            rf.method_name = hex(key.rva);
-            if (!executable_name.empty() && equalsIgnoreCase(rf.class_name, executable_name)) {
-                const std::string guess = guessMainModuleSymbol(key.rva);
-                if (!guess.empty()) {
-                    rf.method_name += " (" + guess + ")";
-                }
+            const bool main_module =
+                have_executable_range &&
+                frameMatchesMainModule(key.raw_address, key.rva, executable_base, executable_info.SizeOfImage);
+            applySymbolGuessFallback(rf, key.rva, main_module, {});
+            if (main_module) {
+                unresolved_main_rvas.push_back(key.rva);
             }
         }
         out.emplace(key, std::move(rf));
+    }
+
+    const auto guesses = guessMainModuleSymbols(unresolved_main_rvas);
+    for (const FrameKey &key : keys) {
+        const auto guess = guesses.find(key.rva);
+        if (guess == guesses.end()) {
+            continue;
+        }
+        auto frame = out.find(key);
+        if (frame != out.end()) {
+            applySymbolGuessFallback(frame->second, key.rva, true, guess->second);
+        }
     }
     return out;
 }
@@ -318,14 +353,11 @@ bool isSleepFrame(std::uint64_t raw_address)
     }
 
     std::string_view name(symbol.info.Name, symbol.info.NameLen);
-    for (std::string_view wait : {std::string_view("Sleep"), std::string_view("SleepEx"),
-                                  std::string_view("WaitForSingleObject"),
-                                  std::string_view("WaitForSingleObjectEx"),
-                                  std::string_view("NtWaitForSingleObject"),
-                                  std::string_view("ZwWaitForSingleObject"),
-                                  std::string_view("NtDelayExecution"),
-                                  std::string_view("ZwDelayExecution"),
-                                  std::string_view("RtlDelayExecution")}) {
+    for (std::string_view wait :
+         {std::string_view("Sleep"), std::string_view("SleepEx"), std::string_view("WaitForSingleObject"),
+          std::string_view("WaitForSingleObjectEx"), std::string_view("NtWaitForSingleObject"),
+          std::string_view("ZwWaitForSingleObject"), std::string_view("NtDelayExecution"),
+          std::string_view("ZwDelayExecution"), std::string_view("RtlDelayExecution")}) {
         if (name == wait) {
             return true;
         }
@@ -335,4 +367,4 @@ bool isSleepFrame(std::uint64_t raw_address)
 
 #endif
 
-}  // namespace spark
+} // namespace spark

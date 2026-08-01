@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -12,24 +13,32 @@ namespace spark {
 
 // A frame after symbol resolution, in spark's className/methodName terms.
 struct ResolvedFrame {
-    std::string class_name;   // module basename, e.g. "bedrock_server"
-    std::string method_name;  // demangled symbol, or "0x<rva>" when stripped
-    std::string method_desc;  // optional descriptor (unused for now)
-    std::int32_t line = -1;   // source line if DWARF is present, else -1
+    std::string class_name;  // module basename, e.g. "bedrock_server"
+    std::string method_name; // demangled symbol, or "0x<rva>" when stripped
+    std::string method_desc; // optional descriptor (unused for now)
+    std::int32_t line = -1;  // source line if DWARF is present, else -1
 };
 
-// Resolve a batch of unique frame keys via the platform symbol backend. Frames whose
-// symbol cannot be recovered fall back to "0x<rva>" — expected for stripped binaries
-// and offline-symbolicatable later against IDA/PDB. On Windows, unresolved frames in
-// the main executable additionally carry a parenthesized runtime guess (RTTI vtable
-// class or unique string literal) when one is available.
+// Small deterministic policy surface used by the platform backends and formal
+// tests. A guess is appended only when the frame is proven to belong to the
+// executable and no normal symbol backend supplied a method name.
+bool frameMatchesMainModule(std::uint64_t raw_address, std::uint64_t rva, std::uint64_t module_base,
+                            std::uint64_t module_size);
+void applySymbolGuessFallback(ResolvedFrame &frame, std::uint64_t rva, bool main_module, std::string_view guess);
+
+// Resolve a batch of unique frame keys via the platform symbol backend. Frames
+// whose symbol cannot be recovered fall back to "0x<rva>" — expected for
+// stripped binaries and offline-symbolicatable later against IDA/PDB. On
+// Windows, unresolved frames in the main executable additionally carry a
+// parenthesized runtime guess (RTTI vtable class or unique string literal) when
+// one is available.
 std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const ModuleTable &modules,
                                                                         const std::vector<FrameKey> &keys);
 
-// True if the given runtime address resolves to a sleep/wait function (nanosleep,
-// futex, poll, …). Used to drop idle execution samples.
+// True if the given runtime address resolves to a sleep/wait function
+// (nanosleep, futex, poll, …). Used to drop idle execution samples.
 bool isSleepFrame(std::uint64_t raw_address);
 
-}  // namespace spark
+} // namespace spark
 
-#endif  // ENDSTONE_SPARK_SYMBOLICATE_H
+#endif // ENDSTONE_SPARK_SYMBOLICATE_H

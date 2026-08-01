@@ -63,6 +63,7 @@ add_library(spark_core STATIC
         src/stats/system_stats.cpp)
 if (WIN32)
     target_sources(spark_core PRIVATE
+            src/sampler/symbol_guess_windows.cpp
             src/sampler/capture_windows.cpp
             src/alloc/allocation_sampler_windows.cpp)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
@@ -86,7 +87,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Cl
     target_compile_options(spark_core PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
 endif ()
 if (WIN32)
-    target_link_libraries(spark_core PUBLIC dbghelp psapi advapi32 funchook-static)
+    target_include_directories(spark_core PRIVATE "${funchook_SOURCE_DIR}/distorm/include")
+    target_link_libraries(spark_core PUBLIC dbghelp psapi advapi32 funchook-static distorm)
 endif ()
 
 # --- the Endstone plugin (links only its own static core + Endstone headers) ---
