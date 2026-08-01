@@ -14,6 +14,12 @@ set_target_properties(spark_allocation_benchmark PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 if (WIN32)
+    add_executable(spark_symbol_guess_windows_test symbol_guess_windows_test.cpp)
+    target_link_libraries(spark_symbol_guess_windows_test PRIVATE spark_core)
+    set_target_properties(spark_symbol_guess_windows_test PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_test(NAME spark_symbol_guess_windows_test COMMAND spark_symbol_guess_windows_test)
+
     add_library(spark_windows_allocation_fixture MODULE
             windows_allocation_fixture.cpp)
     set_target_properties(spark_windows_allocation_fixture PROPERTIES
