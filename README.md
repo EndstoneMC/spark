@@ -31,8 +31,9 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 
 By default, stopping a profiler uploads the generated profile to spark's bytebin
 and prints the viewer link. With `--save-to-file`, the profile is written locally
-as a `.sparkprofile` file instead. If an upload fails, Spark automatically
-preserves the compressed profile in its data folder and reports the local path.
+under `plugins/spark/profiles/` as a `.sparkprofile` file instead. If an upload
+fails, Spark automatically preserves the compressed profile in the same directory
+and reports the local path.
 
 Permission: `endstone.command.spark` (operators by default).
 
@@ -69,8 +70,9 @@ Run the command again to disable the monitor.
 * `--only-ticks-over <ms>` — retain samples only from ticks longer than the given
   positive whole number of milliseconds.
 * `--comment <text>` — attach a note to the profile; quote text containing spaces.
-* `--save-to-file` — write a `.sparkprofile` file instead of uploading it (open the
-  file by dragging it into the spark viewer).
+* `--save-to-file` — write a `.sparkprofile` file under
+  `plugins/spark/profiles/` instead of uploading it (open the file by dragging it
+  into the spark viewer).
 * `--thread <name>` — select a thread by case-insensitive exact name; repeat the
   flag to select multiple threads and quote names containing spaces. This works for
   execution and allocation profiles.
@@ -105,7 +107,8 @@ final output.
   against the shipped PDB (real names). A failed caller unwind therefore shortens
   the sample instead of discarding it.
 * Samples aggregate into per-thread call trees, serialize to spark's protobuf,
-  gzip, and either upload to bytebin or write a local `.sparkprofile` file.
+  gzip, and either upload to bytebin or write a local `.sparkprofile` file under
+  `plugins/spark/profiles/`.
   Symbolization and output processing run on a background thread so the server
   tick never stalls.
   Execution samples use the measured elapsed time between sampling points, excluding

@@ -2477,9 +2477,20 @@ int main(int argc, char **argv)
     std::string gz = spark::gzipCompress(bytes);
     std::ofstream("profile.sparkprofile", std::ios::binary).write(gz.data(), static_cast<std::streamsize>(gz.size()));
 
-    spark::ProfileFileResult saved = spark::saveProfileToDirectory(".", gz, 42);
+    const std::filesystem::path profile_root =
+        std::filesystem::temp_directory_path() /
+        ("spark-profile-selftest-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const std::filesystem::path profile_directory = spark::profileStorageDirectory(profile_root);
+    spark::ProfileFileResult saved = spark::saveProfileToDirectory(profile_directory, gz, 42);
     if (!saved.ok) {
         std::fprintf(stderr, "profile file: atomic save failed: %s\n", saved.error.c_str());
+        return 1;
+    }
+    if (saved.path.parent_path() != profile_directory) {
+        std::fprintf(stderr, "profile file: local profile used the wrong directory\n");
+        std::error_code cleanup_error;
+        std::filesystem::remove_all(profile_root, cleanup_error);
         return 1;
     }
     std::ifstream saved_stream(saved.path, std::ios::binary);
@@ -2487,7 +2498,7 @@ int main(int argc, char **argv)
                            std::istreambuf_iterator<char>());
     saved_stream.close();
     std::error_code cleanup_error;
-    std::filesystem::remove(saved.path, cleanup_error);
+    std::filesystem::remove_all(profile_root, cleanup_error);
     if (round_trip != gz || cleanup_error) {
         std::fprintf(stderr, "profile file: saved gzip payload did not round-trip cleanly\n");
         return 1;

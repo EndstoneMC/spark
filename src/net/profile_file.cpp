@@ -16,6 +16,11 @@ ProfileFileResult failure(std::string message)
 
 }  // namespace
 
+std::filesystem::path profileStorageDirectory(const std::filesystem::path &data_folder)
+{
+    return data_folder / "profiles";
+}
+
 ProfileFileResult saveProfileToDirectory(const std::filesystem::path &folder,
                                          std::string_view compressed_profile,
                                          std::int64_t timestamp_ms)

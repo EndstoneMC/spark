@@ -357,7 +357,8 @@ private:
         sender.sendMessage(
             "{}Flags: --interval <ms|bytes>, --timeout <seconds>, --only-ticks-over <ms>",
             ColorFormat::Gray);
-        sender.sendMessage("{}       --save-to-file, --comment <text>", ColorFormat::Gray);
+        sender.sendMessage("{}       --save-to-file (plugins/spark/profiles), --comment <text>",
+                           ColorFormat::Gray);
     }
 
     void cmdProfiler(endstone::CommandSender &sender, const spark::Arguments &args)
@@ -833,7 +834,7 @@ private:
 
         pending_save_ = save;
         pending_sender_ = sender_name;
-        pending_folder_ = getDataFolder();
+        pending_folder_ = spark::profileStorageDirectory(getDataFolder());
 
         exporting_.store(true);
         // NOTE: Endstone's runTaskAsync has a use-after-free — scheduler.cpp submits
