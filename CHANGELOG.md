@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Append best-effort native name guesses to unresolved main-executable frames on
+  Windows, shown as `0x<rva> (Guess)` in the viewer. Guesses are recovered at
+  runtime with no symbol file: function extents from the x64 exception directory,
+  class-level names from RTTI vtables (`ServerLevel::vfn[3]`), and otherwise a
+  string literal referenced only by that function.
+
 ## [0.4.0] - 2026-07-31
 
 ### Added

@@ -20,7 +20,9 @@ struct ResolvedFrame {
 
 // Resolve a batch of unique frame keys via the platform symbol backend. Frames whose
 // symbol cannot be recovered fall back to "0x<rva>" — expected for stripped binaries
-// and offline-symbolicatable later against IDA/PDB.
+// and offline-symbolicatable later against IDA/PDB. On Windows, unresolved frames in
+// the main executable additionally carry a parenthesized runtime guess (RTTI vtable
+// class or unique string literal) when one is available.
 std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const ModuleTable &modules,
                                                                         const std::vector<FrameKey> &keys);
 
