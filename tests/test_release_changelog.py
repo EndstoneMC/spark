@@ -35,6 +35,30 @@ class ReleaseChangelogTest(unittest.TestCase):
         self.assertIn("- New fix.", notes)
         self.assertIn("compare/v0.1.0...v0.1.1", changelog)
 
+    def test_accepts_explicit_reference_links(self):
+        source = """# Changelog
+
+## [Unreleased][Unreleased]
+
+### Fixed
+
+- New fix.
+
+## [0.1.0][0.1.0] - 2026-01-01
+
+### Added
+
+- Initial release.
+
+[Unreleased]: old
+[0.1.0]: old
+"""
+        changelog, notes = render_release(source, "0.1.1", "2026-07-17", "EndstoneMC/spark")
+        self.assertIn("## [Unreleased][Unreleased]", changelog)
+        self.assertIn("## [0.1.1][0.1.1] - 2026-07-17", changelog)
+        self.assertIn("## [0.1.0][0.1.0] - 2026-01-01", changelog)
+        self.assertIn("- New fix.", notes)
+
     def test_merges_existing_release_without_duplicates(self):
         source = HEADER + """
 ### Fixed

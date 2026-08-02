@@ -148,7 +148,7 @@ Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, and libcurl. CMak
 - `develop` is the integration branch and is built on Windows and Linux by `.github/workflows/build.yml`.
 - `CHANGELOG.md` follows Keep a Changelog and contains one non-empty `Unreleased` section before a release.
 - Release versions follow Semantic Versioning.
-- `.github/workflows/release.yml` is dispatched from `main` with a version. A non-dry-run release requires `main` and `develop` to point to the same commit.
+- `.github/workflows/release.yml` can be dispatched from `main` with a version or triggered by pushing a `vX.Y.Z` tag. A release requires the selected ref, `main`, and `develop` to point to the same commit.
 - The release workflow updates `CMakeLists.txt`, `src/spark_constants.h`, `src/plugin.cpp`, and `CHANGELOG.md`; creates the release commit and tag; builds both platform artifacts; and uploads them to the GitHub release.
 - Do not manually duplicate version changes that the release workflow owns.
 

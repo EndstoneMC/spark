@@ -5,7 +5,10 @@ import re
 from pathlib import Path
 
 
-SECTION_RE = re.compile(r"^## \[([^]]+)](?: - ([^\n]+))?\s*$", re.MULTILINE)
+SECTION_RE = re.compile(
+    r"^## \[(?P<version>[^]]+)](?:\[(?P=version)])?(?: - (?P<date>[^\n]+))?\s*$",
+    re.MULTILINE,
+)
 SUBSECTION_RE = re.compile(r"^### (.+?)\s*$", re.MULTILINE)
 REFERENCE_RE = re.compile(r"^\[([^]]+)]:\s+.*$", re.MULTILINE)
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
@@ -90,9 +93,13 @@ def render_release(source: str, version: str, date: str, repository: str) -> tup
         if not VERSION_RE.fullmatch(section_version):
             raise ValueError(f"invalid changelog version section: {section_version}")
 
-    output_parts = [prefix, "## [Unreleased]", f"## [{version}] - {date}\n\n{release_notes}"]
+    output_parts = [
+        prefix,
+        "## [Unreleased][Unreleased]",
+        f"## [{version}][{version}] - {date}\n\n{release_notes}",
+    ]
     for section_version, section_date, body in remaining:
-        heading = f"## [{section_version}]"
+        heading = f"## [{section_version}][{section_version}]"
         if section_date:
             heading += f" - {section_date}"
         output_parts.append(heading + (f"\n\n{body}" if body else ""))

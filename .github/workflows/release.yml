@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       version:
@@ -16,10 +19,13 @@ on:
 jobs:
   release:
     name: Prepare release
-    if: inputs.dry_run || github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' || inputs.dry_run || github.ref == 'refs/heads/main'
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.release_meta.outputs.version }}
+      dry_run: ${{ steps.release_meta.outputs.dry_run }}
 
     steps:
       - name: Checkout
@@ -33,33 +39,47 @@ jobs:
           python-version: "3.12"
 
       - name: Validate release
+        id: release_meta
         shell: bash
         run: |
-          VERSION="${{ inputs.version }}"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG_TRIGGER=true
+            DRY_RUN=false
+          else
+            VERSION="${{ inputs.version }}"
+            TAG_TRIGGER=false
+            DRY_RUN="${{ inputs.dry_run }}"
+          fi
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Invalid version format: $VERSION (expected X.Y.Z)"
             exit 1
           fi
-          if [[ "${{ inputs.dry_run }}" != "true" && "${{ github.ref }}" != "refs/heads/main" ]]; then
+          if [[ "$TAG_TRIGGER" == "false" && "$DRY_RUN" != "true" && "$GITHUB_REF" != "refs/heads/main" ]]; then
             echo "::error::Non-dry-run releases must run from main"
             exit 1
           fi
-          if git rev-parse --verify --quiet "refs/tags/v$VERSION"; then
+          if [[ "$TAG_TRIGGER" == "false" ]] && git rev-parse --verify --quiet "refs/tags/v$VERSION"; then
             echo "::error::Tag v$VERSION already exists"
             exit 1
           fi
-          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
-            git fetch origin develop
-            if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/develop)" ]]; then
-              echo "::error::main and develop must point to the same commit before releasing"
+          if [[ "$DRY_RUN" != "true" ]]; then
+            git fetch origin main develop --tags
+            if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ||
+                  "$(git rev-parse HEAD)" != "$(git rev-parse origin/develop)" ]]; then
+              echo "::error::release ref, main, and develop must point to the same commit before releasing"
               exit 1
             fi
           fi
           DATE=$(date -u +%Y-%m-%d)
-          PREVIOUS_TAG=$(git tag --sort=-v:refname | head -n 1)
+          PREVIOUS_TAG=$(git tag --sort=-v:refname | awk -v current="v$VERSION" '$0 != current { print; exit }')
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "DATE=$DATE" >> "$GITHUB_ENV"
           echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> "$GITHUB_ENV"
+          echo "TAG_TRIGGER=$TAG_TRIGGER" >> "$GITHUB_ENV"
+          echo "DRY_RUN=$DRY_RUN" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
 
       - name: Prepare changelog and release notes
         shell: bash
@@ -74,7 +94,7 @@ jobs:
           cat /tmp/release_body.md
 
       - name: Preview
-        if: inputs.dry_run
+        if: env.DRY_RUN == 'true'
         shell: bash
         run: |
           echo "=== Dry Run ==="
@@ -100,7 +120,7 @@ jobs:
           cat /tmp/release_body.md
 
       - name: Update release files
-        if: ${{ !inputs.dry_run }}
+        if: env.DRY_RUN != 'true'
         shell: bash
         run: |
           sed -E -i "s/^project\(spark VERSION [0-9]+\.[0-9]+\.[0-9]+ LANGUAGES CXX\)$/project(spark VERSION $VERSION LANGUAGES CXX)/" CMakeLists.txt
@@ -109,7 +129,7 @@ jobs:
           cp /tmp/CHANGELOG.md CHANGELOG.md
 
       - name: Verify versions
-        if: ${{ !inputs.dry_run }}
+        if: env.DRY_RUN != 'true'
         shell: bash
         run: |
           grep -Fx "project(spark VERSION $VERSION LANGUAGES CXX)" CMakeLists.txt
@@ -122,10 +142,10 @@ jobs:
           git diff -- CMakeLists.txt src/spark_constants.h src/plugin.cpp CHANGELOG.md
 
       - name: Commit and tag
-        if: ${{ !inputs.dry_run }}
+        if: env.DRY_RUN != 'true'
         shell: bash
         run: |
-          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+          if [[ "$TAG_TRIGGER" == "false" && "$GITHUB_REF" != "refs/heads/main" ]]; then
             echo "::error::Non-dry-run releases must run from main"
             exit 1
           fi
@@ -133,11 +153,16 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CMakeLists.txt CHANGELOG.md src/spark_constants.h src/plugin.cpp
           git commit -m "chore: release v$VERSION"
-          git tag "v$VERSION"
-          git push --atomic origin HEAD:main HEAD:develop "refs/tags/v$VERSION"
+          if [[ "$TAG_TRIGGER" == "true" ]]; then
+            git tag --force "v$VERSION"
+            git push --atomic origin HEAD:main HEAD:develop "+refs/tags/v$VERSION"
+          else
+            git tag "v$VERSION"
+            git push --atomic origin HEAD:main HEAD:develop "refs/tags/v$VERSION"
+          fi
 
       - name: Create GitHub release
-        if: ${{ !inputs.dry_run }}
+        if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -150,7 +175,7 @@ jobs:
 
   windows:
     name: Windows
-    if: ${{ !inputs.dry_run }}
+    if: needs.release.outputs.dry_run != 'true' && needs.release.outputs.version != ''
     needs: release
     runs-on: windows-latest
     permissions:
@@ -160,7 +185,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: v${{ inputs.version }}
+          ref: v${{ needs.release.outputs.version }}
 
       - name: Set up MSVC environment
         uses: TheMrMilchmann/setup-msvc-dev@v4
@@ -214,11 +239,11 @@ jobs:
           if (-not (Test-Path $dll) -or -not (Test-Path $pdb)) {
             throw "Expected Windows release assets were not produced"
           }
-          gh release upload "v${{ inputs.version }}" $dll $pdb --clobber
+          gh release upload "v${{ needs.release.outputs.version }}" $dll $pdb --clobber
 
   linux:
     name: Linux
-    if: ${{ !inputs.dry_run }}
+    if: needs.release.outputs.dry_run != 'true' && needs.release.outputs.version != ''
     needs: release
     runs-on: ubuntu-22.04
     permissions:
@@ -228,7 +253,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: v${{ inputs.version }}
+          ref: v${{ needs.release.outputs.version }}
 
       - name: Install Clang 20
         shell: bash
@@ -274,4 +299,4 @@ jobs:
         run: |
           asset=build/RelWithDebInfo/endstone_spark.so
           test -f "$asset"
-          gh release upload "v${{ inputs.version }}" "$asset" --clobber
+          gh release upload "v${{ needs.release.outputs.version }}" "$asset" --clobber
