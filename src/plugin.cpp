@@ -1170,7 +1170,7 @@ private:
     ExportOutcome pending_outcome_ = ExportOutcome::Failed;
 };
 
-ENDSTONE_PLUGIN("spark", "0.4.0", SparkPlugin)
+ENDSTONE_PLUGIN("spark", "0.4.1", SparkPlugin)
 {
     description = "spark profiler for Endstone — find what's slowing your server down.";
     authors = {"ReallocAll <ReallocAll@outlook.com>"};
