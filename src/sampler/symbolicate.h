@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "sampler/symbol_guess.h"
 #include "sampler/types.h"
 
 namespace spark {
@@ -17,6 +18,11 @@ struct ResolvedFrame {
   std::string method_name; // demangled symbol, or "0x<rva>" when stripped
   std::string method_desc; // optional descriptor (unused for now)
   std::int32_t line = -1;  // source line if DWARF is present, else -1
+  // Non-zero only when unwind metadata validated a native function root for
+  // an otherwise unresolved main-module frame. The serializer records this
+  // separately from the sampled PC so offline evaluation can measure range
+  // coverage without fragmenting the viewer label.
+  std::uint64_t guessed_function_rva = 0;
 };
 
 // Small deterministic policy surface used by the platform backends and formal
@@ -27,6 +33,8 @@ bool frameMatchesMainModule(std::uint64_t raw_address, std::uint64_t rva,
                             std::uint64_t module_size);
 void applySymbolGuessFallback(ResolvedFrame &frame, std::uint64_t rva,
                               bool main_module, std::string_view guess);
+void applySymbolGuessFallback(ResolvedFrame &frame, std::uint64_t rva,
+                              bool main_module, const GuessResult &guess);
 
 // Resolve a batch of unique frame keys via the platform symbol backend. Frames
 // whose symbol cannot be recovered fall back to "0x<rva>" — expected for

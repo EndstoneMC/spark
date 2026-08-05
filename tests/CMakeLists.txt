@@ -19,6 +19,12 @@ set_target_properties(spark_symbol_guess_evidence_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_symbol_guess_evidence_test COMMAND spark_symbol_guess_evidence_test)
 
+add_executable(spark_symbol_guess_dwarf_test symbol_guess_dwarf_test.cpp)
+target_link_libraries(spark_symbol_guess_dwarf_test PRIVATE spark_core)
+set_target_properties(spark_symbol_guess_dwarf_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_symbol_guess_dwarf_test COMMAND spark_symbol_guess_dwarf_test)
+
 if (WIN32)
     add_executable(spark_symbol_guess_windows_test symbol_guess_windows_test.cpp)
     target_link_libraries(spark_symbol_guess_windows_test PRIVATE spark_core)

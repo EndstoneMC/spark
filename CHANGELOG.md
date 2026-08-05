@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased][Unreleased]
 
+### Added
+
+- Preserve exact sampled native PCs and their independently validated function
+  roots in forward-compatible profile fields for offline normalization metrics.
+
+### Fixed
+
+- Recover Linux function extents from validated CIE/FDE records, including
+  unindexed records in a safely terminated `.eh_frame`, instead of extending
+  every function to the next unwind-table start.
+- Keep addresses in unwind gaps and PLT entries out of adjacent functions while
+  normalizing sampled PCs inside exact half-open function ranges.
+
+### Changed
+
+- Add deterministic Linux symbol-index timing, memory, range-quality, and batch
+  diagnostics to profile metadata, and evaluate `Level::tick()` subtree
+  readability separately from whole-process coverage.
+
 ## [0.4.1][0.4.1] - 2026-08-02
 
 ### Added

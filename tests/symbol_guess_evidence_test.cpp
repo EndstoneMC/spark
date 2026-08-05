@@ -1,4 +1,5 @@
 #include "sampler/symbol_guess_evidence.h"
+#include "sampler/symbolicate.h"
 
 #include <iostream>
 #include <string>
@@ -58,6 +59,33 @@ int main() {
             .empty());
   CHECK(spark::symbol_guess::formatStringHint("Level - tick redstone", strong)
             .find('%') == std::string::npos);
+
+  spark::ResolvedFrame normalized;
+  spark::GuessResult range_only;
+  range_only.function_rva = 0x1200;
+  spark::applySymbolGuessFallback(normalized, 0x1234, true, range_only);
+  CHECK(normalized.method_name == "0x1200");
+
+  spark::ResolvedFrame guessed;
+  spark::GuessResult detailed;
+  detailed.function_rva = 0x1200;
+  detailed.label = "vtable: Level::vfn[3]";
+  detailed.kind = spark::GuessKind::Vtable;
+  detailed.confidence = spark::Confidence::High;
+  detailed.evidence_count = 1;
+  spark::applySymbolGuessFallback(guessed, 0x1234, true, detailed);
+  CHECK(guessed.method_name == "0x1200 (vtable: Level::vfn[3])");
+
+  spark::ResolvedFrame resolved;
+  resolved.method_name = "Level::tick";
+  spark::applySymbolGuessFallback(resolved, 0x1234, true, detailed);
+  CHECK(resolved.method_name == "Level::tick");
+  CHECK(resolved.guessed_function_rva == 0);
+
+  spark::ResolvedFrame library;
+  spark::applySymbolGuessFallback(library, 0x1234, false, detailed);
+  CHECK(library.method_name == "0x1234");
+  CHECK(library.guessed_function_rva == 0);
 
   if (failures != 0) {
     std::cerr << failures << " evidence test(s) failed\n";

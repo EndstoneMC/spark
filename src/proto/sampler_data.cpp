@@ -75,6 +75,14 @@ int emitNode(const CallTree::Node *node, const std::vector<std::int32_t> &window
         if (!it->second.method_desc.empty()) {
             w.string(7, it->second.method_desc);
         }
+        // Private extension fields are ignored by the upstream spark viewer.
+        // They preserve the exact sampled PC and the validated unwind root for
+        // offline coverage evaluation without changing the displayed method or
+        // merging distinct calling contexts.
+        w.varint(1001, node->key.rva);
+        if (it->second.guessed_function_rva != 0) {
+            w.varint(1002, it->second.guessed_function_rva);
+        }
     }
     w.packedDouble(8, alignValues(node->times, windows, meta));
     w.packedInt32(9, child_refs);

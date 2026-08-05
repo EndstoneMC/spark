@@ -158,13 +158,28 @@ bool frameMatchesMainModule(std::uint64_t raw_address, std::uint64_t rva,
 
 void applySymbolGuessFallback(ResolvedFrame &frame, std::uint64_t rva,
                               bool main_module, std::string_view guess) {
+  GuessResult result;
+  result.function_rva = rva;
+  result.label = guess;
+  applySymbolGuessFallback(frame, rva, main_module, result);
+}
+
+void applySymbolGuessFallback(ResolvedFrame &frame, std::uint64_t rva,
+                              bool main_module, const GuessResult &guess) {
   const std::string address = hex(rva);
   if (frame.method_name.empty()) {
     frame.method_name = address;
   }
-  if (main_module && !guess.empty() && frame.method_name == address) {
+  if (!main_module || frame.method_name != address) {
+    return;
+  }
+  if (guess.function_rva != 0) {
+    frame.method_name = hex(guess.function_rva);
+    frame.guessed_function_rva = guess.function_rva;
+  }
+  if (!guess.label.empty()) {
     frame.method_name += " (";
-    frame.method_name += guess;
+    frame.method_name += guess.label;
     frame.method_name += ')';
   }
 }
@@ -226,7 +241,7 @@ resolveFrames(const ModuleTable &modules, const std::vector<FrameKey> &keys) {
     out.emplace(key, std::move(rf));
   }
 
-  const auto guesses = guessMainModuleSymbols(unresolved_main_rvas);
+  const auto guesses = analyzeMainModuleSymbols(unresolved_main_rvas);
   for (const FrameKey &key : keys) {
     if (executable_full_path.empty() ||
         modules.path(key.module) != executable_full_path) {
@@ -346,7 +361,8 @@ resolveFrames(const ModuleTable &modules, const std::vector<FrameKey> &keys) {
           have_executable_range &&
           frameMatchesMainModule(key.raw_address, key.rva, executable_base,
                                  executable_info.SizeOfImage);
-      applySymbolGuessFallback(rf, key.rva, main_module, {});
+      applySymbolGuessFallback(rf, key.rva, main_module,
+                               std::string_view{});
       if (main_module) {
         unresolved_main_rvas.push_back(key.rva);
       }
@@ -354,7 +370,7 @@ resolveFrames(const ModuleTable &modules, const std::vector<FrameKey> &keys) {
     out.emplace(key, std::move(rf));
   }
 
-  const auto guesses = guessMainModuleSymbols(unresolved_main_rvas);
+  const auto guesses = analyzeMainModuleSymbols(unresolved_main_rvas);
   for (const FrameKey &key : keys) {
     if (!have_executable_range ||
         !frameMatchesMainModule(key.raw_address, key.rva, executable_base,

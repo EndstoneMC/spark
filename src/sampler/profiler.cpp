@@ -9,6 +9,8 @@
 #include "spark_constants.h"
 #if defined(_WIN32)
 #include "sampler/symbol_guess_windows.h"
+#elif defined(__linux__) && defined(__x86_64__)
+#include "sampler/symbol_guess_linux.h"
 #endif
 
 namespace spark {
@@ -103,6 +105,32 @@ void addSymbolGuessMetadata(ProfileMetadata &meta)
     meta.extra_platform_metadata["Symbol guess vtable labels"] = std::to_string(stats.vtable_labels);
     meta.extra_platform_metadata["Symbol guess vtable conflicts"] = std::to_string(stats.vtable_conflicts);
     meta.extra_platform_metadata["Symbol guess resolved thunks"] = std::to_string(stats.thunk_resolved);
+    meta.extra_platform_metadata["Symbol guess sampled functions"] = std::to_string(stats.sampled_functions);
+    meta.extra_platform_metadata["Symbol guess decoded instructions"] = std::to_string(stats.decoded_instructions);
+    meta.extra_platform_metadata["Symbol guess string candidates"] = std::to_string(stats.string_candidates);
+    meta.extra_platform_metadata["Symbol guess string labels"] = std::to_string(stats.string_labels);
+    meta.extra_platform_metadata["Symbol guess shared strings"] = std::to_string(stats.shared_strings);
+    meta.extra_platform_metadata["Symbol guess index build microseconds"] = std::to_string(stats.build_microseconds);
+    meta.extra_platform_metadata["Symbol guess batch microseconds"] = std::to_string(stats.batch_microseconds);
+    meta.extra_platform_metadata["Symbol guess approximate bytes"] = std::to_string(stats.approximate_bytes);
+#elif defined(__linux__) && defined(__x86_64__)
+    const symbol_guess::linux::BuildStats stats = symbol_guess::linux::currentModuleStats();
+    if (!stats.initialized) {
+        return;
+    }
+    meta.extra_platform_metadata["Symbol guess function table entries"] = std::to_string(stats.table_entries);
+    meta.extra_platform_metadata["Symbol guess eh_frame records"] = std::to_string(stats.eh_frame_records);
+    meta.extra_platform_metadata["Symbol guess function ranges"] = std::to_string(stats.function_ranges);
+    meta.extra_platform_metadata["Symbol guess rejected ranges"] = std::to_string(stats.rejected_ranges);
+    meta.extra_platform_metadata["Symbol guess duplicate ranges"] = std::to_string(stats.duplicate_ranges);
+    meta.extra_platform_metadata["Symbol guess overlap ranges"] = std::to_string(stats.overlap_ranges);
+    meta.extra_platform_metadata["Symbol guess unindexed ranges"] = std::to_string(stats.unindexed_ranges);
+    meta.extra_platform_metadata["Symbol guess function gaps"] = std::to_string(stats.gap_ranges);
+    meta.extra_platform_metadata["Symbol guess function gap bytes"] = std::to_string(stats.gap_bytes);
+    meta.extra_platform_metadata["Symbol guess vtables"] = std::to_string(stats.vtables);
+    meta.extra_platform_metadata["Symbol guess vtable candidates"] = std::to_string(stats.vtable_candidates);
+    meta.extra_platform_metadata["Symbol guess vtable labels"] = std::to_string(stats.vtable_labels);
+    meta.extra_platform_metadata["Symbol guess vtable conflicts"] = std::to_string(stats.vtable_conflicts);
     meta.extra_platform_metadata["Symbol guess sampled functions"] = std::to_string(stats.sampled_functions);
     meta.extra_platform_metadata["Symbol guess decoded instructions"] = std::to_string(stats.decoded_instructions);
     meta.extra_platform_metadata["Symbol guess string candidates"] = std::to_string(stats.string_candidates);
