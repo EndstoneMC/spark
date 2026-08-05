@@ -202,6 +202,136 @@ decodeRipRelativeLeaTargets(std::span<const std::uint8_t> code,
   return {targets.begin(), targets.end()};
 }
 
+namespace {
+
+std::optional<_DInst> decodeOne(std::span<const std::uint8_t> code,
+                                std::uint64_t address,
+                                std::size_t *decoded_instructions) {
+  if (code.empty() ||
+      code.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+    return std::nullopt;
+  }
+  _CodeInfo info{};
+  info.codeOffset = address;
+  info.code = code.data();
+  info.codeLen = static_cast<int>(code.size());
+  info.dt = Decode64Bits;
+  info.features = DF_STOP_ON_UNDECODEABLE;
+  _DInst instruction{};
+  unsigned used = 0;
+  const _DecodeResult result =
+      distorm_decompose64(&info, &instruction, 1, &used);
+  if ((result == DECRES_INPUTERR || result == DECRES_NONE) || used != 1 ||
+      instruction.flags == FLAG_NOT_DECODABLE || instruction.size == 0 ||
+      instruction.addr != address || instruction.size > code.size()) {
+    return std::nullopt;
+  }
+  if (decoded_instructions != nullptr) {
+    ++*decoded_instructions;
+  }
+  return instruction;
+}
+
+std::optional<DecodedThunk> jumpTarget(const _DInst &instruction,
+                                       bool adjusts_this) {
+  if (instruction.opcode != I_JMP || instruction.opsNo != 1) {
+    return std::nullopt;
+  }
+  if (instruction.ops[0].type == O_PC) {
+    return DecodedThunk{INSTRUCTION_GET_TARGET(&instruction), false,
+                        adjusts_this};
+  }
+  if ((instruction.flags & FLAG_RIP_RELATIVE) != 0 &&
+      instruction.ops[0].type == O_SMEM &&
+      instruction.ops[0].index == R_RIP) {
+    return DecodedThunk{INSTRUCTION_GET_RIP_TARGET(&instruction), true,
+                        adjusts_this};
+  }
+  return std::nullopt;
+}
+
+bool isThisAdjustment(const _DInst &instruction) {
+  if ((instruction.opcode == I_ADD || instruction.opcode == I_SUB) &&
+      instruction.opsNo == 2 && instruction.ops[0].type == O_REG &&
+      instruction.ops[0].index == R_RDI && instruction.ops[0].size == 64 &&
+      instruction.ops[1].type == O_IMM) {
+    return true;
+  }
+  return instruction.opcode == I_LEA && instruction.opsNo == 2 &&
+         instruction.ops[0].type == O_REG &&
+         instruction.ops[0].index == R_RDI &&
+         instruction.ops[0].size == 64 &&
+         instruction.ops[1].type == O_SMEM &&
+         instruction.ops[1].index == R_RDI;
+}
+
+} // namespace
+
+std::optional<DecodedThunk>
+decodeStrictThunk(std::span<const std::uint8_t> code,
+                  std::uint64_t function_rva,
+                  std::size_t *decoded_instructions) {
+  const auto first = decodeOne(code, function_rva, decoded_instructions);
+  if (!first) {
+    return std::nullopt;
+  }
+  if (auto direct = jumpTarget(*first, false)) {
+    return direct;
+  }
+  if (first->size >= code.size()) {
+    return std::nullopt;
+  }
+  const auto remaining = code.subspan(first->size);
+  const auto second =
+      decodeOne(remaining, function_rva + first->size, decoded_instructions);
+  if (!second) {
+    return std::nullopt;
+  }
+  if (isThisAdjustment(*first)) {
+    return jumpTarget(*second, true);
+  }
+  if (first->opcode == I_MOV && first->opsNo == 2 &&
+      first->ops[0].type == O_REG && first->ops[0].size == 64 &&
+      first->ops[0].index != R_RDI && first->ops[0].index != R_RSP &&
+      first->ops[0].index != R_RBP && first->ops[1].type == O_SMEM &&
+      first->ops[1].index == R_RIP &&
+      (first->flags & FLAG_RIP_RELATIVE) != 0 &&
+      second->opcode == I_JMP && second->opsNo == 1 &&
+      second->ops[0].type == O_REG &&
+      second->ops[0].index == first->ops[0].index) {
+    return DecodedThunk{INSTRUCTION_GET_RIP_TARGET(&*first), true, false};
+  }
+  return std::nullopt;
+}
+
+std::optional<std::uint64_t> followStrictThunkChain(
+    std::uint64_t start,
+    const std::function<std::optional<std::uint64_t>(std::uint64_t)> &next,
+    std::size_t max_depth) {
+  if (max_depth == 0) {
+    return std::nullopt;
+  }
+  std::unordered_set<std::uint64_t> visited{start};
+  std::uint64_t current = start;
+  bool followed = false;
+  for (std::size_t depth = 0; depth < max_depth; ++depth) {
+    const auto target = next(current);
+    if (!target) {
+      return followed ? std::optional<std::uint64_t>{current} : std::nullopt;
+    }
+    if (!visited.insert(*target).second) {
+      return std::nullopt;
+    }
+    current = *target;
+    followed = true;
+  }
+  // A third edge is outside the deliberately small trust boundary.
+  if (next(current)) {
+    return std::nullopt;
+  }
+  return current;
+}
+
 } // namespace symbol_guess::linux
 
 namespace {
@@ -419,6 +549,56 @@ void collectFunctions(const ImageView &img, GuessTable &table) {
 const FunctionRange *functionContaining(const GuessTable &table,
                                         std::uint64_t rva) {
   return symbol_guess::dwarf::functionContaining(table.ranges, rva);
+}
+
+std::optional<std::uint64_t>
+strictThunkEdge(const ImageView &img, const GuessTable &table,
+                std::uint64_t root, symbol_guess::linux::BuildStats &stats) {
+  const FunctionRange *function = functionContaining(table, root);
+  if (function == nullptr || function->root != root ||
+      function->end <= function->begin) {
+    return std::nullopt;
+  }
+  const std::uint64_t extent = function->end - function->begin;
+  const auto code_size =
+      static_cast<std::size_t>(std::min<std::uint64_t>(extent, 32));
+  const Section *section = img.sectionContaining(function->begin, code_size);
+  if (section == nullptr || !section->executable) {
+    return std::nullopt;
+  }
+  const auto code = std::span(img.at(function->begin), code_size);
+  const auto decoded = symbol_guess::linux::decodeStrictThunk(
+      code, function->begin, &stats.decoded_instructions);
+  if (!decoded) {
+    return std::nullopt;
+  }
+  ++stats.thunk_candidates;
+  std::uint64_t target = decoded->target;
+  if (decoded->indirect) {
+    std::uint64_t pointer = 0;
+    if (!readAt(img, target, pointer) || !img.toRva(pointer, target)) {
+      return std::nullopt;
+    }
+  }
+  const FunctionRange *target_function = functionContaining(table, target);
+  if (target_function == nullptr) {
+    return std::nullopt;
+  }
+  return target_function->root;
+}
+
+std::string thunkLabelFromTarget(std::string_view target_label) {
+  const GuessResult target = resultFromLabel(0, std::string(target_label));
+  if (target.kind == GuessKind::None || target.label.empty()) {
+    return {};
+  }
+  const std::size_t separator = target.label.find(": ");
+  if (separator == std::string::npos || separator + 2 >= target.label.size()) {
+    return {};
+  }
+  return std::string(target.confidence == Confidence::High ? "thunk: "
+                                                           : "thunk?: ") +
+         target.label.substr(separator + 2);
 }
 
 // "N6detail11ChunkSourceE" -> "detail::ChunkSource". Uses the ABI demangler,
@@ -693,6 +873,24 @@ guessBatch(std::span<const std::uint64_t> rvas) {
         out[rva] = resultFromLabel(root, label->second);
       }
       continue;
+    }
+    const auto thunk_target = symbol_guess::linux::followStrictThunkChain(
+        root, [&](std::uint64_t current) {
+          return strictThunkEdge(img, table, current, batch);
+        });
+    if (thunk_target) {
+      ++batch.thunk_resolved;
+      if (const auto target_label = table.labels.find(*thunk_target);
+          target_label != table.labels.end()) {
+        const std::string label = thunkLabelFromTarget(target_label->second);
+        if (!label.empty()) {
+          ++batch.thunk_labels;
+          for (std::uint64_t rva : inputs) {
+            out[rva] = resultFromLabel(root, label, 2);
+          }
+          continue;
+        }
+      }
     }
     const FunctionRange *function = functionContaining(table, root);
     if (function == nullptr) {

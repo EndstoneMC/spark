@@ -136,6 +136,9 @@ void addSymbolGuessMetadata(ProfileMetadata &meta)
     meta.extra_platform_metadata["Symbol guess string candidates"] = std::to_string(stats.string_candidates);
     meta.extra_platform_metadata["Symbol guess string labels"] = std::to_string(stats.string_labels);
     meta.extra_platform_metadata["Symbol guess shared strings"] = std::to_string(stats.shared_strings);
+    meta.extra_platform_metadata["Symbol guess thunk candidates"] = std::to_string(stats.thunk_candidates);
+    meta.extra_platform_metadata["Symbol guess resolved thunks"] = std::to_string(stats.thunk_resolved);
+    meta.extra_platform_metadata["Symbol guess thunk labels"] = std::to_string(stats.thunk_labels);
     meta.extra_platform_metadata["Symbol guess index build microseconds"] = std::to_string(stats.build_microseconds);
     meta.extra_platform_metadata["Symbol guess batch microseconds"] = std::to_string(stats.batch_microseconds);
     meta.extra_platform_metadata["Symbol guess approximate bytes"] = std::to_string(stats.approximate_bytes);
