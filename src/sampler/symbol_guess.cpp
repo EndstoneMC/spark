@@ -1361,6 +1361,21 @@ guessBatch(std::span<const std::uint64_t> rvas) {
       continue;
     }
 
+    // CityHash/FarmHash 64-bit hash multiplier 0x9DDFEA08EB382D69
+    // (little-endian). Used in Hash128to64 and similar integer hash functions.
+    const unsigned char kHash64Constant[] = {
+        0x69, 0x2D, 0x38, 0xEB, 0x08, 0xEA, 0xDF, 0x9D};
+    if (std::search(code.begin(), code.end(), kHash64Constant,
+                    kHash64Constant + 8) != code.end()) {
+      const std::string label =
+          "type?: hash_table_lookup (64-bit hash multiplier)";
+      for (std::uint64_t rva : inputs) {
+        out[rva] = resultFromLabel(root, label);
+      }
+      ++batch.code_pattern_labels;
+      continue;
+    }
+
     // Atomic operations in small functions.
     if (code.size() < 100) {
       // lock cmpxchg: F0 0F B1 or F0 48 0F B1
