@@ -35,6 +35,7 @@ struct BuildStats {
   std::size_t string_candidates = 0;
   std::size_t shared_strings = 0;
   std::size_t string_labels = 0;
+  std::size_t string_accumulated_labels = 0;
   std::size_t thunk_candidates = 0;
   std::size_t thunk_resolved = 0;
   std::size_t thunk_labels = 0;

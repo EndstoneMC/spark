@@ -518,7 +518,7 @@ std::string readCString(const ImageView &img, std::uint64_t rva,
     if (c == '\0') {
       return std::string(p, i);
     }
-    if (c < 0x20 || c > 0x7e) {
+    if ((c < 0x20 && c != '\t') || c > 0x7e) {
       return {};
     }
   }
@@ -925,9 +925,11 @@ std::vector<StringCandidate> decodeStrings(const ImageView &img,
     }
     std::string value = readCString(img, target, 180);
     const int score = symbol_guess::scoreStringHint(value);
-    if (score >= symbol_guess::kMinimumStringHintScore) {
+    if (score > 0) {
       candidates.push_back({target, std::move(value), score});
-      ++stats.string_candidates;
+      if (score >= symbol_guess::kMinimumStringHintScore) {
+        ++stats.string_candidates;
+      }
     }
   }
   std::sort(candidates.begin(), candidates.end(),
@@ -1076,6 +1078,9 @@ guessBatch(std::span<const std::uint64_t> rvas) {
   for (const auto &[root, candidates] : string_candidates) {
     std::string label;
     for (const StringCandidate &candidate : candidates) {
+      if (candidate.score < symbol_guess::kMinimumStringHintScore) {
+        break;
+      }
       const auto refs = references.find(candidate.target);
       if (refs != references.end() && refs->second.size() == 1 &&
           *refs->second.begin() == root) {
@@ -1095,6 +1100,64 @@ guessBatch(std::span<const std::uint64_t> rvas) {
       out[rva] = resultFromLabel(root, label);
     }
   }
+
+  // Accumulation pass: a function referencing multiple unique weak strings
+  // (each below the standalone threshold) still has enough combined evidence
+  // to deserve a tentative label.  The display value is the longest unique
+  // string, trimmed of leading whitespace.
+  for (const auto &[root, candidates] : string_candidates) {
+    bool has_label = false;
+    for (std::uint64_t rva : root_inputs.at(root)) {
+      if (!out[rva].label.empty()) {
+        has_label = true;
+        break;
+      }
+    }
+    if (has_label) {
+      continue;
+    }
+    std::vector<const StringCandidate *> unique_weak;
+    for (const StringCandidate &candidate : candidates) {
+      if (candidate.score >= symbol_guess::kMinimumStringHintScore) {
+        continue;
+      }
+      const auto refs = references.find(candidate.target);
+      if (refs != references.end() && refs->second.size() == 1 &&
+          *refs->second.begin() == root) {
+        unique_weak.push_back(&candidate);
+      }
+    }
+    if (unique_weak.size() < 3) {
+      continue;
+    }
+    const StringCandidate *best = unique_weak[0];
+    for (const StringCandidate *c : unique_weak) {
+      if (c->value.size() > best->value.size()) {
+        best = c;
+      }
+    }
+    std::string_view display(best->value);
+    while (!display.empty() &&
+           (display.front() == ' ' || display.front() == '\t')) {
+      display.remove_prefix(1);
+    }
+    constexpr std::size_t kMaxDisplay = 40;
+    std::string message(display.substr(0, kMaxDisplay));
+    if (display.size() > kMaxDisplay) {
+      message.resize(kMaxDisplay - 3);
+      message += "...";
+    }
+    message += " (+";
+    message += std::to_string(unique_weak.size() - 1);
+    message += " more)";
+    const std::string accumulated_label = symbol_guess::formatEvidenceLabel(
+        symbol_guess::EvidenceSource::String, message, true);
+    ++batch.string_accumulated_labels;
+    for (std::uint64_t rva : root_inputs.at(root)) {
+      out[rva] = resultFromLabel(root, accumulated_label);
+    }
+  }
+
   return finish(std::move(out));
 }
 
