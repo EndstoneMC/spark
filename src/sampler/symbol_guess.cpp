@@ -1408,6 +1408,29 @@ guessBatch(std::span<const std::uint64_t> rvas) {
         continue;
       }
     }
+
+    // Binary search: 2+ shr/sar reg,1 instructions (D1 /5 or D1 /7 with
+    // mod=11). Multiple range-halving operations indicate lower_bound +
+    // upper_bound loops.
+    int shift_right_1_count = 0;
+    for (std::size_t i = 0; i + 1 < code.size(); ++i) {
+      if (code[i] == 0xD1) {
+        const unsigned char modrm = code[i + 1];
+        if ((modrm >= 0xE8 && modrm <= 0xEF) ||
+            (modrm >= 0xF8 && modrm <= 0xFF)) {
+          ++shift_right_1_count;
+        }
+      }
+    }
+    if (shift_right_1_count >= 2) {
+      const std::string label =
+          "type?: binary_search (shift-right halving)";
+      for (std::uint64_t rva : inputs) {
+        out[rva] = resultFromLabel(root, label);
+      }
+      ++batch.code_pattern_labels;
+      continue;
+    }
   }
 
   return finish(std::move(out));

@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single large unresolved call target on Linux with low-confidence `call?` hints.
 - Label unresolved Linux main-executable functions with characteristic code
   patterns (Knuth multiplicative hash, 64-bit hash multiplier, atomic
-  `lock cmpxchg`/`lock xadd`) with low-confidence `type?` behavior hints.
+  `lock cmpxchg`/`lock xadd`, binary search range-halving) with low-confidence
+  `type?` behavior hints.
 
 ### Fixed
 
