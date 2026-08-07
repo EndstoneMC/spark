@@ -104,8 +104,10 @@ endif ()
 
 # --- the Endstone plugin (links only its own static core + Endstone headers) ---
 endstone_add_plugin(spark
+        src/platform/endstone/health_command.cpp
         src/platform/endstone/profiler_controller.cpp
         src/platform/endstone/server_info.cpp
+        src/platform/endstone/tick_monitor_controller.cpp
         src/plugin.cpp
         src/command/arguments.cpp)
 target_include_directories(spark PRIVATE src)
