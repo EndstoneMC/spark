@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolve Linux vtable labels for shared implementations by parsing Itanium RTTI
   inheritance edges, attributing virtual functions to their common ancestor class
   instead of leaving the RVA unresolved.
+- Label unresolved Linux main-executable functions that reference uniquely-owned
+  BDS debug trace strings (`"N _functionName"` patterns) with low-confidence
+  `str?` hints.
 
 ### Fixed
 

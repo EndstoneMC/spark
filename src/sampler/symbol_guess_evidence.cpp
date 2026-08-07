@@ -289,6 +289,32 @@ int scoreStringHint(std::string_view value) {
     score += 18;
   }
 
+  // BDS trace strings: "N _functionName" or "N functionName" where N is 1-2
+  // digits. These are debug trace markers loaded via lea and uniquely tied
+  // to their containing function.
+  if (std::isdigit(static_cast<unsigned char>(value[0]))) {
+    const std::size_t sp = value.find(' ');
+    if (sp != std::string_view::npos && sp <= 2 && sp + 1 < value.size()) {
+      const std::string_view rest = value.substr(sp + 1);
+      if (rest.size() >= 4) {
+        bool has_alpha = false;
+        bool clean = true;
+        for (unsigned char c : rest) {
+          if (!std::isalnum(c) && c != '_') {
+            clean = false;
+            break;
+          }
+          if (std::isalpha(c)) {
+            has_alpha = true;
+          }
+        }
+        if (clean && has_alpha) {
+          score += 45;
+        }
+      }
+    }
+  }
+
   if (containsAny(folded, {".cpp", ".h:", "\\src\\", "/src/", "http://",
                            "https://", "uuid"})) {
     score -= 100;

@@ -142,6 +142,26 @@ int main() {
   CHECK(spark::symbol_guess::formatStringHint("Level - tick redstone", strong)
             .find('%') == std::string::npos);
 
+  // BDS trace strings: "N _functionName" pattern.
+  const int trace =
+      spark::symbol_guess::scoreStringHint("2 _deserializeEntity");
+  CHECK(trace >= spark::symbol_guess::kMinimumStringHintScore);
+  CHECK(trace < spark::symbol_guess::kStrongStringHintScore);
+  CHECK(spark::symbol_guess::formatStringHint("2 _deserializeEntity", trace) ==
+        "str?: 2 _deserializeEntity");
+
+  // Short trace without domain keywords stays below threshold.
+  CHECK(spark::symbol_guess::scoreStringHint("1 _tick") <
+        spark::symbol_guess::kMinimumStringHintScore);
+
+  // Trace string with error keyword is rejected.
+  CHECK(spark::symbol_guess::scoreStringHint("3 _assertFailed") <
+        spark::symbol_guess::kMinimumStringHintScore);
+
+  // Non-trace string starting with digit is not boosted.
+  CHECK(spark::symbol_guess::scoreStringHint("404 Not Found") <
+        spark::symbol_guess::kMinimumStringHintScore);
+
   if (failures != 0) {
     std::cerr << failures << " evidence test(s) failed\n";
     return 1;
