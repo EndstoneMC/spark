@@ -119,7 +119,7 @@ std::string classNameFromTypeDescriptor(std::string_view mangled) {
 } // namespace
 
 std::string chooseVtableLabel(std::vector<VtableEvidence> evidence) {
-  return ::spark::symbol_guess::chooseVtableLabel(std::move(evidence));
+  return ::spark::symbol_guess::chooseVtableLabel(std::move(evidence), nullptr);
 }
 
 int scoreStringHint(std::string_view value) {

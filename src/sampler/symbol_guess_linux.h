@@ -38,6 +38,9 @@ struct BuildStats {
   std::size_t thunk_candidates = 0;
   std::size_t thunk_resolved = 0;
   std::size_t thunk_labels = 0;
+  std::size_t rtti_types = 0;
+  std::size_t rtti_bases = 0;
+  std::size_t vtable_inheritance_resolved = 0;
   std::size_t approximate_bytes = 0;
 };
 

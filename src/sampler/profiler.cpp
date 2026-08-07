@@ -131,6 +131,9 @@ void addSymbolGuessMetadata(ProfileMetadata &meta)
     meta.extra_platform_metadata["Symbol guess vtable candidates"] = std::to_string(stats.vtable_candidates);
     meta.extra_platform_metadata["Symbol guess vtable labels"] = std::to_string(stats.vtable_labels);
     meta.extra_platform_metadata["Symbol guess vtable conflicts"] = std::to_string(stats.vtable_conflicts);
+    meta.extra_platform_metadata["Symbol guess RTTI types"] = std::to_string(stats.rtti_types);
+    meta.extra_platform_metadata["Symbol guess RTTI bases"] = std::to_string(stats.rtti_bases);
+    meta.extra_platform_metadata["Symbol guess vtable inheritance resolved"] = std::to_string(stats.vtable_inheritance_resolved);
     meta.extra_platform_metadata["Symbol guess sampled functions"] = std::to_string(stats.sampled_functions);
     meta.extra_platform_metadata["Symbol guess decoded instructions"] = std::to_string(stats.decoded_instructions);
     meta.extra_platform_metadata["Symbol guess string candidates"] = std::to_string(stats.string_candidates);

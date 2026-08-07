@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Preserve exact sampled native PCs and their independently validated function
   roots in forward-compatible profile fields for offline normalization metrics.
+- Resolve Linux vtable labels for shared implementations by parsing Itanium RTTI
+  inheritance edges, attributing virtual functions to their common ancestor class
+  instead of leaving the RVA unresolved.
 
 ### Fixed
 

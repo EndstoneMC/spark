@@ -40,6 +40,101 @@ std::string_view sourceName(EvidenceSource source) {
 
 } // namespace
 
+void InheritanceMap::addBase(std::string_view derived, std::string_view base) {
+  parents_[std::string(derived)].insert(std::string(base));
+}
+
+bool InheritanceMap::isAncestor(std::string_view ancestor,
+                                std::string_view descendant) const {
+  if (ancestor == descendant) {
+    return true;
+  }
+  std::unordered_set<std::string> visited;
+  std::vector<std::string> stack{std::string(descendant)};
+  while (!stack.empty()) {
+    std::string current = std::move(stack.back());
+    stack.pop_back();
+    if (!visited.insert(current).second) {
+      continue;
+    }
+    auto it = parents_.find(current);
+    if (it == parents_.end()) {
+      continue;
+    }
+    for (const std::string &parent : it->second) {
+      if (parent == ancestor) {
+        return true;
+      }
+      if (!visited.contains(parent)) {
+        stack.push_back(parent);
+      }
+    }
+  }
+  return false;
+}
+
+std::optional<std::string>
+InheritanceMap::findCommonAncestor(const std::set<std::string> &classes) const {
+  if (classes.empty()) {
+    return std::nullopt;
+  }
+  // Compute the intersection of ancestor sets (including each class itself).
+  std::unordered_set<std::string> common;
+  bool first = true;
+  for (const std::string &cls : classes) {
+    std::unordered_set<std::string> ancestors;
+    ancestors.insert(cls);
+    std::vector<std::string> stack{cls};
+    std::unordered_set<std::string> visited;
+    while (!stack.empty()) {
+      std::string current = std::move(stack.back());
+      stack.pop_back();
+      if (!visited.insert(current).second) {
+        continue;
+      }
+      auto it = parents_.find(current);
+      if (it == parents_.end()) {
+        continue;
+      }
+      for (const std::string &parent : it->second) {
+        ancestors.insert(parent);
+        if (!visited.contains(parent)) {
+          stack.push_back(parent);
+        }
+      }
+    }
+    if (first) {
+      common = std::move(ancestors);
+      first = false;
+    } else {
+      std::erase_if(common, [&ancestors](const std::string &s) {
+        return !ancestors.contains(s);
+      });
+    }
+    if (common.empty()) {
+      return std::nullopt;
+    }
+  }
+  if (common.size() == 1) {
+    return *common.begin();
+  }
+  // Multiple common ancestors: find the most derived one (the one that no
+  // other common ancestor is a parent of).
+  for (const std::string &candidate : common) {
+    bool is_most_derived = true;
+    for (const std::string &other : common) {
+      if (candidate != other && isAncestor(candidate, other)) {
+        is_most_derived = false;
+        break;
+      }
+    }
+    if (is_most_derived) {
+      return candidate;
+    }
+  }
+  return std::nullopt;
+}
+
 std::string formatEvidenceLabel(EvidenceSource source, std::string_view message,
                                 bool tentative) {
   if (message.empty()) {
@@ -54,7 +149,8 @@ std::string formatEvidenceLabel(EvidenceSource source, std::string_view message,
   return out;
 }
 
-std::string chooseVtableLabel(std::vector<VtableEvidence> evidence) {
+std::string chooseVtableLabel(std::vector<VtableEvidence> evidence,
+                              const InheritanceMap *inheritance) {
   std::sort(evidence.begin(), evidence.end(),
             [](const VtableEvidence &a, const VtableEvidence &b) {
               if (a.class_name != b.class_name) {
@@ -82,7 +178,54 @@ std::string chooseVtableLabel(std::vector<VtableEvidence> evidence) {
     classes.insert(candidate.class_name);
     slots.insert(candidate.slot);
   }
+
   if (classes.size() != 1) {
+    // Multiple classes share this implementation. Try to resolve via
+    // inheritance: if one class is an ancestor of all others, it is the
+    // most likely owner of the virtual function.
+    if (inheritance != nullptr && !inheritance->empty()) {
+      const std::optional<std::string> ancestor =
+          inheritance->findCommonAncestor(classes);
+      if (ancestor.has_value()) {
+        // Use the slot from the evidence whose class matches the ancestor.
+        // If no evidence matches the ancestor directly, fall back to the
+        // common slot if all candidates agree.
+        std::set<std::uint32_t> ancestor_slots;
+        for (const VtableEvidence &candidate : evidence) {
+          if (candidate.class_name == *ancestor) {
+            ancestor_slots.insert(candidate.slot);
+          }
+        }
+        if (ancestor_slots.size() == 1) {
+          const std::uint32_t ancestor_slot = *ancestor_slots.begin();
+          bool all_slots_match = true;
+          for (const VtableEvidence &candidate : evidence) {
+            if (candidate.slot != ancestor_slot) {
+              all_slots_match = false;
+              break;
+            }
+          }
+          if (all_slots_match) {
+            return formatEvidenceLabel(EvidenceSource::Vtable,
+                                       *ancestor + "::vfn[" +
+                                           std::to_string(ancestor_slot) +
+                                           "]");
+          }
+        }
+        if (!ancestor_slots.empty()) {
+          return formatEvidenceLabel(EvidenceSource::Vtable,
+                                     *ancestor + "::<virtual>", true);
+        }
+        if (slots.size() == 1) {
+          return formatEvidenceLabel(EvidenceSource::Vtable,
+                                     *ancestor + "::vfn[" +
+                                         std::to_string(*slots.begin()) +
+                                         "]");
+        }
+        return formatEvidenceLabel(EvidenceSource::Vtable,
+                                   *ancestor + "::<virtual>", true);
+      }
+    }
     return {};
   }
 

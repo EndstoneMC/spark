@@ -664,12 +664,141 @@ std::string validateTypeInfo(const ImageView &img,
   return name;
 }
 
+enum class TypeInfoKind {
+  Unknown,
+  Class,     // __class_type_info - no bases
+  SiClass,   // __si_class_type_info - single public base
+  VmiClass,  // __vmi_class_type_info - multiple/virtual/private bases
+};
+
+struct TypeInfoEntry {
+  std::uint64_t rva = 0;
+  std::uint64_t vptr = 0; // absolute address
+  std::string class_name;
+};
+
+// Discovers the three Itanium type_info vtable addresses by reading each
+// unique vptr's own typeinfo_ptr. Returns a map from vptr absolute address to
+// the kind of type_info it represents.
+std::unordered_map<std::uint64_t, TypeInfoKind>
+classifyTypeInfoVptrs(const ImageView &img,
+                      const std::vector<TypeInfoEntry> &type_infos,
+                      symbol_guess::linux::BuildStats &stats) {
+  std::unordered_map<std::uint64_t, TypeInfoKind> kind_by_vptr;
+  for (const TypeInfoEntry &entry : type_infos) {
+    if (kind_by_vptr.contains(entry.vptr)) {
+      continue;
+    }
+    // The vptr points to the first virtual function slot in the vtable.
+    // The typeinfo_ptr sits at vptr - 8.
+    std::uint64_t vptr_rva = 0;
+    if (!img.toRva(entry.vptr, vptr_rva)) {
+      continue;
+    }
+    std::uint64_t meta_ti_ptr = 0;
+    if (!readAt(img, vptr_rva - 8, meta_ti_ptr)) {
+      continue;
+    }
+    std::uint64_t meta_ti_rva = 0;
+    if (!img.toRva(meta_ti_ptr, meta_ti_rva)) {
+      continue;
+    }
+    // Read the meta type_info's name (the type_info for the type_info class
+    // itself: __class_type_info, __si_class_type_info, or
+    // __vmi_class_type_info).
+    const std::string meta_name = validateTypeInfo(img, meta_ti_rva);
+    if (meta_name.empty()) {
+      continue;
+    }
+    TypeInfoKind kind = TypeInfoKind::Unknown;
+    if (meta_name.ends_with("::__class_type_info")) {
+      kind = TypeInfoKind::Class;
+    } else if (meta_name.ends_with("::__si_class_type_info")) {
+      kind = TypeInfoKind::SiClass;
+    } else if (meta_name.ends_with("::__vmi_class_type_info")) {
+      kind = TypeInfoKind::VmiClass;
+    }
+    if (kind != TypeInfoKind::Unknown) {
+      kind_by_vptr[entry.vptr] = kind;
+    }
+  }
+  stats.rtti_types = kind_by_vptr.size();
+  return kind_by_vptr;
+}
+
+// Parses direct base class names from a validated type_info. Only public
+// non-virtual bases are included: virtual inheritance and private/protected
+// bases do not produce the simple vtable-slot sharing this resolver targets.
+std::vector<std::string>
+parseTypeBases(const ImageView &img, std::uint64_t ti_rva, TypeInfoKind kind,
+               const std::unordered_map<std::uint64_t, std::string> &name_by_ti_rva,
+               symbol_guess::linux::BuildStats &stats) {
+  std::vector<std::string> bases;
+  if (kind == TypeInfoKind::SiClass) {
+    std::uint64_t base_ptr = 0;
+    if (!readAt(img, ti_rva + 16, base_ptr)) {
+      return bases;
+    }
+    std::uint64_t base_rva = 0;
+    if (!img.toRva(base_ptr, base_rva)) {
+      return bases;
+    }
+    auto it = name_by_ti_rva.find(base_rva);
+    if (it != name_by_ti_rva.end()) {
+      bases.push_back(it->second);
+      ++stats.rtti_bases;
+    }
+  } else if (kind == TypeInfoKind::VmiClass) {
+    std::uint32_t flags = 0;
+    std::uint32_t base_count = 0;
+    if (!readAt(img, ti_rva + 16, flags) ||
+        !readAt(img, ti_rva + 20, base_count)) {
+      return bases;
+    }
+    // Sanity-bound: no real class has more than 64 direct bases.
+    if (base_count == 0 || base_count > 64) {
+      return bases;
+    }
+    for (std::uint32_t i = 0; i < base_count; ++i) {
+      const std::uint64_t entry_offset = ti_rva + 24 + static_cast<std::uint64_t>(i) * 16;
+      std::uint64_t base_ptr = 0;
+      if (!readAt(img, entry_offset, base_ptr)) {
+        break;
+      }
+      std::uint64_t base_rva = 0;
+      if (!img.toRva(base_ptr, base_rva)) {
+        continue;
+      }
+      // offset_flags is a long (8 bytes on x86-64). Bit 1 is __public_mask.
+      std::uint64_t offset_flags = 0;
+      if (!readAt(img, entry_offset + 8, offset_flags)) {
+        continue;
+      }
+      const bool is_public = (offset_flags & 0x2) != 0;
+      const bool is_virtual = (offset_flags & 0x1) != 0;
+      // Only public non-virtual bases produce predictable vtable slot
+      // sharing. Virtual bases use separate vtable sub-objects.
+      if (!is_public || is_virtual) {
+        continue;
+      }
+      auto it = name_by_ti_rva.find(base_rva);
+      if (it != name_by_ti_rva.end()) {
+        bases.push_back(it->second);
+        ++stats.rtti_bases;
+      }
+    }
+  }
+  return bases;
+}
+
 // Scans data segments for Itanium vtables. Collect every owner before choosing
 // a label: first-wins would silently assign shared implementations to whichever
 // class happened to appear first in the image.
 void collectVtableLabels(const ImageView &img, GuessTable &table) {
   std::unordered_map<std::uint64_t, std::vector<symbol_guess::VtableEvidence>>
       candidates;
+  std::vector<TypeInfoEntry> type_infos;
+  std::unordered_map<std::uint64_t, std::string> name_by_ti_rva;
   for (const Section &section : img.sections()) {
     if (section.executable || section.end - section.begin < 32) {
       continue;
@@ -697,6 +826,12 @@ void collectVtableLabels(const ImageView &img, GuessTable &table) {
       if (class_name.empty()) {
         continue;
       }
+      std::uint64_t vptr_value = 0;
+      if (!readAt(img, type_info_rva, vptr_value)) {
+        continue;
+      }
+      name_by_ti_rva[type_info_rva] = class_name;
+      type_infos.push_back({type_info_rva, vptr_value, class_name});
       ++table.stats.vtables;
       const std::uint64_t vtable = rva + 8;
       for (std::uint64_t slot = 0; vtable + 8u * (slot + 1) <= section.end;
@@ -722,11 +857,41 @@ void collectVtableLabels(const ImageView &img, GuessTable &table) {
       }
     }
   }
+  // Classify type_info vptrs and parse inheritance edges so that shared
+  // vtable implementations can be attributed to their common ancestor.
+  const auto kind_by_vptr =
+      classifyTypeInfoVptrs(img, type_infos, table.stats);
+  symbol_guess::InheritanceMap inheritance;
+  for (const TypeInfoEntry &entry : type_infos) {
+    const auto it = kind_by_vptr.find(entry.vptr);
+    if (it == kind_by_vptr.end()) {
+      continue;
+    }
+    const std::vector<std::string> bases =
+        parseTypeBases(img, entry.rva, it->second, name_by_ti_rva,
+                       table.stats);
+    for (const std::string &base : bases) {
+      inheritance.addBase(entry.class_name, base);
+    }
+  }
+
   for (auto &[function, evidence] : candidates) {
-    std::string label = symbol_guess::chooseVtableLabel(std::move(evidence));
+    // Check if this is a multi-class conflict before resolution
+    std::set<std::string> pre_classes;
+    for (const auto &e : evidence) {
+      pre_classes.insert(e.class_name);
+    }
+    const bool was_conflict = pre_classes.size() > 1;
+
+    const std::string label =
+        symbol_guess::chooseVtableLabel(std::move(evidence), &inheritance);
     if (label.empty()) {
       ++table.stats.vtable_conflicts;
       continue;
+    }
+    // Track when inheritance resolved a would-be conflict
+    if (was_conflict && !inheritance.empty()) {
+      ++table.stats.vtable_inheritance_resolved;
     }
     table.labels.emplace(function, std::move(label));
     ++table.stats.vtable_labels;
