@@ -31,6 +31,8 @@ GuessResult resultFromLabel(std::uint64_t function_rva, std::string label,
       {"import: ", GuessKind::Import, Confidence::High},
       {"import?: ", GuessKind::Import, Confidence::Medium},
       {"context?: ", GuessKind::Context, Confidence::Low},
+      {"type: ", GuessKind::Type, Confidence::High},
+      {"type?: ", GuessKind::Type, Confidence::Medium},
   };
   for (const Prefix &prefix : prefixes) {
     if (result.label.starts_with(prefix.text)) {
@@ -1324,6 +1326,72 @@ guessBatch(std::span<const std::uint64_t> rvas) {
         out[rva] = resultFromLabel(candidates[0], body_label);
       }
       ++batch.lambda_body_labels;
+    }
+  }
+
+  // Code pattern detection: scan unresolved functions for characteristic
+  // byte patterns that reveal function behavior.
+  for (const auto &[root, inputs] : root_inputs) {
+    if (!out[inputs[0]].label.empty()) {
+      continue;
+    }
+    const FunctionRange *function = functionContaining(table, root);
+    if (function == nullptr || function->end <= function->begin) {
+      continue;
+    }
+    const Section *section = img.sectionContaining(
+        function->begin, function->end - function->begin);
+    if (section == nullptr || !section->executable) {
+      continue;
+    }
+    const auto code =
+        std::span(img.at(function->begin),
+                  static_cast<std::size_t>(function->end - function->begin));
+
+    // Knuth's multiplicative hash constant 0x9E3779B9 (little-endian).
+    const unsigned char kHashConstant[] = {0xB9, 0x79, 0x37, 0x9E};
+    if (std::search(code.begin(), code.end(), kHashConstant,
+                    kHashConstant + 4) != code.end()) {
+      const std::string label =
+          "type?: hash_table_lookup (Knuth multiplicative hash)";
+      for (std::uint64_t rva : inputs) {
+        out[rva] = resultFromLabel(root, label);
+      }
+      ++batch.code_pattern_labels;
+      continue;
+    }
+
+    // Atomic operations in small functions.
+    if (code.size() < 100) {
+      // lock cmpxchg: F0 0F B1 or F0 48 0F B1
+      const unsigned char kLockCmpxchg[] = {0xF0, 0x0F, 0xB1};
+      const unsigned char kLockCmpxchg64[] = {0xF0, 0x48, 0x0F, 0xB1};
+      if (std::search(code.begin(), code.end(), kLockCmpxchg,
+                      kLockCmpxchg + 3) != code.end() ||
+          std::search(code.begin(), code.end(), kLockCmpxchg64,
+                      kLockCmpxchg64 + 4) != code.end()) {
+        const std::string label = "type?: atomic_cas_loop (lock cmpxchg)";
+        for (std::uint64_t rva : inputs) {
+          out[rva] = resultFromLabel(root, label);
+        }
+        ++batch.code_pattern_labels;
+        continue;
+      }
+
+      // lock xadd: F0 0F C1 or F0 48 0F C1
+      const unsigned char kLockXadd[] = {0xF0, 0x0F, 0xC1};
+      const unsigned char kLockXadd64[] = {0xF0, 0x48, 0x0F, 0xC1};
+      if (std::search(code.begin(), code.end(), kLockXadd,
+                      kLockXadd + 3) != code.end() ||
+          std::search(code.begin(), code.end(), kLockXadd64,
+                      kLockXadd64 + 4) != code.end()) {
+        const std::string label = "type?: atomic_fetch_add (lock xadd)";
+        for (std::uint64_t rva : inputs) {
+          out[rva] = resultFromLabel(root, label);
+        }
+        ++batch.code_pattern_labels;
+        continue;
+      }
     }
   }
 

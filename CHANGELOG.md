@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   weak string hints with tentative `str?` accumulated labels.
 - Propagate lambda type names from `std::function::__func` vtable thunks to their
   single large unresolved call target on Linux with low-confidence `call?` hints.
+- Label unresolved Linux main-executable functions with characteristic code
+  patterns (Knuth multiplicative hash, atomic `lock cmpxchg`/`lock xadd`) with
+  low-confidence `type?` behavior hints.
 
 ### Fixed
 

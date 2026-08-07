@@ -17,6 +17,7 @@ enum class GuessKind {
   Call,
   Import,
   Context,
+  Type,
 };
 
 enum class Confidence {
