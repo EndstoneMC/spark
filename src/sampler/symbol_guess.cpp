@@ -1410,12 +1410,14 @@ guessBatch(std::span<const std::uint64_t> rvas) {
     }
 
     // Binary search: 2+ shr/sar reg,1 instructions (D1 /5 or D1 /7 with
-    // mod=11). Multiple range-halving operations indicate lower_bound +
-    // upper_bound loops.  Restricted to small functions: shift-right-by-1
-    // is common in general computation, so the pattern is only meaningful
-    // in compact functions where it dominates the instruction mix.
+    // mod=11) co-occurring with a not-reg instruction (REX.W F7 /2).
+    // Shift-right-by-1 alone is common in bit manipulation (e.g. Mersenne
+    // Twister); the not-reg range adjustment (base + ~half) is specific to
+    // lower_bound/upper_bound loops.  Restricted to compact functions where
+    // these patterns dominate the instruction mix.
     if (code.size() <= 1000) {
       int shift_right_1_count = 0;
+      int not_count = 0;
       for (std::size_t i = 0; i + 1 < code.size(); ++i) {
         if (code[i] == 0xD1) {
           const unsigned char modrm = code[i + 1];
@@ -1424,8 +1426,13 @@ guessBatch(std::span<const std::uint64_t> rvas) {
             ++shift_right_1_count;
           }
         }
+        if (i + 2 < code.size() && code[i] >= 0x48 && code[i] <= 0x4F &&
+            code[i + 1] == 0xF7 && code[i + 2] >= 0xD0 &&
+            code[i + 2] <= 0xD7) {
+          ++not_count;
+        }
       }
-      if (shift_right_1_count >= 2) {
+      if (shift_right_1_count >= 2 && not_count >= 1) {
         const std::string label =
             "type?: binary_search (shift-right halving)";
         for (std::uint64_t rva : inputs) {
