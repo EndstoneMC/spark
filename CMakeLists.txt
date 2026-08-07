@@ -48,7 +48,49 @@ FetchContent_Declare(endstone
         GIT_TAG v0.11)
 FetchContent_MakeAvailable(endstone)
 
-# --- platform-independent profiler core (no Endstone dependency) ---
+# --- native backend: sampler, symbol guesser, allocation hooks (no Endstone) ---
+add_library(spark_native STATIC
+        src/native/alloc/allocation_thread_filter.cpp
+        src/native/sampler/call_tree.cpp
+        src/native/sampler/sampler.cpp
+        src/native/sampler/thread_selector.cpp
+        src/native/sampler/thread_info.cpp
+        src/native/symbol/symbol_guess_dwarf.cpp
+        src/native/symbol/symbol_guess_evidence.cpp
+        src/native/symbol/symbolicate.cpp
+        src/native/symbol/symbol_guess.cpp)
+if (WIN32)
+    target_sources(spark_native PRIVATE
+            src/native/symbol/symbol_guess_windows.cpp
+            src/native/sampler/capture_windows.cpp
+            src/native/alloc/allocation_sampler_windows.cpp)
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    target_sources(spark_native PRIVATE
+            src/native/sampler/capture_linux.cpp
+            src/native/alloc/allocation_sampler_linux.cpp
+            src/native/alloc/elf_import_hooks.cpp)
+else ()
+    target_sources(spark_native PRIVATE
+            src/native/sampler/capture_linux.cpp
+            src/native/alloc/allocation_sampler_stub.cpp)
+endif ()
+target_include_directories(spark_native PUBLIC src)
+target_link_libraries(spark_native PUBLIC cpptrace::cpptrace concurrentqueue::concurrentqueue
+        Threads::Threads)
+set_target_properties(spark_native PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_definitions(spark_native PRIVATE _GNU_SOURCE)
+    target_compile_options(spark_native PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+endif ()
+if (WIN32)
+    target_include_directories(spark_native PRIVATE "${funchook_SOURCE_DIR}/distorm/include")
+    target_link_libraries(spark_native PUBLIC dbghelp psapi advapi32 funchook-static distorm)
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    target_include_directories(spark_native PRIVATE "${funchook_SOURCE_DIR}/distorm/include")
+    target_link_libraries(spark_native PUBLIC distorm)
+endif ()
+
+# --- platform-independent core: profiler, stats, proto, net (no Endstone) ---
 add_library(spark_core STATIC
         src/core/util/format.cpp
         src/core/command/arguments.cpp
@@ -60,47 +102,12 @@ add_library(spark_core STATIC
         src/proto/sampler_data.cpp
         src/net/gzip.cpp
         src/net/bytebin.cpp
-        src/net/profile_file.cpp
-        src/native/alloc/allocation_thread_filter.cpp
-        src/native/sampler/call_tree.cpp
-        src/native/sampler/sampler.cpp
-        src/native/sampler/thread_selector.cpp
-        src/native/sampler/thread_info.cpp
-        src/native/symbol/symbol_guess_dwarf.cpp
-        src/native/symbol/symbol_guess_evidence.cpp
-        src/native/symbol/symbolicate.cpp
-        src/native/symbol/symbol_guess.cpp)
-if (WIN32)
-    target_sources(spark_core PRIVATE
-            src/native/symbol/symbol_guess_windows.cpp
-            src/native/sampler/capture_windows.cpp
-            src/native/alloc/allocation_sampler_windows.cpp)
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-    target_sources(spark_core PRIVATE
-            src/native/sampler/capture_linux.cpp
-            src/native/alloc/allocation_sampler_linux.cpp
-            src/native/alloc/elf_import_hooks.cpp)
-else ()
-    target_sources(spark_core PRIVATE
-            src/native/sampler/capture_linux.cpp
-            src/native/alloc/allocation_sampler_stub.cpp)
-endif ()
+        src/net/profile_file.cpp)
 target_include_directories(spark_core PUBLIC src)
-target_link_libraries(spark_core PUBLIC cpptrace::cpptrace concurrentqueue::concurrentqueue ZLIB::ZLIB CURL::libcurl
-        Threads::Threads)
+target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl)
 set_target_properties(spark_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-# Keep our vendored cpptrace/zlib symbols local to the .so that embeds spark_core so
-# they never interpose with Endstone core's own (differently-built) cpptrace copy.
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_definitions(spark_core PRIVATE _GNU_SOURCE)
     target_compile_options(spark_core PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
-endif ()
-if (WIN32)
-    target_include_directories(spark_core PRIVATE "${funchook_SOURCE_DIR}/distorm/include")
-    target_link_libraries(spark_core PUBLIC dbghelp psapi advapi32 funchook-static distorm)
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-    target_include_directories(spark_core PRIVATE "${funchook_SOURCE_DIR}/distorm/include")
-    target_link_libraries(spark_core PUBLIC distorm)
 endif ()
 
 # --- the Endstone plugin (links only its own static core + Endstone headers) ---
