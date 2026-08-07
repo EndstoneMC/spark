@@ -994,6 +994,88 @@ void scanCandidateReferences(
 
 const GuessTable &guessTable();
 
+// Control-flow walker matching decodeRipRelativeLeaTargets but collecting
+// direct CALL targets (call rel32) instead of LEA rip-relative operands.
+std::vector<std::uint64_t>
+decodeDirectCallTargets(std::span<const std::uint8_t> code,
+                        std::uint64_t function_rva,
+                        std::size_t *decoded_instructions) {
+  if (code.empty() || code.size() > static_cast<std::size_t>(
+                                        (std::numeric_limits<int>::max)())) {
+    return {};
+  }
+
+  std::vector<std::size_t> work{0};
+  std::unordered_set<std::size_t> visited;
+  std::set<std::uint64_t> targets;
+  while (!work.empty()) {
+    std::size_t cursor = work.back();
+    work.pop_back();
+    while (cursor < code.size()) {
+      _CodeInfo info{};
+      info.codeOffset = function_rva + cursor;
+      info.code = code.data() + cursor;
+      info.codeLen = static_cast<int>(code.size() - cursor);
+      info.dt = Decode64Bits;
+      info.features = DF_STOP_ON_FLOW_CONTROL | DF_STOP_ON_UNDECODEABLE;
+      _DInst instructions[64]{};
+      unsigned used = 0;
+      const _DecodeResult result =
+          distorm_decompose64(&info, instructions, 64, &used);
+      if ((result == DECRES_INPUTERR || result == DECRES_NONE) || used == 0) {
+        break;
+      }
+
+      bool stop = false;
+      for (unsigned i = 0; i < used; ++i) {
+        const _DInst &instruction = instructions[i];
+        if (instruction.flags == FLAG_NOT_DECODABLE || instruction.size == 0 ||
+            instruction.addr < function_rva ||
+            instruction.addr - function_rva >= code.size()) {
+          stop = true;
+          break;
+        }
+        const std::size_t offset =
+            static_cast<std::size_t>(instruction.addr - function_rva);
+        if (!visited.insert(offset).second) {
+          stop = true;
+          break;
+        }
+        if (decoded_instructions != nullptr) {
+          ++*decoded_instructions;
+        }
+        if (instruction.opcode == I_CALL && instruction.opsNo >= 1 &&
+            instruction.ops[0].type == O_PC) {
+          targets.insert(INSTRUCTION_GET_TARGET(&instruction));
+        }
+
+        const unsigned flow = META_GET_FC(instruction.meta);
+        if (flow == FC_CND_BRANCH || flow == FC_UNC_BRANCH) {
+          for (const _Operand &operand : instruction.ops) {
+            if (operand.type != O_PC) {
+              continue;
+            }
+            const std::uint64_t target = INSTRUCTION_GET_TARGET(&instruction);
+            if (target >= function_rva && target - function_rva < code.size()) {
+              work.push_back(static_cast<std::size_t>(target - function_rva));
+            }
+            break;
+          }
+        }
+        cursor = offset + instruction.size;
+        if (flow == FC_RET || flow == FC_SYS || flow == FC_UNC_BRANCH ||
+            flow == FC_INT || flow == FC_HLT) {
+          stop = true;
+        }
+      }
+      if (stop) {
+        break;
+      }
+    }
+  }
+  return {targets.begin(), targets.end()};
+}
+
 std::unordered_map<std::uint64_t, GuessResult>
 guessBatch(std::span<const std::uint64_t> rvas) {
   std::unordered_map<std::uint64_t, GuessResult> out;
@@ -1155,6 +1237,93 @@ guessBatch(std::span<const std::uint64_t> rvas) {
     ++batch.string_accumulated_labels;
     for (std::uint64_t rva : root_inputs.at(root)) {
       out[rva] = resultFromLabel(root, accumulated_label);
+    }
+  }
+
+  // Lambda body propagation: std::function::__func<LambdaType, ...>::vfn[6]
+  // is operator(), a small thunk that typically tail-calls the lambda body.
+  // When exactly one large unresolved CALL target survives filtering, the
+  // lambda name is propagated to that target.
+  for (const auto &[root, inputs] : root_inputs) {
+    const auto label_it = table.labels.find(root);
+    if (label_it == table.labels.end()) {
+      continue;
+    }
+    const std::string &vtable_label = label_it->second;
+    if (vtable_label.find("function::__func<") == std::string::npos ||
+        vtable_label.find("::vfn[6]") == std::string::npos) {
+      continue;
+    }
+
+    // Extract the lambda type name between '<' and the first ',' at bracket
+    // depth 1, so nested templates inside the lambda name are handled.
+    const std::size_t lt = vtable_label.find('<');
+    if (lt == std::string::npos) {
+      continue;
+    }
+    int depth = 0;
+    std::size_t comma = std::string::npos;
+    for (std::size_t i = lt; i < vtable_label.size(); ++i) {
+      if (vtable_label[i] == '<') {
+        ++depth;
+      } else if (vtable_label[i] == '>') {
+        --depth;
+        if (depth == 0) {
+          break;
+        }
+      } else if (vtable_label[i] == ',' && depth == 1) {
+        comma = i;
+        break;
+      }
+    }
+    if (comma == std::string::npos) {
+      continue;
+    }
+    const std::string lambda_name =
+        vtable_label.substr(lt + 1, comma - lt - 1);
+
+    const FunctionRange *function = functionContaining(table, root);
+    if (function == nullptr || function->end <= function->begin) {
+      continue;
+    }
+    const Section *section = img.sectionContaining(
+        function->begin, function->end - function->begin);
+    if (section == nullptr || !section->executable) {
+      continue;
+    }
+    const auto code =
+        std::span(img.at(function->begin),
+                  static_cast<std::size_t>(function->end - function->begin));
+    const auto call_targets = decodeDirectCallTargets(
+        code, function->begin, &batch.decoded_instructions);
+
+    std::vector<std::uint64_t> candidates;
+    for (std::uint64_t target : call_targets) {
+      const FunctionRange *target_func = functionContaining(table, target);
+      if (target_func == nullptr) {
+        continue;
+      }
+      const std::uint64_t target_root = target_func->root;
+      const auto target_it = root_inputs.find(target_root);
+      if (target_it == root_inputs.end()) {
+        continue;
+      }
+      if (!out[target_it->second[0]].label.empty()) {
+        continue;
+      }
+      if (target_func->end - target_func->begin < 500) {
+        continue;
+      }
+      candidates.push_back(target_root);
+    }
+
+    if (candidates.size() == 1) {
+      const std::string body_label =
+          "call?: " + lambda_name + " (lambda body)";
+      for (std::uint64_t rva : root_inputs.at(candidates[0])) {
+        out[rva] = resultFromLabel(candidates[0], body_label);
+      }
+      ++batch.lambda_body_labels;
     }
   }
 

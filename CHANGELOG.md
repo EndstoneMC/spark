@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Label unresolved Linux main-executable functions that reference uniquely-owned
   BDS debug trace strings (`"N _functionName"` patterns) with low-confidence
   `str?` hints.
+- Label unresolved Linux main-executable functions that reference multiple unique
+  weak string hints with tentative `str?` accumulated labels.
+- Propagate lambda type names from `std::function::__func` vtable thunks to their
+  single large unresolved call target on Linux with low-confidence `call?` hints.
 
 ### Fixed
 
