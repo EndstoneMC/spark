@@ -16,8 +16,8 @@
 #include <string_view>
 #include <vector>
 
-#include "sampler/symbol_guess_windows.h"
-#include "sampler/symbolicate.h"
+#include "native/symbol/symbol_guess_windows.h"
+#include "native/symbol/symbolicate.h"
 
 namespace {
 

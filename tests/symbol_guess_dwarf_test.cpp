@@ -1,4 +1,4 @@
-#include "sampler/symbol_guess_dwarf.h"
+#include "native/symbol/symbol_guess_dwarf.h"
 
 #include <algorithm>
 #include <cstdint>

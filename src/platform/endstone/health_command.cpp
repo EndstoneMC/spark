@@ -6,8 +6,8 @@
 #include <endstone/endstone.hpp>
 
 #include "core/util/format.h"
-#include "stats/statistics_service.h"
-#include "stats/system_stats.h"
+#include "core/stats/statistics_service.h"
+#include "core/stats/system_stats.h"
 
 namespace spark::endstone_adapter {
 

@@ -31,26 +31,26 @@
 #include <unistd.h>
 #endif
 
-#include "command/arguments.h"
-#include "alloc/allocation_thread_filter.h"
-#include "alloc/byte_sampler.h"
-#include "alloc/allocation_sampler.h"
+#include "core/command/arguments.h"
+#include "native/alloc/allocation_thread_filter.h"
+#include "native/alloc/byte_sampler.h"
+#include "native/alloc/allocation_sampler.h"
 #if defined(__linux__)
-#include "alloc/elf_import_hooks.h"
+#include "native/alloc/elf_import_hooks.h"
 #endif
 #include "net/bytebin.h"
 #include "net/gzip.h"
 #include "net/profile_file.h"
 #include "proto/sampler_data.h"
-#include "sampler/capture.h"
-#include "sampler/profiler.h"
-#include "sampler/symbolicate.h"
-#include "sampler/thread_info.h"
-#include "sampler/types.h"
+#include "native/sampler/capture.h"
+#include "core/profiler/profiler.h"
+#include "native/symbol/symbolicate.h"
+#include "native/sampler/thread_info.h"
+#include "native/sampler/types.h"
 #include "spark_constants.h"
-#include "stats/executable_hash.h"
-#include "stats/statistics_service.h"
-#include "stats/tick_monitor.h"
+#include "core/stats/executable_hash.h"
+#include "core/stats/statistics_service.h"
+#include "core/stats/tick_monitor.h"
 
 namespace {
 

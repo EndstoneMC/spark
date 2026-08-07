@@ -8,8 +8,8 @@
 
 #include <endstone/endstone.hpp>
 
-#include "sampler/profiler.h"
-#include "stats/system_stats.h"
+#include "core/profiler/profiler.h"
+#include "core/stats/system_stats.h"
 
 namespace spark::endstone_adapter {
 

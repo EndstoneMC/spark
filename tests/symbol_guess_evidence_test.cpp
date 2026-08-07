@@ -1,4 +1,4 @@
-#include "sampler/symbol_guess_evidence.h"
+#include "native/symbol/symbol_guess_evidence.h"
 
 #include <iostream>
 #include <string>

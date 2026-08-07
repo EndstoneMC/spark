@@ -7,8 +7,8 @@
 #include <string>
 #include <thread>
 
-#include "sampler/profiler.h"
-#include "stats/statistics_service.h"
+#include "core/profiler/profiler.h"
+#include "core/stats/statistics_service.h"
 
 namespace endstone {
 class CommandSender;

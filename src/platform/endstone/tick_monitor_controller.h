@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <string>
 
-#include "stats/tick_monitor.h"
+#include "core/stats/tick_monitor.h"
 
 namespace endstone {
 class CommandSender;

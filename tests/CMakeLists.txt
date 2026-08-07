@@ -1,6 +1,5 @@
 add_executable(spark_selftest
-        selftest.cpp
-        ../src/command/arguments.cpp)
+        selftest.cpp)
 target_link_libraries(spark_selftest PRIVATE spark_core)
 set_target_properties(spark_selftest PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

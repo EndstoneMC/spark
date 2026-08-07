@@ -8,12 +8,12 @@
 #include <unordered_map>
 #include <vector>
 
-#include "sampler/call_tree.h"
-#include "sampler/profile_mode.h"
-#include "sampler/symbolicate.h"
-#include "sampler/types.h"
-#include "stats/statistics_service.h"
-#include "stats/system_stats.h"
+#include "native/sampler/call_tree.h"
+#include "core/profiler/profile_mode.h"
+#include "native/symbol/symbolicate.h"
+#include "native/sampler/types.h"
+#include "core/stats/statistics_service.h"
+#include "core/stats/system_stats.h"
 
 namespace spark {
 

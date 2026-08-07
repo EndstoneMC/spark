@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-#include "stats/statistics_service.h"
+#include "core/stats/statistics_service.h"
 
 namespace spark {
 

@@ -4,8 +4,8 @@
 
 #include <endstone/endstone.hpp>
 
-#include "command/arguments.h"
-#include "stats/tick_monitor.h"
+#include "core/command/arguments.h"
+#include "core/stats/tick_monitor.h"
 
 namespace spark::endstone_adapter {
 

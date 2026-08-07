@@ -10,16 +10,16 @@
 
 #include <endstone/endstone.hpp>
 
-#include "command/arguments.h"
+#include "core/command/arguments.h"
 #include "core/util/format.h"
 #include "net/bytebin.h"
 #include "net/gzip.h"
 #include "net/profile_file.h"
 #include "platform/endstone/server_info.h"
-#include "sampler/profiler.h"
+#include "core/profiler/profiler.h"
 #include "spark_constants.h"
-#include "stats/statistics_service.h"
-#include "stats/system_stats.h"
+#include "core/stats/statistics_service.h"
+#include "core/stats/system_stats.h"
 
 namespace spark::endstone_adapter {
 

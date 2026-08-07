@@ -1,4 +1,4 @@
-#include "sampler/symbol_guess_linux.h"
+#include "native/symbol/symbol_guess_linux.h"
 
 #if defined(__linux__) && defined(__x86_64__)
 

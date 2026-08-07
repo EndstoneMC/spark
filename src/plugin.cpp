@@ -14,13 +14,13 @@
 #include <unistd.h>
 #endif
 
-#include "command/arguments.h"
+#include "core/command/arguments.h"
 #include "platform/endstone/health_command.h"
 #include "platform/endstone/profiler_controller.h"
 #include "platform/endstone/tick_monitor_controller.h"
 #include "spark_constants.h"
-#include "stats/executable_hash.h"
-#include "stats/statistics_service.h"
+#include "core/stats/executable_hash.h"
+#include "core/stats/statistics_service.h"
 
 namespace {
 

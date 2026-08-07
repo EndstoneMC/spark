@@ -9,8 +9,8 @@
 #include <thread>
 #include <vector>
 
-#include "alloc/allocation_sampler.h"
-#include "sampler/thread_info.h"
+#include "native/alloc/allocation_sampler.h"
+#include "native/sampler/thread_info.h"
 
 namespace {
 

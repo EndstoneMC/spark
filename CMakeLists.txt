@@ -51,38 +51,39 @@ FetchContent_MakeAvailable(endstone)
 # --- platform-independent profiler core (no Endstone dependency) ---
 add_library(spark_core STATIC
         src/core/util/format.cpp
+        src/core/command/arguments.cpp
+        src/core/profiler/profiler.cpp
+        src/core/stats/executable_hash.cpp
+        src/core/stats/statistics_service.cpp
+        src/core/stats/tick_monitor.cpp
+        src/core/stats/system_stats.cpp
         src/proto/sampler_data.cpp
         src/net/gzip.cpp
         src/net/bytebin.cpp
         src/net/profile_file.cpp
-        src/alloc/allocation_thread_filter.cpp
-        src/sampler/call_tree.cpp
-        src/sampler/symbol_guess_dwarf.cpp
-        src/sampler/symbol_guess_evidence.cpp
-        src/sampler/symbolicate.cpp
-        src/sampler/symbol_guess.cpp
-        src/sampler/sampler.cpp
-        src/sampler/profiler.cpp
-        src/sampler/thread_selector.cpp
-        src/sampler/thread_info.cpp
-        src/stats/executable_hash.cpp
-        src/stats/statistics_service.cpp
-        src/stats/tick_monitor.cpp
-        src/stats/system_stats.cpp)
+        src/native/alloc/allocation_thread_filter.cpp
+        src/native/sampler/call_tree.cpp
+        src/native/sampler/sampler.cpp
+        src/native/sampler/thread_selector.cpp
+        src/native/sampler/thread_info.cpp
+        src/native/symbol/symbol_guess_dwarf.cpp
+        src/native/symbol/symbol_guess_evidence.cpp
+        src/native/symbol/symbolicate.cpp
+        src/native/symbol/symbol_guess.cpp)
 if (WIN32)
     target_sources(spark_core PRIVATE
-            src/sampler/symbol_guess_windows.cpp
-            src/sampler/capture_windows.cpp
-            src/alloc/allocation_sampler_windows.cpp)
+            src/native/symbol/symbol_guess_windows.cpp
+            src/native/sampler/capture_windows.cpp
+            src/native/alloc/allocation_sampler_windows.cpp)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
     target_sources(spark_core PRIVATE
-            src/sampler/capture_linux.cpp
-            src/alloc/allocation_sampler_linux.cpp
-            src/alloc/elf_import_hooks.cpp)
+            src/native/sampler/capture_linux.cpp
+            src/native/alloc/allocation_sampler_linux.cpp
+            src/native/alloc/elf_import_hooks.cpp)
 else ()
     target_sources(spark_core PRIVATE
-            src/sampler/capture_linux.cpp
-            src/alloc/allocation_sampler_stub.cpp)
+            src/native/sampler/capture_linux.cpp
+            src/native/alloc/allocation_sampler_stub.cpp)
 endif ()
 target_include_directories(spark_core PUBLIC src)
 target_link_libraries(spark_core PUBLIC cpptrace::cpptrace concurrentqueue::concurrentqueue ZLIB::ZLIB CURL::libcurl
@@ -108,8 +109,7 @@ endstone_add_plugin(spark
         src/platform/endstone/profiler_controller.cpp
         src/platform/endstone/server_info.cpp
         src/platform/endstone/tick_monitor_controller.cpp
-        src/plugin.cpp
-        src/command/arguments.cpp)
+        src/plugin.cpp)
 target_include_directories(spark PRIVATE src)
 target_link_libraries(spark PRIVATE spark_core)
 # Localize every symbol from the static archives (zlib, cpptrace, libunwind, libc++)
