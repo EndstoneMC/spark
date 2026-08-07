@@ -1415,7 +1415,7 @@ guessBatch(std::span<const std::uint64_t> rvas) {
     // Twister); the not-reg range adjustment (base + ~half) is specific to
     // lower_bound/upper_bound loops.  Restricted to compact functions where
     // these patterns dominate the instruction mix.
-    if (code.size() <= 1000) {
+    if (code.size() <= 1500) {
       int shift_right_1_count = 0;
       int not_count = 0;
       for (std::size_t i = 0; i + 1 < code.size(); ++i) {
