@@ -24,6 +24,7 @@
 #endif
 
 #include "command/arguments.h"
+#include "core/util/format.h"
 #include "net/bytebin.h"
 #include "net/gzip.h"
 #include "net/profile_file.h"
@@ -63,35 +64,6 @@ int floorDiv(int value, int divisor)
     int quotient = value / divisor;
     int remainder = value % divisor;
     return remainder < 0 ? quotient - 1 : quotient;
-}
-
-std::string formatDuration(std::int64_t seconds)
-{
-    if (seconds < 60) {
-        return std::to_string(seconds) + "s";
-    }
-    long m = seconds / 60;
-    long s = seconds % 60;
-    if (m < 60) {
-        return std::to_string(m) + "m " + std::to_string(s) + "s";
-    }
-    long h = m / 60;
-    m %= 60;
-    return std::to_string(h) + "h " + std::to_string(m) + "m";
-}
-
-std::string formatBytes(std::uint64_t bytes)
-{
-    constexpr const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
-    double value = static_cast<double>(bytes);
-    std::size_t unit = 0;
-    while (value >= 1024.0 && unit + 1 < (sizeof(units) / sizeof(units[0]))) {
-        value /= 1024.0;
-        ++unit;
-    }
-    char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), unit == 0 ? "%.0f %s" : "%.2f %s", value, units[unit]);
-    return buffer;
 }
 
 template <typename Sender>
@@ -137,87 +109,6 @@ std::string dimensionName(const Dimension &dimension)
     else {
         return static_cast<std::string>(dimension.getId());
     }
-}
-
-const std::string &tpsColor(double tps)
-{
-    if (tps >= 19.5) {
-        return ColorFormat::Green;
-    }
-    if (tps >= 18.0) {
-        return ColorFormat::Yellow;
-    }
-    if (tps >= 15.0) {
-        return ColorFormat::Gold;
-    }
-    return ColorFormat::Red;
-}
-
-const std::string &msptColor(double mspt)
-{
-    if (mspt <= 25.0) {
-        return ColorFormat::Green;
-    }
-    if (mspt <= 40.0) {
-        return ColorFormat::Yellow;
-    }
-    if (mspt <= 50.0) {
-        return ColorFormat::Gold;
-    }
-    return ColorFormat::Red;
-}
-
-const std::string &cpuColor(double usage)
-{
-    if (usage < 0.65) {
-        return ColorFormat::Green;
-    }
-    if (usage < 0.85) {
-        return ColorFormat::Yellow;
-    }
-    return ColorFormat::Red;
-}
-
-std::string formatNumber(double value, int precision)
-{
-    char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), precision == 1 ? "%.1f" : "%.2f",
-                  value);
-    return buffer;
-}
-
-std::string formatTpsValue(const spark::RollingValue &value)
-{
-    if (!value.present) {
-        return ColorFormat::Gray + std::string("n/a");
-    }
-    return tpsColor(value.value) + formatNumber(value.value, 1) +
-           ColorFormat::Gray;
-}
-
-std::string formatCpuValue(const spark::RollingValue &value)
-{
-    if (!value.present) {
-        return ColorFormat::Gray + std::string("n/a");
-    }
-    return cpuColor(value.value) + formatNumber(value.value * 100.0, 1) +
-           "%" + ColorFormat::Gray;
-}
-
-std::string formatMsptValue(double value)
-{
-    return msptColor(value) + formatNumber(value, 2) + ColorFormat::Gray;
-}
-
-std::string formatMsptDistribution(const spark::DistributionValues &values)
-{
-    if (!values.present) {
-        return ColorFormat::Gray + std::string("n/a");
-    }
-    return formatMsptValue(values.mean) + "/" + formatMsptValue(values.min) +
-           "/" + formatMsptValue(values.median) + "/" +
-           formatMsptValue(values.percentile95) + "/" +
-           formatMsptValue(values.max);
 }
 
 }  // namespace
@@ -511,13 +402,13 @@ private:
                 (options.threads.size() == 1 && options.threads.front() == "*")) {
                 sender.sendMessage(
                     "Sampling approximately every {} of native allocations across process threads.",
-                    formatBytes(static_cast<std::uint64_t>(
+                    spark::formatBytes(static_cast<std::uint64_t>(
                         options.allocation_interval_bytes)));
             }
             else {
                 sender.sendMessage(
                     "Sampling approximately every {} of native allocations from matching threads.",
-                    formatBytes(static_cast<std::uint64_t>(
+                    spark::formatBytes(static_cast<std::uint64_t>(
                         options.allocation_interval_bytes)));
             }
             if (options.alloc_live_only) {
@@ -549,7 +440,7 @@ private:
             if (timeout < 30) {
                 sender.sendMessage("Tip: a timeout over 30s gives noticeably more accurate results.");
             }
-            sender.sendMessage("Results will be returned automatically after {}.", formatDuration(timeout));
+            sender.sendMessage("Results will be returned automatically after {}.", spark::formatDuration(timeout));
         }
     }
 
@@ -633,19 +524,19 @@ private:
         if (allocation) {
             if (profiler_.options().alloc_live_only) {
                 sender.sendMessage("So far it has profiled for {} ({} tracked sampled allocations still live process-wide, {} estimated).",
-                                   formatDuration(ran), profiler_.liveAllocationSamples(),
-                                   formatBytes(profiler_.liveAllocationBytes()));
+                                   spark::formatDuration(ran), profiler_.liveAllocationSamples(),
+                                   spark::formatBytes(profiler_.liveAllocationBytes()));
             }
             else {
                 sender.sendMessage("So far it has profiled for {} ({} selected allocation samples, {} estimated; {} observed process-wide).",
-                                   formatDuration(ran), profiler_.sampleCount(),
-                                   formatBytes(profiler_.sampledAllocationBytes()),
-                                   formatBytes(profiler_.observedAllocationBytes()));
+                                   spark::formatDuration(ran), profiler_.sampleCount(),
+                                   spark::formatBytes(profiler_.sampledAllocationBytes()),
+                                   spark::formatBytes(profiler_.observedAllocationBytes()));
             }
             sender.sendMessage("Process-wide tracked lifecycle: {} freed, {} still live ({}).",
                                profiler_.freedAllocationSamples(),
                                profiler_.liveAllocationSamples(),
-                               formatBytes(profiler_.liveAllocationBytes()));
+                               spark::formatBytes(profiler_.liveAllocationBytes()));
             if (profiler_.droppedSamples() != 0) {
                 sender.sendMessage("Dropped allocation samples: {}", profiler_.droppedSamples());
             }
@@ -660,7 +551,7 @@ private:
             }
         }
         else {
-            sender.sendMessage("So far it has profiled for {} ({} samples).", formatDuration(ran),
+            sender.sendMessage("So far it has profiled for {} ({} samples).", spark::formatDuration(ran),
                                profiler_.sampleCount());
         }
         std::int64_t auto_end = profiler_.autoEndTimeMs();
@@ -668,7 +559,7 @@ private:
             sender.sendMessage("To stop and finalize the profile, run: {}/spark profiler stop", ColorFormat::Gray);
         }
         else {
-            sender.sendMessage("It finishes automatically in {}.", formatDuration((auto_end - nowMs()) / 1000));
+            sender.sendMessage("It finishes automatically in {}.", spark::formatDuration((auto_end - nowMs()) / 1000));
         }
         sender.sendMessage("To cancel without generating a profile, run: {}/spark profiler cancel", ColorFormat::Gray);
     }
@@ -954,35 +845,35 @@ private:
         sender.sendMessage(
             "{}TPS {}(5s/10s/1m/5m/15m){}: {} / {} / {} / {} / {}",
             ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
-            formatTpsValue(stats.tps.last_5s),
-            formatTpsValue(stats.tps.last_10s),
-            formatTpsValue(stats.tps.last_1m),
-            formatTpsValue(stats.tps.last_5m),
-            formatTpsValue(stats.tps.last_15m));
+            spark::formatTpsValue(stats.tps.last_5s),
+            spark::formatTpsValue(stats.tps.last_10s),
+            spark::formatTpsValue(stats.tps.last_1m),
+            spark::formatTpsValue(stats.tps.last_5m),
+            spark::formatTpsValue(stats.tps.last_15m));
         sender.sendMessage(
             "{}MSPT 10s {}(mean/min/median/p95/max){}: {}",
             ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
-            formatMsptDistribution(stats.mspt.last_10s));
+            spark::formatMsptDistribution(stats.mspt.last_10s));
         sender.sendMessage(
             "{}MSPT 1m  {}(mean/min/median/p95/max){}: {}",
             ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
-            formatMsptDistribution(stats.mspt.last_1m));
+            spark::formatMsptDistribution(stats.mspt.last_1m));
         sender.sendMessage(
             "{}MSPT 5m  {}(mean/min/median/p95/max){}: {}",
             ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
-            formatMsptDistribution(stats.mspt.last_5m));
+            spark::formatMsptDistribution(stats.mspt.last_5m));
         sender.sendMessage(
             "{}Process CPU {}(10s/1m/15m){}: {} / {} / {}",
             ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
-            formatCpuValue(stats.cpu.process_last_10s),
-            formatCpuValue(stats.cpu.process_last_1m),
-            formatCpuValue(stats.cpu.process_last_15m));
+            spark::formatCpuValue(stats.cpu.process_last_10s),
+            spark::formatCpuValue(stats.cpu.process_last_1m),
+            spark::formatCpuValue(stats.cpu.process_last_15m));
         sender.sendMessage(
             "{}System CPU {}(10s/1m/15m){}: {} / {} / {}",
             ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
-            formatCpuValue(stats.cpu.system_last_10s),
-            formatCpuValue(stats.cpu.system_last_1m),
-            formatCpuValue(stats.cpu.system_last_15m));
+            spark::formatCpuValue(stats.cpu.system_last_10s),
+            spark::formatCpuValue(stats.cpu.system_last_1m),
+            spark::formatCpuValue(stats.cpu.system_last_15m));
 
         const std::int64_t history_seconds =
             (stats.history_span_ms + 999) / 1000;
@@ -990,7 +881,7 @@ private:
             sender.sendMessage(
                 "{}Statistics history: {}{} {}(longer windows currently use the available history)",
                 ColorFormat::Gold, ColorFormat::Gray,
-                formatDuration(history_seconds), ColorFormat::Gray);
+                spark::formatDuration(history_seconds), ColorFormat::Gray);
         }
     }
 
@@ -1006,7 +897,7 @@ private:
                                         getServer().getStartTime())
                                         .count();
         sender.sendMessage("{}Uptime: {}{}", ColorFormat::Gold,
-                           ColorFormat::Gray, formatDuration(uptime));
+                           ColorFormat::Gray, spark::formatDuration(uptime));
         sender.sendMessage("{}Players online: {}{}", ColorFormat::Gold,
                            ColorFormat::Gray,
                            getServer().getOnlinePlayers().size());
@@ -1015,20 +906,20 @@ private:
             sender.sendMessage(
                 "{}Process memory {}(RSS/virtual){}: {} / {}",
                 ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
-                formatBytes(static_cast<std::uint64_t>(process.rss_bytes)),
-                formatBytes(
+                spark::formatBytes(static_cast<std::uint64_t>(process.rss_bytes)),
+                spark::formatBytes(
                     static_cast<std::uint64_t>(process.virtual_bytes)));
         }
         else if (process.rss_present) {
             sender.sendMessage("{}Process RSS: {}{}", ColorFormat::Gold,
                                ColorFormat::Gray,
-                               formatBytes(static_cast<std::uint64_t>(
+                               spark::formatBytes(static_cast<std::uint64_t>(
                                    process.rss_bytes)));
         }
         else if (process.virtual_present) {
             sender.sendMessage("{}Process virtual memory: {}{}",
                                ColorFormat::Gold, ColorFormat::Gray,
-                               formatBytes(static_cast<std::uint64_t>(
+                               spark::formatBytes(static_cast<std::uint64_t>(
                                    process.virtual_bytes)));
         }
         if (process.threads_present) {
@@ -1039,27 +930,27 @@ private:
             sender.sendMessage("{}System memory {}(used/total){}: {} / {}",
                                ColorFormat::Gold, ColorFormat::Gray,
                                ColorFormat::Reset,
-                               formatBytes(static_cast<std::uint64_t>(
+                               spark::formatBytes(static_cast<std::uint64_t>(
                                    system.mem_used)),
-                               formatBytes(static_cast<std::uint64_t>(
+                               spark::formatBytes(static_cast<std::uint64_t>(
                                    system.mem_total)));
         }
         if (system.swap_present) {
             sender.sendMessage(
                 "{}Swap/page file {}(used/total){}: {} / {}",
                 ColorFormat::Gold, ColorFormat::Gray, ColorFormat::Reset,
-                formatBytes(
+                spark::formatBytes(
                     static_cast<std::uint64_t>(system.swap_used)),
-                formatBytes(
+                spark::formatBytes(
                     static_cast<std::uint64_t>(system.swap_total)));
         }
         if (system.disk_present) {
             sender.sendMessage("{}Disk {}(used/total){}: {} / {}",
                                ColorFormat::Gold, ColorFormat::Gray,
                                ColorFormat::Reset,
-                               formatBytes(static_cast<std::uint64_t>(
+                               spark::formatBytes(static_cast<std::uint64_t>(
                                    system.disk_used)),
-                               formatBytes(static_cast<std::uint64_t>(
+                               spark::formatBytes(static_cast<std::uint64_t>(
                                    system.disk_total)));
         }
         if (system.cpu_present) {

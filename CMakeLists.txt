@@ -50,6 +50,7 @@ FetchContent_MakeAvailable(endstone)
 
 # --- platform-independent profiler core (no Endstone dependency) ---
 add_library(spark_core STATIC
+        src/core/util/format.cpp
         src/proto/sampler_data.cpp
         src/net/gzip.cpp
         src/net/bytebin.cpp
