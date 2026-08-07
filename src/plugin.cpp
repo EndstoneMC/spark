@@ -25,6 +25,7 @@
 
 #include "command/arguments.h"
 #include "core/util/format.h"
+#include "platform/endstone/server_info.h"
 #include "net/bytebin.h"
 #include "net/gzip.h"
 #include "net/profile_file.h"
@@ -59,13 +60,6 @@ std::int64_t nowMs()
         .count();
 }
 
-int floorDiv(int value, int divisor)
-{
-    int quotient = value / divisor;
-    int remainder = value % divisor;
-    return remainder < 0 ? quotient - 1 : quotient;
-}
-
 template <typename Sender>
 bool commandSenderIsPlayer(Sender &sender)
 {
@@ -74,40 +68,6 @@ bool commandSenderIsPlayer(Sender &sender)
     }
     else {
         return dynamic_cast<endstone::Player *>(&sender) != nullptr;
-    }
-}
-
-template <typename Value>
-auto pointerFromApi(Value &&value)
-{
-    using Type = std::remove_reference_t<Value>;
-    if constexpr (std::is_pointer_v<Type>) {
-        return value;
-    }
-    else {
-        return std::addressof(value);
-    }
-}
-
-template <typename ActorType>
-std::string actorTypeName(const ActorType &type)
-{
-    if constexpr (requires(const ActorType &value) { value.getId(); }) {
-        return static_cast<std::string>(type.getId());
-    }
-    else {
-        return type;
-    }
-}
-
-template <typename Dimension>
-std::string dimensionName(const Dimension &dimension)
-{
-    if constexpr (requires(const Dimension &value) { value.getName(); }) {
-        return dimension.getName();
-    }
-    else {
-        return static_cast<std::string>(dimension.getId());
     }
 }
 
@@ -642,86 +602,14 @@ private:
             return;
         }
 
-        pending_ctx_.endstone_version = getServer().getVersion();
-        pending_ctx_.minecraft_version = getServer().getMinecraftVersion();
-        pending_ctx_.bds_executable_sha256 = bds_executable_sha256_;
+        spark::endstone_adapter::gatherServerInfo(pending_ctx_, getServer(),
+                                                   bds_executable_sha256_, nowMs());
         pending_ctx_.comment = comment;
         pending_ctx_.statistics = statistics_.snapshot();
         pending_ctx_.window_stats = statistics_.profileWindows(
             profiler_.startTimeMs(), profiler_.endTimeMs());
         pending_ctx_.system_stats = spark::gatherSystemStats(".");
-        pending_ctx_.player_count = static_cast<long>(getServer().getOnlinePlayers().size());
-        pending_ctx_.online_mode = getServer().getOnlineMode() ? 2 : 1;
-        {
-            std::int64_t start_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                        getServer().getStartTime().time_since_epoch())
-                                        .count();
-            pending_ctx_.uptime_ms = nowMs() - start_ms;
-        }
-
-        pending_ctx_.plugins.clear();
-        for (endstone::Plugin *plugin : getServer().getPluginManager().getPlugins()) {
-            const endstone::PluginDescription &desc = plugin->getDescription();
-            std::string author;
-            for (const std::string &a : desc.getAuthors()) {
-                author += (author.empty() ? "" : ", ") + a;
-            }
-            pending_ctx_.plugins.push_back({desc.getName(), desc.getVersion(), author, desc.getDescription()});
-        }
-
-        pending_ctx_.world = spark::WorldInfo{};
-        auto &&level_result = getServer().getLevel();
-        if (endstone::Level *level = pointerFromApi(level_result)) {
-            for (endstone::Dimension *dimension : level->getDimensions()) {
-                std::map<std::pair<int, int>, spark::WorldChunk> chunks;
-                for (const auto &chunk : dimension->getLoadedChunks()) {
-                    if (chunk) {
-                        int x = chunk->getX();
-                        int z = chunk->getZ();
-                        chunks.try_emplace({x, z}, spark::WorldChunk{x, z});
-                    }
-                }
-                if (chunks.empty()) {
-                    continue;
-                }
-
-                for (endstone::Actor *actor : dimension->getActors()) {
-                    if (!actor) {
-                        continue;
-                    }
-                    endstone::Location location = actor->getLocation();
-                    int chunk_x = floorDiv(location.getBlockX(), 16);
-                    int chunk_z = floorDiv(location.getBlockZ(), 16);
-                    auto it = chunks.find({chunk_x, chunk_z});
-                    if (it == chunks.end()) {
-                        continue;
-                    }
-                    it->second.total_entities++;
-                    it->second.entity_counts[actorTypeName(actor->getType())]++;
-                }
-
-                spark::WorldEntry world;
-                world.name = dimensionName(*dimension);
-                std::map<std::pair<int, int>, spark::WorldRegion> regions;
-                for (auto &[coordinate, chunk] : chunks) {
-                    auto region_coordinate = std::pair{floorDiv(coordinate.first, 32),
-                                                       floorDiv(coordinate.second, 32)};
-                    spark::WorldRegion &region = regions[region_coordinate];
-                    region.total_entities += chunk.total_entities;
-                    world.total_entities += chunk.total_entities;
-                    for (const auto &[type, count] : chunk.entity_counts) {
-                        pending_ctx_.world.entity_counts[type] += count;
-                    }
-                    region.chunks.push_back(std::move(chunk));
-                }
-                for (auto &entry : regions) {
-                    world.regions.push_back(std::move(entry.second));
-                }
-                pending_ctx_.world.total_entities += world.total_entities;
-                pending_ctx_.world.worlds.push_back(std::move(world));
-            }
-            pending_ctx_.world.present = !pending_ctx_.world.worlds.empty();
-        }
+        spark::endstone_adapter::gatherWorldInfo(pending_ctx_, getServer());
 
         pending_save_ = save;
         pending_sender_ = sender_name;

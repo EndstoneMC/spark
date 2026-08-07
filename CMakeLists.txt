@@ -104,6 +104,7 @@ endif ()
 
 # --- the Endstone plugin (links only its own static core + Endstone headers) ---
 endstone_add_plugin(spark
+        src/platform/endstone/server_info.cpp
         src/plugin.cpp
         src/command/arguments.cpp)
 target_include_directories(spark PRIVATE src)
