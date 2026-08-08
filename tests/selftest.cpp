@@ -355,7 +355,7 @@ void worker()
 #ifdef _WIN32
     GWorkerTid.store(static_cast<std::uint64_t>(GetCurrentThreadId()));
 #else
-    g_worker_tid.store(static_cast<std::uint64_t>(::syscall(SYS_gettid)));
+    GWorkerTid.store(static_cast<std::uint64_t>(::syscall(SYS_gettid)));
 #endif
     while (GRun.load()) {
         hotOuter();
