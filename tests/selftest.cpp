@@ -212,6 +212,24 @@ void hotOuter()
 std::atomic<std::uint64_t> g_worker_tid{0};
 std::atomic<bool> g_run{true};
 
+// Poll a condition with a bounded deadline instead of relying on a fixed sleep.
+// The sampler's capture timing is non-deterministic (thread startup latency,
+// StackWalk64 cost, OS scheduling), so a fixed sleep may observe zero samples
+// even when the sampler is functioning correctly.  This helper waits until the
+// predicate is satisfied or the deadline expires, whichever comes first.
+template <typename Predicate, typename Rep, typename Period>
+bool waitForCondition(Predicate pred, std::chrono::duration<Rep, Period> timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (pred()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return pred();
+}
+
 void worker()
 {
 #if defined(_WIN32)
@@ -239,6 +257,11 @@ bool verifySessionIsolation(std::uint64_t worker_tid)
         std::fprintf(stderr, "session isolation: sampler start failed\n");
         return false;
     }
+    // Wait for the sampler to capture at least one sample before driving the
+    // 50-tick observation loop.  The sampler's first capture depends on thread
+    // startup latency and StackWalk64 cost, so poll instead of assuming 50 ms
+    // of ticks is always sufficient.
+    waitForCondition([&] { return sampler.sampleCount() > 0; }, 2s);
     std::uint64_t observed_samples = 0;
     for (int i = 0; i < 50; ++i) {
         std::this_thread::sleep_for(1ms);
@@ -596,7 +619,12 @@ bool verifyTickFiltering(std::uint64_t worker_tid)
         std::fprintf(stderr, "tick filtering: fast session start failed\n");
         return false;
     }
-    std::this_thread::sleep_for(50ms);
+    // Wait for the sampler to complete at least one capture iteration before
+    // emitting a tick event, so that buffered samples exist to filter.
+    {
+        const auto seq0 = sampler.samplerHeartbeat().sequence.load();
+        waitForCondition([&] { return sampler.samplerHeartbeat().sequence.load() > seq0; }, 2s);
+    }
     sampler.onTick(1.0);
     sampler.stop();
     if (sampler.sampleCount() != 0) {
@@ -608,7 +636,10 @@ bool verifyTickFiltering(std::uint64_t worker_tid)
         std::fprintf(stderr, "tick filtering: slow session start failed\n");
         return false;
     }
-    std::this_thread::sleep_for(50ms);
+    {
+        const auto seq0 = sampler.samplerHeartbeat().sequence.load();
+        waitForCondition([&] { return sampler.samplerHeartbeat().sequence.load() > seq0; }, 2s);
+    }
     sampler.onTick(50.0);
     sampler.stop();
     if (sampler.sampleCount() == 0 || sampler.tree().sampleCount() == 0) {
@@ -1066,10 +1097,9 @@ bool verifyAllThreadSampling()
         return false;
     }
     // Hosted Windows runners can spend most of a short observation interval
-    // inside one expensive StackWalk64 attempt. Keep two active targets and
-    // allow a full second so all-thread rotation itself, rather than runner
-    // scheduling latency, determines whether both threads are captured.
-    std::this_thread::sleep_for(1s);
+    // inside one expensive StackWalk64 attempt.  Poll until at least two
+    // thread trees are captured, with a generous deadline for slow hosts.
+    waitForCondition([&] { return sampler.threadTrees().size() >= 2 && sampler.sampleCount() > 0; }, 10s);
     sampler.stop();
     stop_workers();
 
@@ -1409,7 +1439,10 @@ bool verifySelectedThreadSampling(std::uint64_t worker_tid)
                      sampler.lastError().c_str());
         return false;
     }
-    std::this_thread::sleep_for(150ms);
+    // The sampler thread needs time to start, enumerate process threads, and
+    // complete at least one stack-walk capture.  Poll for a sample instead of
+    // relying on a fixed sleep that may expire before the first capture.
+    waitForCondition([&] { return sampler.sampleCount() > 0; }, 2s);
     sampler.stop();
     if (sampler.threadTrees().empty()) {
         std::fprintf(stderr, "selected-thread sampling: exact-name selector captured no threads\n");
@@ -1430,7 +1463,7 @@ bool verifySelectedThreadSampling(std::uint64_t worker_tid)
                      sampler.lastError().c_str());
         return false;
     }
-    std::this_thread::sleep_for(150ms);
+    waitForCondition([&] { return sampler.sampleCount() > 0; }, 2s);
     sampler.stop();
     if (sampler.threadTrees().empty()) {
         std::fprintf(stderr, "selected-thread sampling: regex selector captured no threads\n");
