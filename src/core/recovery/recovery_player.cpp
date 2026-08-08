@@ -119,6 +119,13 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     std::uint64_t max_tick_id = 0;
     std::uint64_t sample_count = 0;
 
+    // TickEvent records don't carry a window field, so we build a tick_id ->
+    // window map from Sample records (which do) and use it to assign each tick
+    // to the correct per-window statistics bucket.
+    std::map<std::uint64_t, std::int32_t> tick_to_window;
+    struct TickEventEntry { std::uint64_t tick_id; double mspt; };
+    std::vector<TickEventEntry> tick_events;
+
     for (const auto &rec : journal.records) {
         if (rec.type == RecordType::Sample) {
             std::uint64_t thread_id, tick_id, weight;
@@ -126,6 +133,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
             std::vector<FrameKey> frames;
             if (!rec.asSample(thread_id, tick_id, window, weight, frames)) continue;
 
+            tick_to_window[tick_id] = window;
             for (auto &frame : frames) {
                 auto it = module_bases.find(frame.module);
                 if (it != module_bases.end()) {
@@ -156,8 +164,9 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
         else if (rec.type == RecordType::TickEvent) {
             std::uint64_t tick_id;
             double mspt;
-            if (rec.asTickEvent(tick_id, mspt) && tick_id > max_tick_id) {
-                max_tick_id = tick_id;
+            if (rec.asTickEvent(tick_id, mspt)) {
+                if (tick_id > max_tick_id) max_tick_id = tick_id;
+                tick_events.push_back({tick_id, mspt});
             }
         }
     }
@@ -165,6 +174,54 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     result.sample_count = sample_count;
     result.thread_count = thread_trees.size();
     result.tick_count = max_tick_id > 0 ? max_tick_id + 1 : 0;
+
+    // Reconstruct per-window tick statistics from TickEvent records.
+    // The spark viewer's "Time per tick" label divides total time by the sum
+    // of per-window ticks (when more than one window exists), so every window
+    // that contains samples must also report its tick count.
+    struct WindowAccumulator {
+        int ticks = 0;
+        std::vector<double> mspts;
+        double mspt_max = 0.0;
+    };
+    std::map<std::int32_t, WindowAccumulator> window_acc;
+    for (const auto &te : tick_events) {
+        std::int32_t window = 0;
+        auto it = tick_to_window.find(te.tick_id);
+        if (it != tick_to_window.end()) {
+            window = it->second;
+        } else {
+            auto lower = tick_to_window.lower_bound(te.tick_id);
+            if (lower != tick_to_window.begin()) {
+                --lower;
+                window = lower->second;
+            }
+        }
+        WindowAccumulator &acc = window_acc[window];
+        acc.ticks += 1;
+        acc.mspts.push_back(te.mspt);
+        if (te.mspt > acc.mspt_max) acc.mspt_max = te.mspt;
+    }
+
+    std::map<std::int32_t, WindowStats> window_stats;
+    for (const auto &[window, acc] : window_acc) {
+        WindowStats ws;
+        ws.ticks_present = true;
+        ws.ticks = acc.ticks;
+        ws.mspt_present = true;
+        ws.mspt_max = acc.mspt_max;
+        if (!acc.mspts.empty()) {
+            std::vector<double> sorted = acc.mspts;
+            std::sort(sorted.begin(), sorted.end());
+            ws.mspt_median = sorted[sorted.size() / 2];
+        }
+        ws.start_time_ms = result.session_start_ms + static_cast<std::int64_t>(window) * 1000;
+        ws.end_time_ms = ws.start_time_ms + 1000;
+        ws.duration_ms = 1000;
+        ws.tps_present = true;
+        ws.tps = static_cast<double>(acc.ticks);
+        window_stats[window] = ws;
+    }
 
     if (sample_count == 0) {
         result.error = "journal contains no samples";
@@ -203,6 +260,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     meta.tick_threshold_ms = sc.present && sc.only_ticks_over_ms > 0
                                  ? sc.only_ticks_over_ms
                                  : 0;
+    meta.window_stats = window_stats;
 
     // Collect thread views for serialization.
     std::vector<std::pair<std::uint64_t, std::pair<std::string, const CallTree *>>> input;

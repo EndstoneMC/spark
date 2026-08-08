@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data. The spark viewer's file upload expects uncompressed protobuf; gzip-wrapped
   files could not be opened when manually uploaded to spark.lucko.me. Bytebin uploads
   remain gzip-compressed as before.
+- Reconstruct per-window tick statistics in crash-recovered profiles. Previously,
+  recovered profiles lacked `WindowStatistics.ticks` data, causing the spark viewer's
+  "Time per tick" label to display total elapsed time instead of per-tick time.
 - Skip crash recovery for sessions that ended cleanly. Normal profiler stop,
   plugin unload, and BDS shutdown all write a CLEAN_END marker to the recovery
   journal; on the next startup, these journals are cleaned up without generating
