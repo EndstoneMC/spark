@@ -390,12 +390,30 @@ void ActivityLog::load()
 void ActivityLog::save() const
 {
     std::ostringstream ss;
-    ss << "[";
-    for (std::size_t i = 0; i < entries_.size(); ++i) {
-        if (i > 0) ss << ",";
-        ss << entries_[i].serialize();
+    if (entries_.empty()) {
+        ss << "[]\n";
+    } else {
+        ss << "[\n";
+        for (std::size_t i = 0; i < entries_.size(); ++i) {
+            const Activity &a = entries_[i];
+            ss << "  {\n";
+            ss << "    \"user\": {\n";
+            ss << "      \"name\": \"" << jsonEscape(a.user_name) << "\",\n";
+            ss << "      \"isPlayer\": " << (a.user_is_player ? "true" : "false") << "\n";
+            ss << "    },\n";
+            ss << "    \"time\": " << a.time_ms << ",\n";
+            ss << "    \"type\": \"" << jsonEscape(a.type) << "\",\n";
+            ss << "    \"data\": {\n";
+            ss << "      \"type\": \""
+               << (a.data_type == Activity::DataType::Url ? "url" : "file") << "\",\n";
+            ss << "      \"value\": \"" << jsonEscape(a.data_value) << "\"\n";
+            ss << "    }\n";
+            ss << "  }";
+            if (i + 1 < entries_.size()) ss << ",";
+            ss << "\n";
+        }
+        ss << "]\n";
     }
-    ss << "]";
 
     std::error_code ec;
     std::filesystem::create_directories(file_.parent_path(), ec);
