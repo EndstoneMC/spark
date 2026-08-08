@@ -7,6 +7,7 @@
 #include "native/symbol/symbol_guess.h"
 
 #if defined(_WIN32)
+#include "native/symbol/dbghelp_manager.h"
 // clang-format off
 #include <windows.h>
 #include <dbghelp.h>
@@ -92,23 +93,6 @@ bool trustworthyWindowsSymbol(std::string_view module, const SYMBOL_INFO &symbol
     return displacement < symbol.Size;
 }
 
-class DbgHelpSession {
-public:
-    explicit DbgHelpSession(HANDLE process) : process_(process), initialized_(SymInitialize(process, nullptr, TRUE)) {}
-
-    ~DbgHelpSession()
-    {
-        if (initialized_) {
-            SymCleanup(process_);
-        }
-    }
-
-    bool initialized() const { return initialized_ != FALSE; }
-
-private:
-    HANDLE process_;
-    BOOL initialized_;
-};
 #endif
 
 std::string basename(const std::string &path)
@@ -275,9 +259,9 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
     std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> out;
     out.reserve(keys.size());
 
+    DbgHelpReference session;
+    std::lock_guard<std::mutex> lock(dbgHelpMutex());
     HANDLE process = GetCurrentProcess();
-    SymSetOptions(SymGetOptions() | SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME | SYMOPT_LOAD_LINES);
-    DbgHelpSession session(process);
     HMODULE executable_module = GetModuleHandleW(nullptr);
     MODULEINFO executable_info{};
     const bool have_executable_range =
@@ -362,6 +346,11 @@ bool isSleepFrame(std::uint64_t raw_address)
         return false;
     }
 
+    DbgHelpReference session;
+    if (!session.initialized()) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(dbgHelpMutex());
     DWORD64 module_base = SymGetModuleBase64(GetCurrentProcess(), raw_address);
     HMODULE module = reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(module_base));
     if (module == nullptr ||

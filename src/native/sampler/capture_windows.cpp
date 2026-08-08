@@ -5,6 +5,8 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "native/symbol/dbghelp_manager.h"
+
 // clang-format off
 #include <windows.h>
 #include <dbghelp.h>
@@ -13,21 +15,22 @@
 namespace spark {
 
 namespace {
-std::mutex g_dbghelp_mutex;
 bool g_armed = false;
 std::unordered_map<DWORD, ULONG64> g_thread_cycles;
 }  // namespace
 
 bool Capture::arm()
 {
-    std::lock_guard lock(g_dbghelp_mutex);
-    if (g_armed) {
-        return true;
+    {
+        std::lock_guard lock(dbgHelpMutex());
+        if (g_armed) {
+            return true;
+        }
     }
-    SymSetOptions(SymGetOptions() | SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME | SYMOPT_FAIL_CRITICAL_ERRORS);
-    if (!SymInitialize(GetCurrentProcess(), nullptr, TRUE)) {  // needed by StackWalk64's module callbacks
+    if (!retainDbgHelp()) {
         return false;
     }
+    std::lock_guard lock(dbgHelpMutex());
     g_thread_cycles.clear();
     g_armed = true;
     return true;
@@ -35,18 +38,20 @@ bool Capture::arm()
 
 void Capture::disarm()
 {
-    std::lock_guard lock(g_dbghelp_mutex);
-    if (!g_armed) {
-        return;
+    {
+        std::lock_guard lock(dbgHelpMutex());
+        if (!g_armed) {
+            return;
+        }
+        g_thread_cycles.clear();
+        g_armed = false;
     }
-    SymCleanup(GetCurrentProcess());
-    g_thread_cycles.clear();
-    g_armed = false;
+    releaseDbgHelp();
 }
 
 bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
 {
-    std::lock_guard lock(g_dbghelp_mutex);
+    std::lock_guard lock(dbgHelpMutex());
     out.count = 0;
     if (!g_armed) {
         return false;
@@ -106,7 +111,7 @@ bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
 
 bool Capture::isThreadRunning(std::uint64_t tid)
 {
-    std::lock_guard lock(g_dbghelp_mutex);
+    std::lock_guard lock(dbgHelpMutex());
     if (!g_armed) {
         return true;
     }

@@ -67,6 +67,7 @@ add_library(spark_native STATIC
         src/native/symbol/symbol_guess.cpp)
 if (WIN32)
     target_sources(spark_native PRIVATE
+            src/native/symbol/dbghelp_manager.cpp
             src/native/symbol/symbol_guess_windows.cpp
             src/native/sampler/capture_windows.cpp
             src/native/alloc/allocation_sampler_windows.cpp)
