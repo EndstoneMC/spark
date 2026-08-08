@@ -136,9 +136,10 @@ Leave successfully symbolicated frames and non-BDS modules untouched
 ### Source Structure
 
 - `src/plugin.cpp` - Endstone plugin lifecycle and command dispatch (thin bootstrap)
+- `src/application/` - platform-independent business orchestration: command registry, profiler service, profile exporter, health and tick-monitor commands, platform capability interfaces
 - `src/core/` - platform-independent services: profiler, stats, command parsing, util
 - `src/native/` - native backend: sampler, symbol guesser, allocation hooks
-- `src/platform/endstone/` - thin Endstone platform adapters
+- `src/platform/endstone/` - thin Endstone platform adapters: command sender, thread dispatcher, metadata provider, result notifier
 - `src/proto/` - spark protobuf serialization
 - `src/net/` - gzip compression, bytebin upload, and local profile persistence
 - `proto/` - upstream spark protocol references
@@ -156,6 +157,10 @@ Leave successfully symbolicated frames and non-BDS modules untouched
 4. **Symbolization:** Normal platform symbols have priority. Unresolved frames in the BDS main executable may receive conservative runtime guesses from unwind metadata, RTTI, vtables, thunks, and decoded string references. Guesses retain the RVA and identify their evidence source.
 
 5. **Statistics service:** Maintains bounded rolling TPS, MSPT, CPU, and system-resource histories independently of an active profile.
+
+6. **Application layer:** Platform-independent business orchestration in `src/application/`. `SparkApplication` owns all services and dispatches ticks and commands. `ProfilerService` manages profiler sessions and exports. Three focused capability interfaces (`MainThreadDispatcher`, `ProfileMetadataProvider`, `ResultNotifier`) abstract platform dependencies without a god-Platform.
+
+7. **Platform adapters:** `src/platform/endstone/` provides thin Endstone implementations of the capability interfaces and `CommandSender`. `plugin.cpp` is a 143-line bootstrap that creates adapters and delegates to `SparkApplication`.
 
 ### Dependencies
 
