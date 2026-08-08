@@ -1747,11 +1747,11 @@ std::uint64_t AllocationSampler::hookedModuleCount() const
 {
     return impl_->hooks.hookedModuleCount();
 }
-std::uint64_t AllocationSampler::skippedModuleCount()
+std::uint64_t AllocationSampler::skippedModuleCount() const
 {
     return impl_->hooks.skippedModuleCount();
 }
-std::uint64_t AllocationSampler::failedModuleCount()
+std::uint64_t AllocationSampler::failedModuleCount() const
 {
     return impl_->hooks.failedModuleCount();
 }

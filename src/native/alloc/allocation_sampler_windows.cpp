@@ -2747,12 +2747,12 @@ std::uint64_t AllocationSampler::hookedModuleCount() const
     return impl_->hooks_prepared ? 2 : 0;
 }
 
-std::uint64_t AllocationSampler::skippedModuleCount()
+std::uint64_t AllocationSampler::skippedModuleCount() const  // NOLINT(readability-convert-member-functions-to-static)
 {
     return 0;
 }
 
-std::uint64_t AllocationSampler::failedModuleCount()
+std::uint64_t AllocationSampler::failedModuleCount() const  // NOLINT(readability-convert-member-functions-to-static)
 {
     return 0;
 }

@@ -122,8 +122,8 @@ public:
     std::uint64_t overflowThreadCount() const;
     std::uint64_t threadStateDrops() const;
     std::uint64_t hookedModuleCount() const;
-    static std::uint64_t skippedModuleCount();
-    static std::uint64_t failedModuleCount();
+    std::uint64_t skippedModuleCount() const;
+    std::uint64_t failedModuleCount() const;
     std::uint64_t moduleRegistryCount() const;
     static std::uint64_t moduleRegistryCapacity();
     static std::uint64_t profileNodeCapacity();
