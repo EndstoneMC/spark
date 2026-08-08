@@ -88,7 +88,6 @@ std::unordered_map<std::uint64_t, GuessResult> analyzeMainModuleSymbols(std::spa
 #include <link.h>
 #include <mnemonics.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <limits>
@@ -378,6 +377,7 @@ public:
 
     [[nodiscard]] const std::uint8_t *at(std::uint64_t rva) const
     {
+        // NOLINTNEXTLINE(performance-no-int-to-ptr)
         return reinterpret_cast<const std::uint8_t *>(bias_ + rva);
     }
 
@@ -584,9 +584,9 @@ std::string classNameFromTypeInfo(const std::string &mangled)
     std::string out(demangled);
     std::free(demangled);
     // __cxa_demangle on _ZTS<name> yields "typeinfo name for <class>".
-    constexpr std::string_view kPrefix = "typeinfo name for ";
-    if (out.starts_with(kPrefix)) {
-        out.erase(0, kPrefix.size());
+    constexpr std::string_view k_prefix = "typeinfo name for ";
+    if (out.starts_with(k_prefix)) {
+        out.erase(0, k_prefix.size());
     }
     return out;
 }

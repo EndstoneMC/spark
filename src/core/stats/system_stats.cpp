@@ -72,8 +72,8 @@ ProcessStats gatherProcessStats()
     std::int64_t pages_total = 0, pages_resident = 0;
     const auto page_size = sysconf(_SC_PAGESIZE);
     if (page_size > 0 && f >> pages_total >> pages_resident) {
-        stats.virtual_bytes = static_cast<std::int64_t>(pages_total) * page_size;
-        stats.rss_bytes = static_cast<std::int64_t>(pages_resident) * page_size;
+        stats.virtual_bytes = pages_total * page_size;
+        stats.rss_bytes = pages_resident * page_size;
         stats.virtual_present = true;
         stats.rss_present = true;
     }
