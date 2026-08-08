@@ -133,11 +133,11 @@ live until the profiler is stopped, cancelled, or times out. Allocation profiles
 do not support the live viewer.
 
 When a client connects to the live viewer, the server checks the client's
-public key against the `trustedKeys` list in `config.json`. Trusted clients
+public key against the trusted viewer list in `trusted-viewers.json`. Trusted clients
 receive immediate access to the live sampler data. Untrusted clients receive an
 UNTRUSTED response and their public key is held pending. Use
 `/spark profiler trust-viewer --id <client id>` to approve a pending client;
-the key is then persisted in `config.json` and the client receives an ACCEPTED
+the key is then persisted in `trusted-viewers.json` and the client receives an ACCEPTED
 response with access to the data stream.
 
 ### `/spark profiler start` flags
@@ -270,6 +270,31 @@ covered entry point, `VirtualAlloc`/`VirtualFree`, and `mmap`/`munmap` are not
 sampled. A Linux module loaded and unloaded entirely between rescans can escape
 coverage.
 
+## Crash recovery
+
+When BDS crashes or is forcibly killed during an active profiling session
+(execution or allocation, foreground or background), in-memory profile data is
+normally lost. Spark mitigates this by writing a crash-safe recovery journal
+during profiling.
+
+During each session, the sampler aggregation thread writes compact records
+(module definitions, thread definitions, samples, and tick events) to a
+segmented journal file under `plugins/spark/profiles/recovery/`. The journal
+uses CRC32-validated records (via zlib) so that a truncated tail from an
+unclean shutdown is recoverable up to the last complete record.
+
+On the next plugin startup, spark checks for an existing recovery journal. If
+one is found, it replays the journal into a call tree, runs normal
+symbolization, and saves a `.sparkprofile` file under
+`plugins/spark/profiles/`. The recovery directory is then cleaned for the new
+session. A message is printed to the console with the saved file path.
+
+A separate watchdog thread monitors a monotonic heartbeat updated every server
+tick. If the main thread stops ticking for more than 5 seconds, stall
+begin/end events are recorded in the journal so that recovered profiles retain
+evidence of the stall. The watchdog never calls Endstone APIs and never stops
+the profiler, ensuring that stall evidence is preserved for diagnosis.
+
 ## Configuration
 
 Spark reads a `config.toml` file from the plugin data directory on startup. If the
@@ -279,15 +304,18 @@ malformed fields fall back to defaults; unknown fields are silently ignored.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `viewerUrl` | string | `https://spark.lucko.me/` | Base URL for the spark viewer. |
-| `bytebinUrl` | string | `https://spark-usercontent.lucko.me/` | Bytebin upload endpoint for profiles and health reports. |
-| `bytesocksHost` | string | `spark-usersockets.lucko.me` | WebSocket host for the live viewer. |
+| `viewerUrl` | string | `"https://spark.lucko.me/"` | Base URL for the spark viewer. |
+| `bytebinUrl` | string | `"https://spark-usercontent.lucko.me/"` | Bytebin upload endpoint for profiles and health reports. |
+| `bytesocksHost` | string | `"spark-usersockets.lucko.me"` | WebSocket host for the live viewer. |
 | `backgroundProfiler` | bool | `true` | Whether to auto-start a background execution profiler. |
 | `backgroundProfilerInterval` | int | `10` | Background profiler sampling interval in milliseconds. |
-| `backgroundProfilerThreadGrouper` | string | `by-pool` | Thread grouping mode: `by-pool`, `by-name`, or `as-one`. |
-| `backgroundProfilerThreadDumper` | string | `default` | Thread selection: `default` (server thread) or `all`. |
+| `backgroundProfilerThreadGrouper` | string | `"by-pool"` | Thread grouping mode: `by-pool`, `by-name`, or `as-one`. |
+| `backgroundProfilerThreadDumper` | string | `"default"` | Thread selection: `default` (server thread) or `all`. |
 | `disableResponseBroadcast` | bool | `false` | Disable broadcasting profiler responses to all operators. |
-| `trustedKeys` | string[] | `[]` | Base64-encoded trusted viewer public keys. |
+
+Trusted viewer public keys are stored separately in `trusted-viewers.json` (a
+JSON array of base64-encoded X.509 keys). The `trust-viewer` command appends to
+this file without touching `config.toml`.
 
 ## Building
 

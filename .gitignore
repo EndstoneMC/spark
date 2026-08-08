@@ -20,3 +20,9 @@ profile.pb
 .vscode/
 __pycache__/
 .conan-test
+
+# Development process artifacts (not release documentation)
+/docs/*_STATUS.md
+/docs/*_PLAN.md
+/docs/SOL_*.md
+/docs/SOL_*.json

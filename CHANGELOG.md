@@ -9,7 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add persistent Spark configuration (`config.json` in the plugin data directory)
+- Automatically recover profiling data after a BDS crash or forced process
+  termination. During execution and allocation profiling sessions (including the
+  background profiler), samples are written to a crash-safe recovery journal under
+  `plugins/spark/profiles/recovery/`. On the next startup, the journal is replayed
+  into a complete `.sparkprofile` file saved under `plugins/spark/profiles/`, and
+  the recovery directory is cleaned for the new session. Both Windows and Linux
+  are supported.
+- Detect main-thread stalls with an independent watchdog thread that monitors a
+  monotonic heartbeat updated every tick. When the server thread stops ticking for
+  more than 5 seconds, stall begin/end events are recorded in the recovery journal
+  so that recovered profiles retain stall evidence. The watchdog never calls
+  Endstone APIs and never stops the profiler.
+- Add persistent Spark configuration (`config.toml` in the plugin data directory)
   with configurable `viewerUrl`, `bytebinUrl`, `bytesocksHost`, background
   profiler settings, and response broadcast toggle. Missing or malformed config
   falls back to safe defaults. Trusted viewer keys are stored separately in
@@ -58,13 +70,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `/spark profiler trust-viewer --id <client id>` command to approve a
   pending live viewer client. Untrusted clients receive an UNTRUSTED connect
   response; trusted clients receive ACCEPTED and gain access to the live
-  sampler data stream. Trusted public keys are persisted in `config.json`.
+  sampler data stream. Trusted public keys are persisted in `trusted-viewers.json`.
 - Add command aliases matching upstream spark: `sampler` for `profiler`, `cpu`
   for `tps`, `healthreport` and `ht` for `health`, `activitylog` and `log` for
   `activity`, `tickmonitoring` for `tickmonitor`.
 - Add per-command permissions (`spark.profiler`, `spark.tps`, `spark.ping`,
   `spark.health`, `spark.activity`, `spark.tickmonitor`) in addition to the
   umbrella `endstone.command.spark` permission.
+- Populate per-window entity and chunk counts in profile metadata from rolling
+  gauge samples, matching upstream spark's `WindowStatistics` fields.
+- Group world chunk statistics into regions using 8-neighbor connected-component
+  analysis, matching upstream spark's `WorldStatisticsProvider.groupIntoRegions()`
+  algorithm.
+- Include safe `server.properties` values (max-players, view-distance,
+  tick-distance, compression settings, etc.) in profile metadata via
+  `SamplerMetadata.server_configurations` using a strict whitelist that excludes
+  level-seed, passcodes, and any credential-like fields.
+- Migrate configuration file format from JSON to TOML with explanatory comments.
+  `config.toml` is user-owned and never rewritten at runtime; trusted viewer keys
+  are stored separately in `trusted-viewers.json`.
+- Pretty-print `activity.json` with 2-space indentation for readability.
 
 ### Fixed
 
@@ -106,14 +131,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Move live viewer data serialization, gzip compression, and bytebin upload off the
+  main thread onto a dedicated worker thread, eliminating 120-360 ms per-update
+  stalls during `/spark profiler open`.
+- Apply exponential backoff (5 s -> 15 s -> 30 s -> 60 s) to background profiler
+  start retries instead of attempting every tick (20 TPS) on failure.
 - Replace OpenSSL with Windows CNG/BCrypt for RSA2048 key generation,
   SHA256withRSA signing, and signature verification. Windows builds no longer
   depend on or compile OpenSSL; Linux continues to use OpenSSL.
 - Implement `disableResponseBroadcast` config option: when false (default),
   profiler and health responses are broadcast to all online operators with
   spark permission; when true, only the command sender receives the response.
-- **BREAKING**: Rename `/spark profiler viewer` to `/spark profiler open` to
-  match upstream spark command naming.
 - **BREAKING**: Include sleeping threads in execution profiles by default,
   replacing `--include-sleeping` with `--ignore-sleeping` to opt out.
 - Group sampled threads by pool name by default (matching upstream spark's
@@ -121,6 +149,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add deterministic Linux symbol-index timing, memory, range-quality, and batch
   diagnostics to profile metadata, and evaluate `Level::tick()` subtree
   readability separately from whole-process coverage.
+- Replace fixed 32×32 chunk bucket grouping with 8-neighbor connected-component
+  region analysis matching upstream spark's algorithm.
+- Populate per-window entity and chunk counts in profile metadata instead of
+  omitting those fields.
 
 ## [0.4.1][0.4.1] - 2026-08-02
 

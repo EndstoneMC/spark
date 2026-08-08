@@ -152,7 +152,7 @@ Leave successfully symbolicated frames and non-BDS modules untouched
 - `proto/` - upstream spark protocol references
 - `tests/` - offline, synthetic, and platform-specific tests
 - `tools/` - release changelog tooling and profile evaluator
-- `docs/` - architecture and phase status documentation
+- `docs/` - architecture documentation
 
 ### Key Components
 
