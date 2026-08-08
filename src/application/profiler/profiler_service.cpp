@@ -444,6 +444,11 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
     pending_sender_ = sender_name;
     pending_sender_is_player_ = sender_is_player;
 
+    // Join any completed export thread before starting a new one.
+    if (export_thread_.joinable()) {
+        export_thread_.join();
+    }
+
     exporting_.store(true);
     export_thread_ = std::thread([this]() { runExport(); });
 }
