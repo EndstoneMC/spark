@@ -550,6 +550,12 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         meta.platform_stats.ping_p95 = static_cast<double>(temp.percentile95th());
     }
 
+    // Populate network rolling averages if snapshots were collected.
+    if (!ctx.net_snapshots.empty()) {
+        meta.system_stats.net_present = true;
+        meta.system_stats.net_averages = ctx.net_snapshots;
+    }
+
     if (mode_ == ProfileMode::Allocation) {
         std::vector<ThreadTreeView> threads;
         for (const auto &[id, thread] : allocation_sampler_.threadTrees()) {

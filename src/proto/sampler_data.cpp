@@ -375,6 +375,34 @@ std::string buildMetadata(const ProfileMetadata &m)
         if (s.uptime_present) {
             sw.int64(7, s.uptime_ms);
         }
+        if (s.net_present) {  // net (8): map<string, NetInterface>
+            for (const auto &[name, snap] : s.net_averages) {
+                std::string netif;
+                ProtoWriter nw(netif);
+                auto writeRate = [&nw](int field, const NetworkRateValues &rate) {
+                    if (!rate.present) {
+                        return;
+                    }
+                    std::string ra;
+                    ProtoWriter raw(ra);
+                    raw.real(1, rate.mean);
+                    raw.real(2, rate.max);
+                    raw.real(3, rate.min);
+                    raw.real(4, rate.median);
+                    raw.real(5, rate.percentile95);
+                    nw.message(field, ra);
+                };
+                writeRate(1, snap.rx_bytes_per_second);
+                writeRate(2, snap.tx_bytes_per_second);
+                writeRate(3, snap.rx_packets_per_second);
+                writeRate(4, snap.tx_packets_per_second);
+                std::string entry;
+                ProtoWriter ew(entry);
+                ew.string(1, name);
+                ew.message(2, netif);
+                sw.message(8, entry);
+            }
+        }
         w.message(9, ss);
     }
 

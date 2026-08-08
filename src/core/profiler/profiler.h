@@ -53,6 +53,8 @@ struct ExportContext {
     WorldInfo world;
     // Ping rolling average snapshot for profile metadata (may be empty).
     std::vector<int> ping_samples;
+    // Network interface rolling average snapshots (may be empty).
+    std::map<std::string, NetworkInterfaceSnapshot> net_snapshots;
 };
 
 // Owns either the execution sampler or the platform allocation sampler and turns

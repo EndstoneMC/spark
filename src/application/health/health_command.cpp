@@ -34,6 +34,16 @@ std::vector<int> HealthCommand::pingSamples() const
     return ping_statistics_->rollingAverage().rawSamples();
 }
 
+void HealthCommand::pollNetwork()
+{
+    network_monitor_.poll();
+}
+
+std::map<std::string, NetworkInterfaceSnapshot> HealthCommand::networkSnapshots() const
+{
+    return network_monitor_.snapshot();
+}
+
 void HealthCommand::cmdTps(CommandSender &sender)
 {
     sendPerformanceReport(sender, statistics_.snapshot());
@@ -187,6 +197,22 @@ void HealthCommand::cmdHealth(CommandSender &sender)
         sender.sendMessage("{}OS: {}{} {} {}", kColorGold,
                            kColorGray, system.os_name,
                            system.os_version, system.os_arch);
+    }
+
+    auto net_snapshots = network_monitor_.snapshot();
+    if (!net_snapshots.empty()) {
+        sender.sendMessage("{}Network {}(RX/TX bytes/s, last 15m mean){}:", kColorGold, kColorGray, kColorReset);
+        for (const auto &[name, snap] : net_snapshots) {
+            if (!snap.rx_bytes_per_second.present || !snap.tx_bytes_per_second.present) {
+                continue;
+            }
+            sender.sendMessage("  {}{}: {} {}{}/s{}  {}{}/s{}",
+                               kColorGray, name,
+                               kColorGreen, formatBytes(static_cast<std::uint64_t>(snap.rx_bytes_per_second.mean)),
+                               kColorGray, kColorGreen,
+                               formatBytes(static_cast<std::uint64_t>(snap.tx_bytes_per_second.mean)),
+                               kColorGray);
+        }
     }
 }
 

@@ -21,6 +21,7 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
 {
     registerCommands();
     profiler_.setPingSamplesProvider([this]() { return health_.pingSamples(); });
+    profiler_.setNetworkSnapshotProvider([this]() { return health_.networkSnapshots(); });
 }
 
 void SparkApplication::registerCommands()
@@ -78,6 +79,10 @@ void SparkApplication::onTick(double mspt)
     // Poll ping every ~10 seconds (200 ticks at 20 TPS).
     if (++tick_counter_ % 200 == 0) {
         health_.pollPing();
+    }
+    // Poll network every ~60 seconds (1200 ticks at 20 TPS).
+    if (tick_counter_ % 1200 == 0) {
+        health_.pollNetwork();
     }
     tick_monitor_.onTick(mspt);
     profiler_.onTick(mspt);

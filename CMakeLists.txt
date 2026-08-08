@@ -100,6 +100,7 @@ add_library(spark_core STATIC
         src/core/stats/executable_hash.cpp
         src/core/stats/statistics_service.cpp
         src/core/stats/ping_statistics.cpp
+        src/core/stats/network_monitor.cpp
         src/core/stats/tick_monitor.cpp
         src/core/stats/system_stats.cpp
         src/proto/sampler_data.cpp
@@ -110,6 +111,7 @@ target_include_directories(spark_core PUBLIC src)
 target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl)
 if (WIN32)
     target_compile_definitions(spark_core PUBLIC NOMINMAX)
+    target_link_libraries(spark_core PUBLIC iphlpapi)
 endif ()
 set_target_properties(spark_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

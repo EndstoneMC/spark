@@ -24,6 +24,12 @@ set_target_properties(spark_ping_statistics_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_ping_statistics_test COMMAND spark_ping_statistics_test)
 
+add_executable(spark_network_monitor_test core/stats/network_monitor_test.cpp)
+target_link_libraries(spark_network_monitor_test PRIVATE spark_core)
+set_target_properties(spark_network_monitor_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_network_monitor_test COMMAND spark_network_monitor_test)
+
 add_executable(spark_symbol_guess_dwarf_test native/symbol/symbol_guess_dwarf_test.cpp)
 target_link_libraries(spark_symbol_guess_dwarf_test PRIVATE spark_core)
 set_target_properties(spark_symbol_guess_dwarf_test PROPERTIES

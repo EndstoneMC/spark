@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "core/stats/network_monitor.h"
+
 namespace spark {
 
 // A loaded plugin, for the viewer's Plugins/Mods list (SamplerMetadata.sources).
@@ -91,6 +93,9 @@ struct SystemStats {
     std::string os_arch, os_name, os_version;
     bool uptime_present = false;
     std::int64_t uptime_ms = 0;
+    // Per-interface network rolling averages (SystemStatistics.net, field 8).
+    bool net_present = false;
+    std::map<std::string, NetworkInterfaceSnapshot> net_averages;
 };
 
 // Per-time-window statistics for the viewer's timeline overlay.

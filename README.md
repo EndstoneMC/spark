@@ -81,10 +81,12 @@ and the command explicitly reports the shorter history span.
 
 `/spark health` includes that report, then adds server uptime and players plus
 available process RSS, virtual address space, thread count, physical memory,
-swap/page-file, disk, CPU/OS details. Resource-query failures are omitted instead
-of being displayed as zero. On Windows, the virtual-memory value is the process's
-reserved or committed address space; swap/page-file usage follows Windows commit
-limit semantics. On Linux, these values use `VmSize` and `/proc/meminfo`.
+swap/page-file, disk, CPU/OS details, and per-interface network throughput
+(RX/TX bytes per second, 15-minute rolling mean). Resource-query failures are
+omitted instead of being displayed as zero. On Windows, the virtual-memory value
+is the process's reserved or committed address space; swap/page-file usage
+follows Windows commit limit semantics. On Linux, these values use `VmSize` and
+`/proc/meminfo`.
 
 ### `/spark ping`
 

@@ -426,6 +426,9 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool save,
     if (ping_samples_provider_) {
         pending_ctx_.ping_samples = ping_samples_provider_();
     }
+    if (network_snapshot_provider_) {
+        pending_ctx_.net_snapshots = network_snapshot_provider_();
+    }
 
     pending_save_ = save;
     pending_sender_ = sender_name;

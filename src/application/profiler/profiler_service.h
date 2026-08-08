@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "application/profiler/profile_exporter.h"
 #include "core/command/arguments.h"
 #include "core/profiler/profiler.h"
+#include "core/stats/network_monitor.h"
 #include "core/stats/statistics_service.h"
 
 namespace spark {
@@ -53,6 +55,13 @@ public:
         ping_samples_provider_ = std::move(provider);
     }
 
+    // Sets a callback that returns the current network snapshots for export.
+    void setNetworkSnapshotProvider(
+        std::function<std::map<std::string, NetworkInterfaceSnapshot>()> provider)
+    {
+        network_snapshot_provider_ = std::move(provider);
+    }
+
     // Lifecycle.
     void shutdown();
     bool shutdownBackend(std::string &error) { return profiler_.shutdown(error); }
@@ -88,6 +97,7 @@ private:
     std::string pending_result_;
     ExportOutcome pending_outcome_ = ExportOutcome::Failed;
     std::function<std::vector<int>()> ping_samples_provider_;
+    std::function<std::map<std::string, NetworkInterfaceSnapshot>()> network_snapshot_provider_;
 };
 
 }  // namespace spark
