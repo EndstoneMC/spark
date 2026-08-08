@@ -2759,20 +2759,21 @@ pid_t linuxHookProbe() noexcept
     return static_cast<pid_t>(-12345);
 }
 
-pid_t (*volatile linux_getpid_call)() = &::getpid;
+pid_t (*volatile LinuxGetpidCall)() = &::getpid;
 
 bool verifyLinuxImportHooks()
 {
     const pid_t expected = ::getpid();
     spark::ElfImportHooks hooks;
-    const spark::ElfImportHookSpec spec{"getpid", reinterpret_cast<void *>(&linuxHookProbe), true};
+    const spark::ElfImportHookSpec spec{
+        .name = "getpid", .replacement = reinterpret_cast<void *>(&linuxHookProbe), .required = true};
     std::string error;
     if (!hooks.prepare(std::span<const spark::ElfImportHookSpec>(&spec, 1), error) || hooks.targetCount() == 0 ||
         !hooks.install(error)) {
         std::fprintf(stderr, "linux import hooks: setup failed: %s\n", error.c_str());
         return false;
     }
-    if (linux_getpid_call() != static_cast<pid_t>(-12345)) {
+    if (LinuxGetpidCall() != static_cast<pid_t>(-12345)) {
         std::fprintf(stderr, "linux import hooks: replacement was not observed\n");
         return false;
     }
@@ -2790,7 +2791,7 @@ bool verifyLinuxImportHooks()
     }
     ::dlclose(fixture);
 
-    if (!hooks.uninstall(error) || linux_getpid_call() != expected) {
+    if (!hooks.uninstall(error) || LinuxGetpidCall() != expected) {
         std::fprintf(stderr, "linux import hooks: restoration failed: %s\n", error.c_str());
         return false;
     }

@@ -25,8 +25,8 @@
 namespace spark {
 namespace {
 
-constexpr std::size_t kMaxElfModules = 512;
-constexpr std::size_t kMaxImportTargets = 65536;
+constexpr std::size_t KMaxElfModules = 512;
+constexpr std::size_t KMaxImportTargets = 65536;
 
 struct Image {
     std::uintptr_t base = 0;
@@ -48,7 +48,7 @@ std::string executablePath()
 int collectImages(dl_phdr_info *info, std::size_t, void *opaque)
 {
     auto &images = *static_cast<std::vector<Image> *>(opaque);
-    if (images.size() == kMaxElfModules) {
+    if (images.size() == KMaxElfModules) {
         return 1;
     }
 
@@ -137,7 +137,7 @@ std::vector<MapRange> readMemoryMap()
         MapRange mapped;
         mapped.begin = std::stoull(range.substr(0, separator), nullptr, 16);
         mapped.end = std::stoull(range.substr(separator + 1), nullptr, 16);
-        mapped.protection |= permissions.size() > 0 && permissions[0] == 'r' ? PROT_READ : 0;
+        mapped.protection |= !permissions.empty() && permissions[0] == 'r' ? PROT_READ : 0;
         mapped.protection |= permissions.size() > 1 && permissions[1] == 'w' ? PROT_WRITE : 0;
         mapped.protection |= permissions.size() > 2 && permissions[2] == 'x' ? PROT_EXEC : 0;
         ranges.push_back(mapped);
@@ -147,9 +147,8 @@ std::vector<MapRange> readMemoryMap()
 
 int protectionForAddress(const std::vector<MapRange> &ranges, std::uintptr_t address) noexcept
 {
-    auto found = std::find_if(ranges.begin(), ranges.end(), [address](const MapRange &range) {
-        return address >= range.begin && address < range.end;
-    });
+    auto found = std::ranges::find_if(
+        ranges, [address](const MapRange &range) { return address >= range.begin && address < range.end; });
     return found == ranges.end() ? -1 : found->protection;
 }
 
@@ -236,27 +235,27 @@ bool ElfImportHooks::scan(std::string &error)
             allocator_bases.push_back(reinterpret_cast<std::uintptr_t>(owner.dli_fbase));
         }
     }
-    std::sort(allocator_bases.begin(), allocator_bases.end());
-    allocator_bases.erase(std::unique(allocator_bases.begin(), allocator_bases.end()), allocator_bases.end());
+    std::ranges::sort(allocator_bases);
+    const auto duplicate = std::ranges::unique(allocator_bases);
+    allocator_bases.erase(duplicate.begin(), duplicate.end());
 
     const std::vector<MapRange> memory_map = readMemoryMap();
     skipped_modules_ = 0;
     failed_modules_ = 0;
     std::vector<std::pair<std::uintptr_t, std::string>> failed_modules;
-    auto markFailed = [&](std::uintptr_t base, const std::string &name) {
+    auto mark_failed = [&](std::uintptr_t base, const std::string &name) {
         const auto key = std::pair<std::uintptr_t, std::string>{base, name};
-        if (std::find(failed_modules.begin(), failed_modules.end(), key) == failed_modules.end()) {
+        if (std::ranges::find(failed_modules, key) == failed_modules.end()) {
             failed_modules.push_back(key);
             failed_modules_ = failed_modules.size();
         }
     };
 
     for (const Image &image : images) {
-        const bool already_hooked = std::any_of(targets_.begin(), targets_.end(), [&image](const Target &target) {
+        const bool already_hooked = std::ranges::any_of(targets_, [&image](const Target &target) {
             return target.module_base == image.base && target.module_name == image.name;
         });
-        if (isSparkImage(image, replacement_base) ||
-            std::binary_search(allocator_bases.begin(), allocator_bases.end(), image.base) ||
+        if (isSparkImage(image, replacement_base) || std::ranges::binary_search(allocator_bases, image.base) ||
             isLoaderImage(image.name)) {
             ++skipped_modules_;
             continue;
@@ -267,6 +266,7 @@ bool ElfImportHooks::scan(std::string &error)
             if (image.headers[i].p_type == PT_DYNAMIC) {
                 const std::uintptr_t address = image.base + static_cast<std::uintptr_t>(image.headers[i].p_vaddr);
                 if (contains(image, address, sizeof(ElfW(Dyn)))) {
+                    // NOLINTNEXTLINE(performance-no-int-to-ptr)
                     dynamic = reinterpret_cast<const ElfW(Dyn) *>(address);
                 }
                 break;
@@ -301,9 +301,11 @@ bool ElfImportHooks::scan(std::string &error)
             }
             switch (entry.d_tag) {
             case DT_SYMTAB:
+                // NOLINTNEXTLINE(performance-no-int-to-ptr)
                 symbols = reinterpret_cast<const ElfW(Sym) *>(dynamicPointer(image, entry.d_un.d_ptr));
                 break;
             case DT_STRTAB:
+                // NOLINTNEXTLINE(performance-no-int-to-ptr)
                 strings = reinterpret_cast<const char *>(dynamicPointer(image, entry.d_un.d_ptr));
                 break;
             case DT_STRSZ:
@@ -313,6 +315,7 @@ bool ElfImportHooks::scan(std::string &error)
                 symbol_entry_size = static_cast<std::size_t>(entry.d_un.d_val);
                 break;
             case DT_REL:
+                // NOLINTNEXTLINE(performance-no-int-to-ptr)
                 rel = reinterpret_cast<const ElfW(Rel) *>(dynamicPointer(image, entry.d_un.d_ptr));
                 break;
             case DT_RELSZ:
@@ -322,6 +325,7 @@ bool ElfImportHooks::scan(std::string &error)
                 rel_entry_size = static_cast<std::size_t>(entry.d_un.d_val);
                 break;
             case DT_RELA:
+                // NOLINTNEXTLINE(performance-no-int-to-ptr)
                 rela = reinterpret_cast<const ElfW(Rela) *>(dynamicPointer(image, entry.d_un.d_ptr));
                 break;
             case DT_RELASZ:
@@ -331,6 +335,7 @@ bool ElfImportHooks::scan(std::string &error)
                 rela_entry_size = static_cast<std::size_t>(entry.d_un.d_val);
                 break;
             case DT_JMPREL:
+                // NOLINTNEXTLINE(performance-no-int-to-ptr)
                 jmprel = reinterpret_cast<const void *>(dynamicPointer(image, entry.d_un.d_ptr));
                 break;
             case DT_PLTRELSZ:
@@ -349,26 +354,26 @@ bool ElfImportHooks::scan(std::string &error)
             !contains(image, reinterpret_cast<std::uintptr_t>(strings), string_size) ||
             (rel != nullptr && rel_entry_size != sizeof(ElfW(Rel))) ||
             (rela != nullptr && rela_entry_size != sizeof(ElfW(Rela)))) {
-            markFailed(image.base, image.name);
+            mark_failed(image.base, image.name);
             continue;
         }
 
         const std::size_t before = targets_.size();
         auto visit = [&](auto *entries, std::size_t bytes) {
             using Relocation = std::remove_cv_t<std::remove_pointer_t<decltype(entries)>>;
-            const std::uintptr_t entries_address = reinterpret_cast<std::uintptr_t>(entries);
+            const auto entries_address = reinterpret_cast<std::uintptr_t>(entries);
             if (entries == nullptr || bytes % sizeof(Relocation) != 0 || !contains(image, entries_address, bytes)) {
                 return;
             }
             const std::size_t count = bytes / sizeof(Relocation);
             for (std::size_t i = 0; i < count; ++i) {
                 const Relocation &relocation = entries[i];
-                const unsigned type = static_cast<unsigned>(ELF64_R_TYPE(relocation.r_info));
+                const auto type = static_cast<unsigned>(ELF64_R_TYPE(relocation.r_info));
                 if (!supportedRelocation(type)) {
                     continue;
                 }
-                const std::size_t symbol_index = static_cast<std::size_t>(ELF64_R_SYM(relocation.r_info));
-                const std::uintptr_t symbols_address = reinterpret_cast<std::uintptr_t>(symbols);
+                const auto symbol_index = static_cast<std::size_t>(ELF64_R_SYM(relocation.r_info));
+                const auto symbols_address = reinterpret_cast<std::uintptr_t>(symbols);
                 if (symbol_index >
                     ((std::numeric_limits<std::uintptr_t>::max)() - symbols_address) / sizeof(ElfW(Sym))) {
                     continue;
@@ -395,12 +400,12 @@ bool ElfImportHooks::scan(std::string &error)
                     if (!contains(image, slot_address, sizeof(void *)) || slot_address % alignof(void *) != 0) {
                         continue;
                     }
+                    // NOLINTNEXTLINE(performance-no-int-to-ptr)
                     auto **slot = reinterpret_cast<void **>(slot_address);
-                    auto existing =
-                        std::find_if(targets_.begin(), targets_.end(), [slot, &image](const Target &target) {
-                            return target.slot == slot && target.module_base == image.base &&
-                                   target.module_name == image.name;
-                        });
+                    auto existing = std::ranges::find_if(targets_, [slot, &image](const Target &target) {
+                        return target.slot == slot && target.module_base == image.base &&
+                               target.module_name == image.name;
+                    });
                     if (existing != targets_.end()) {
                         void *current = __atomic_load_n(slot, __ATOMIC_ACQUIRE);
                         if (current != existing->replacement) {
@@ -408,7 +413,7 @@ bool ElfImportHooks::scan(std::string &error)
                         }
                         continue;
                     }
-                    if (targets_.size() == kMaxImportTargets) {
+                    if (targets_.size() == KMaxImportTargets) {
                         continue;
                     }
                     targets_.push_back({slot, __atomic_load_n(slot, __ATOMIC_ACQUIRE), spec.replacement, spec_index,
@@ -425,7 +430,7 @@ bool ElfImportHooks::scan(std::string &error)
             visit(static_cast<const ElfW(Rela) *>(jmprel), jmprel_size);
         }
         else if (jmprel != nullptr) {
-            markFailed(image.base, image.name);
+            mark_failed(image.base, image.name);
         }
 
         if (targets_.size() == before && !already_hooked) {
@@ -433,42 +438,42 @@ bool ElfImportHooks::scan(std::string &error)
         }
     }
 
-    const long page_size_value = ::sysconf(_SC_PAGESIZE);
+    const auto page_size_value = ::sysconf(_SC_PAGESIZE);
     if (page_size_value <= 0) {
         error = "sysconf(_SC_PAGESIZE) failed";
         return false;
     }
-    const std::uintptr_t page_size = static_cast<std::uintptr_t>(page_size_value);
+    const auto page_size = static_cast<std::uintptr_t>(page_size_value);
     std::vector<std::uintptr_t> failed_pages;
     for (const Target &target : targets_) {
         const std::uintptr_t page_address = reinterpret_cast<std::uintptr_t>(target.slot) & ~(page_size - 1);
-        auto existing_page = std::find_if(pages_.begin(), pages_.end(), [page_address, &target](const Page &page) {
+        auto existing_page = std::ranges::find_if(pages_, [page_address, &target](const Page &page) {
             return reinterpret_cast<std::uintptr_t>(page.address) == page_address &&
                    page.module_base == target.module_base && page.module_name == target.module_name;
         });
         const int protection = protectionForAddress(memory_map, reinterpret_cast<std::uintptr_t>(target.slot));
         if (protection < 0) {
-            markFailed(target.module_base, target.module_name);
+            mark_failed(target.module_base, target.module_name);
             failed_pages.push_back(page_address);
             continue;
         }
         if (existing_page == pages_.end()) {
-            pages_.push_back(
-                {reinterpret_cast<void *>(page_address), protection, target.module_base, target.module_name});
+            // NOLINTNEXTLINE(performance-no-int-to-ptr)
+            pages_.push_back({.address = reinterpret_cast<void *>(page_address),
+                              .protection = protection,
+                              .module_base = target.module_base,
+                              .module_name = target.module_name});
         }
         else {
             existing_page->protection = protection;
         }
     }
     if (!failed_pages.empty()) {
-        targets_.erase(std::remove_if(targets_.begin(), targets_.end(),
-                                      [&failed_pages, page_size](const Target &target) {
-                                          const std::uintptr_t page =
-                                              reinterpret_cast<std::uintptr_t>(target.slot) & ~(page_size - 1);
-                                          return std::find(failed_pages.begin(), failed_pages.end(), page) !=
-                                                 failed_pages.end();
-                                      }),
-                       targets_.end());
+        const auto removed = std::ranges::remove_if(targets_, [&failed_pages, page_size](const Target &target) {
+            const std::uintptr_t page = reinterpret_cast<std::uintptr_t>(target.slot) & ~(page_size - 1);
+            return std::ranges::find(failed_pages, page) != failed_pages.end();
+        });
+        targets_.erase(removed.begin(), removed.end());
     }
 
     capabilities_.clear();
@@ -491,14 +496,14 @@ bool ElfImportHooks::scan(std::string &error)
 
     std::vector<std::pair<std::uintptr_t, std::string_view>> hooked;
     for (const Target &target : targets_) {
-        const bool loaded = std::any_of(images.begin(), images.end(), [&target](const Image &image) {
+        const bool loaded = std::ranges::any_of(images, [&target](const Image &image) {
             return sameModule(image, target.module_base, target.module_name);
         });
         if (!loaded) {
             continue;
         }
         const auto key = std::pair<std::uintptr_t, std::string_view>{target.module_base, target.module_name};
-        if (std::find(hooked.begin(), hooked.end(), key) == hooked.end()) {
+        if (std::ranges::find(hooked, key) == hooked.end()) {
             hooked.push_back(key);
         }
     }
@@ -509,7 +514,7 @@ bool ElfImportHooks::scan(std::string &error)
 bool ElfImportHooks::patch(bool replacements, std::string &error)
 {
     error.clear();
-    const long page_size = ::sysconf(_SC_PAGESIZE);
+    const auto page_size = ::sysconf(_SC_PAGESIZE);
     if (page_size <= 0) {
         error = "sysconf(_SC_PAGESIZE) failed";
         return false;
@@ -528,9 +533,9 @@ bool ElfImportHooks::patch(bool replacements, std::string &error)
     pinned.reserve(images.size());
     for (const Image &image : images) {
         const bool referenced =
-            std::any_of(pages_.begin(), pages_.end(),
-                        [&image](const Page &page) { return sameModule(image, page.module_base, page.module_name); }) ||
-            std::any_of(targets_.begin(), targets_.end(), [&image](const Target &target) {
+            std::ranges::any_of(
+                pages_, [&image](const Page &page) { return sameModule(image, page.module_base, page.module_name); }) ||
+            std::ranges::any_of(targets_, [&image](const Target &target) {
                 return sameModule(image, target.module_base, target.module_name);
             });
         if (!referenced) {
@@ -543,9 +548,8 @@ bool ElfImportHooks::patch(bool replacements, std::string &error)
         }
     }
     auto loaded = [&pinned](std::uintptr_t base, const std::string &name) {
-        return std::any_of(pinned.begin(), pinned.end(), [base, &name](const PinnedImage &image) {
-            return image.base == base && image.name == name;
-        });
+        return std::ranges::any_of(
+            pinned, [base, &name](const PinnedImage &image) { return image.base == base && image.name == name; });
     };
     if (replacements) {
         std::vector<std::pair<std::uintptr_t, std::string_view>> hooked;
@@ -554,7 +558,7 @@ bool ElfImportHooks::patch(bool replacements, std::string &error)
                 continue;
             }
             const auto key = std::pair<std::uintptr_t, std::string_view>{target.module_base, target.module_name};
-            if (std::find(hooked.begin(), hooked.end(), key) == hooked.end()) {
+            if (std::ranges::find(hooked, key) == hooked.end()) {
                 hooked.push_back(key);
             }
         }

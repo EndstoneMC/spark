@@ -48,36 +48,41 @@ int main()
     constexpr std::array<std::uint8_t, 5> direct_thunk = {0xe9, 0xfb, 0x00, 0x00, 0x00};
     const auto decoded_direct = spark::symbol_guess::linux::decodeStrictThunk(direct_thunk, base);
     CHECK(decoded_direct.has_value());
-    CHECK(decoded_direct->target == 0x200);
-    CHECK(!decoded_direct->indirect);
-    CHECK(!decoded_direct->adjusts_this);
+    const auto direct_result = decoded_direct.value_or(spark::symbol_guess::linux::DecodedThunk{});
+    CHECK(direct_result.target == 0x200);
+    CHECK(!direct_result.indirect);
+    CHECK(!direct_result.adjusts_this);
 
     constexpr std::array<std::uint8_t, 9> adjustor_thunk = {0x48, 0x83, 0xc7, 0xc8, 0xe9, 0xf7, 0x00, 0x00, 0x00};
     const auto decoded_adjustor = spark::symbol_guess::linux::decodeStrictThunk(adjustor_thunk, base);
     CHECK(decoded_adjustor.has_value());
-    CHECK(decoded_adjustor->target == 0x200);
-    CHECK(!decoded_adjustor->indirect);
-    CHECK(decoded_adjustor->adjusts_this);
+    const auto adjustor_result = decoded_adjustor.value_or(spark::symbol_guess::linux::DecodedThunk{});
+    CHECK(adjustor_result.target == 0x200);
+    CHECK(!adjustor_result.indirect);
+    CHECK(adjustor_result.adjusts_this);
 
     constexpr std::array<std::uint8_t, 9> lea_adjustor_thunk = {0x48, 0x8d, 0x7f, 0xc8, 0xe9, 0xf7, 0x00, 0x00, 0x00};
     const auto decoded_lea_adjustor = spark::symbol_guess::linux::decodeStrictThunk(lea_adjustor_thunk, base);
     CHECK(decoded_lea_adjustor.has_value());
-    CHECK(decoded_lea_adjustor->target == 0x200);
-    CHECK(decoded_lea_adjustor->adjusts_this);
+    const auto lea_adjustor_result = decoded_lea_adjustor.value_or(spark::symbol_guess::linux::DecodedThunk{});
+    CHECK(lea_adjustor_result.target == 0x200);
+    CHECK(lea_adjustor_result.adjusts_this);
 
     constexpr std::array<std::uint8_t, 6> got_thunk = {0xff, 0x25, 0xfa, 0x00, 0x00, 0x00};
     const auto decoded_got = spark::symbol_guess::linux::decodeStrictThunk(got_thunk, base);
     CHECK(decoded_got.has_value());
-    CHECK(decoded_got->target == 0x200);
-    CHECK(decoded_got->indirect);
+    const auto got_result = decoded_got.value_or(spark::symbol_guess::linux::DecodedThunk{});
+    CHECK(got_result.target == 0x200);
+    CHECK(got_result.indirect);
     constexpr std::array<std::uint8_t, 3> object_dispatch = {0xff, 0x67, 0x08};
     CHECK(!spark::symbol_guess::linux::decodeStrictThunk(object_dispatch, base));
 
     constexpr std::array<std::uint8_t, 9> got_register_thunk = {0x48, 0x8b, 0x05, 0xf9, 0x00, 0x00, 0x00, 0xff, 0xe0};
     const auto decoded_got_register = spark::symbol_guess::linux::decodeStrictThunk(got_register_thunk, base);
     CHECK(decoded_got_register.has_value());
-    CHECK(decoded_got_register->target == 0x200);
-    CHECK(decoded_got_register->indirect);
+    const auto got_register_result = decoded_got_register.value_or(spark::symbol_guess::linux::DecodedThunk{});
+    CHECK(got_register_result.target == 0x200);
+    CHECK(got_register_result.indirect);
 
     // A real wrapper has a side effect before its jump and is not a thunk.
     constexpr std::array<std::uint8_t, 8> side_effect = {0x48, 0xff, 0xc0, 0xe9, 0xf8, 0x00, 0x00, 0x00};

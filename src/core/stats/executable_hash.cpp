@@ -178,7 +178,8 @@ std::filesystem::path currentExecutablePath(std::string &error)
     }
     return {std::wstring(path.data(), length)};
 #elif defined(__linux__)
-    return std::filesystem::path("/proc/self/exe");
+    (void)error;
+    return {"/proc/self/exe"};
 #else
     error = "executable hashing is not supported on this platform";
     return {};

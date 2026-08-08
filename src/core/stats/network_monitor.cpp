@@ -276,7 +276,7 @@ std::map<std::string, NetworkInterfaceInfo> readProcNetDev(const std::vector<std
     std::string rx_header = header.substr(bar1 + 1, bar2 - bar1 - 1);
     std::string tx_header = header.substr(bar2 + 1);
 
-    auto splitFields = [](const std::string &s) {
+    auto split_fields = [](const std::string &s) {
         std::vector<std::string> fields;
         std::istringstream iss(s);
         std::string field;
@@ -286,32 +286,34 @@ std::map<std::string, NetworkInterfaceInfo> readProcNetDev(const std::vector<std
         return fields;
     };
 
-    std::vector<std::string> rx_fields = splitFields(rx_header);
-    std::vector<std::string> tx_fields = splitFields(tx_header);
-    int rx_count = static_cast<int>(rx_fields.size());
-    int tx_count = static_cast<int>(tx_fields.size());
-    int expected = rx_count + tx_count;
+    std::vector<std::string> rx_fields = split_fields(rx_header);
+    std::vector<std::string> tx_fields = split_fields(tx_header);
+    const std::size_t rx_count = rx_fields.size();
+    const std::size_t expected = rx_count + tx_fields.size();
 
-    auto indexOf = [](const std::vector<std::string> &v, const std::string &name) {
-        for (int i = 0; i < static_cast<int>(v.size()); ++i) {
+    auto index_of = [](const std::vector<std::string> &v, const std::string &name) {
+        for (std::size_t i = 0; i < v.size(); ++i) {
             if (v[i] == name) {
                 return i;
             }
         }
-        return -1;
+        return std::string::npos;
     };
 
-    int f_rx_bytes = indexOf(rx_fields, "bytes");
-    int f_rx_packets = indexOf(rx_fields, "packets");
-    int f_rx_errors = indexOf(rx_fields, "errs");
-    int f_tx_bytes = rx_count + indexOf(tx_fields, "bytes");
-    int f_tx_packets = rx_count + indexOf(tx_fields, "packets");
-    int f_tx_errors = rx_count + indexOf(tx_fields, "errs");
+    const std::size_t f_rx_bytes = index_of(rx_fields, "bytes");
+    const std::size_t f_rx_packets = index_of(rx_fields, "packets");
+    const std::size_t f_rx_errors = index_of(rx_fields, "errs");
+    const std::size_t tx_bytes = index_of(tx_fields, "bytes");
+    const std::size_t tx_packets = index_of(tx_fields, "packets");
+    const std::size_t tx_errors = index_of(tx_fields, "errs");
 
-    if (f_rx_bytes < 0 || f_rx_packets < 0 || f_rx_errors < 0 || f_tx_bytes < 0 || f_tx_packets < 0 ||
-        f_tx_errors < 0) {
+    if (f_rx_bytes == std::string::npos || f_rx_packets == std::string::npos || f_rx_errors == std::string::npos ||
+        tx_bytes == std::string::npos || tx_packets == std::string::npos || tx_errors == std::string::npos) {
         return {};
     }
+    const std::size_t f_tx_bytes = rx_count + tx_bytes;
+    const std::size_t f_tx_packets = rx_count + tx_packets;
+    const std::size_t f_tx_errors = rx_count + tx_errors;
 
     std::map<std::string, NetworkInterfaceInfo> result;
     for (std::size_t i = 2; i < lines.size(); ++i) {
@@ -331,13 +333,13 @@ std::map<std::string, NetworkInterfaceInfo> readProcNetDev(const std::vector<std
 
         // Values are after the colon.
         std::istringstream iss(line.substr(colon + 1));
-        std::vector<unsigned long long> values;
-        unsigned long long v;
+        std::vector<std::uint64_t> values;
+        std::uint64_t v = 0;
         while (iss >> v) {
             values.push_back(v);
         }
 
-        if (static_cast<int>(values.size()) != expected) {
+        if (values.size() != expected) {
             continue;
         }
 

@@ -18,20 +18,20 @@ namespace spark {
 
 namespace {
 
-constexpr int kSignal = SIGPROF;
+constexpr int KSignal = SIGPROF;
 
-constexpr std::uint64_t kPhaseMask = 3;
-constexpr std::uint64_t kRequested = 1;
-constexpr std::uint64_t kCapturing = 2;
-constexpr std::uint64_t kComplete = 3;
+constexpr std::uint64_t KPhaseMask = 3;
+constexpr std::uint64_t KRequested = 1;
+constexpr std::uint64_t KCapturing = 2;
+constexpr std::uint64_t KComplete = 3;
 
-std::atomic<std::uint64_t> g_state{0};
+std::atomic<std::uint64_t> GState{0};
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
-std::atomic<std::uint32_t> g_next_token{1};
-CaptureBuffer g_result;
-sem_t g_done;
-std::atomic<bool> g_armed{false};
-struct sigaction g_previous_action{};
+std::atomic<std::uint32_t> GNextToken{1};
+CaptureBuffer GResult;
+sem_t GDone;
+std::atomic<bool> GArmed{false};
+struct sigaction GPreviousAction{};
 
 std::uint64_t captureState(std::uint32_t token, std::uint64_t phase)
 {
@@ -44,13 +44,13 @@ void handler(int, siginfo_t *info, void *)
         return;
     }
     const auto token = static_cast<std::uint32_t>(info->si_value.sival_int);
-    std::uint64_t expected = captureState(token, kRequested);
-    if (!g_state.compare_exchange_strong(expected, captureState(token, kCapturing), std::memory_order_acq_rel)) {
+    std::uint64_t expected = captureState(token, KRequested);
+    if (!GState.compare_exchange_strong(expected, captureState(token, KCapturing), std::memory_order_acq_rel)) {
         return;
     }
-    g_result.count = cpptrace::safe_generate_raw_trace(g_result.ips, CaptureBuffer::kMax, 0);
-    g_state.store(captureState(token, kComplete), std::memory_order_release);
-    sem_post(&g_done);
+    GResult.count = cpptrace::safe_generate_raw_trace(GResult.ips, CaptureBuffer::kMax, 0);
+    GState.store(captureState(token, KComplete), std::memory_order_release);
+    sem_post(&GDone);
 }
 
 timespec deadlineAfterOneSecond()
@@ -63,8 +63,8 @@ timespec deadlineAfterOneSecond()
 
 bool waitForCompletion(const timespec &deadline, std::uint64_t complete_state)
 {
-    while (g_state.load(std::memory_order_acquire) != complete_state) {
-        if (sem_timedwait(&g_done, &deadline) == 0) {
+    while (GState.load(std::memory_order_acquire) != complete_state) {
+        if (sem_timedwait(&GDone, &deadline) == 0) {
             continue;
         }
         if (errno != EINTR) {
@@ -78,13 +78,13 @@ bool waitForCompletion(const timespec &deadline, std::uint64_t complete_state)
 
 bool Capture::arm()
 {
-    if (g_armed.load()) {
+    if (GArmed.load()) {
         return true;
     }
     if (!cpptrace::can_signal_safe_unwind()) {
         return false;
     }
-    if (sem_init(&g_done, 0, 0) != 0) {
+    if (sem_init(&GDone, 0, 0) != 0) {
         return false;
     }
 
@@ -92,8 +92,8 @@ bool Capture::arm()
     sa.sa_sigaction = handler;
     sa.sa_flags = SA_SIGINFO | SA_RESTART;
     sigemptyset(&sa.sa_mask);
-    if (sigaction(kSignal, &sa, &g_previous_action) != 0) {
-        sem_destroy(&g_done);
+    if (sigaction(KSignal, &sa, &GPreviousAction) != 0) {
+        sem_destroy(&GDone);
         return false;
     }
 
@@ -106,69 +106,69 @@ bool Capture::arm()
         cpptrace::get_safe_object_frame(warm[0], &frame);
     }
 
-    g_armed.store(true);
+    GArmed.store(true);
     return true;
 }
 
 void Capture::disarm()
 {
-    if (!g_armed.exchange(false)) {
+    if (!GArmed.exchange(false)) {
         return;
     }
-    std::uint64_t state = g_state.load(std::memory_order_acquire);
-    if ((state & kPhaseMask) == kRequested) {
-        g_state.compare_exchange_strong(state, 0, std::memory_order_acq_rel);
+    std::uint64_t state = GState.load(std::memory_order_acquire);
+    if ((state & KPhaseMask) == KRequested) {
+        GState.compare_exchange_strong(state, 0, std::memory_order_acq_rel);
     }
     struct sigaction ignored{};
     ignored.sa_handler = SIG_IGN;
     sigemptyset(&ignored.sa_mask);
-    sigaction(kSignal, &ignored, nullptr);
-    while ((g_state.load(std::memory_order_acquire) & kPhaseMask) == kCapturing) {
+    sigaction(KSignal, &ignored, nullptr);
+    while ((GState.load(std::memory_order_acquire) & KPhaseMask) == KCapturing) {
         const timespec deadline = deadlineAfterOneSecond();
-        if (sem_timedwait(&g_done, &deadline) != 0 && errno != EINTR) {
+        if (sem_timedwait(&GDone, &deadline) != 0 && errno != EINTR) {
             break;
         }
     }
-    sigaction(kSignal, &g_previous_action, nullptr);
-    g_state.store(0, std::memory_order_release);
-    sem_destroy(&g_done);
+    sigaction(KSignal, &GPreviousAction, nullptr);
+    GState.store(0, std::memory_order_release);
+    sem_destroy(&GDone);
 }
 
 bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
 {
-    if (!g_armed.load()) {
+    if (!GArmed.load()) {
         return false;
     }
-    if ((g_state.load(std::memory_order_acquire) & kPhaseMask) == kCapturing) {
+    if ((GState.load(std::memory_order_acquire) & KPhaseMask) == KCapturing) {
         return false;
     }
-    while (sem_trywait(&g_done) == 0) {
+    while (sem_trywait(&GDone) == 0) {
     }
-    std::uint32_t token = g_next_token.fetch_add(1, std::memory_order_relaxed);
+    std::uint32_t token = GNextToken.fetch_add(1, std::memory_order_relaxed);
     if (token == 0) {
-        token = g_next_token.fetch_add(1, std::memory_order_relaxed);
+        token = GNextToken.fetch_add(1, std::memory_order_relaxed);
     }
-    const std::uint64_t requested_state = captureState(token, kRequested);
-    const std::uint64_t capturing_state = captureState(token, kCapturing);
-    const std::uint64_t complete_state = captureState(token, kComplete);
-    g_result.count = 0;
-    g_state.store(requested_state, std::memory_order_release);
+    const std::uint64_t requested_state = captureState(token, KRequested);
+    const std::uint64_t capturing_state = captureState(token, KCapturing);
+    const std::uint64_t complete_state = captureState(token, KComplete);
+    GResult.count = 0;
+    GState.store(requested_state, std::memory_order_release);
 
     siginfo_t info{};
-    info.si_signo = kSignal;
+    info.si_signo = KSignal;
     info.si_code = SI_QUEUE;
     info.si_pid = getpid();
     info.si_uid = getuid();
     info.si_value.sival_int = static_cast<int>(token);
-    if (syscall(SYS_rt_tgsigqueueinfo, getpid(), static_cast<pid_t>(tid), kSignal, &info) != 0) {
-        g_state.store(0, std::memory_order_release);
+    if (syscall(SYS_rt_tgsigqueueinfo, getpid(), static_cast<pid_t>(tid), KSignal, &info) != 0) {
+        GState.store(0, std::memory_order_release);
         return false;
     }
 
     const timespec deadline = deadlineAfterOneSecond();
     if (!waitForCompletion(deadline, complete_state)) {
         std::uint64_t expected = requested_state;
-        if (g_state.compare_exchange_strong(expected, 0, std::memory_order_acq_rel)) {
+        if (GState.compare_exchange_strong(expected, 0, std::memory_order_acq_rel)) {
             return false;
         }
         if (expected == capturing_state) {
@@ -176,12 +176,12 @@ bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
                 return false;
             }
         }
-        g_state.store(0, std::memory_order_release);
+        GState.store(0, std::memory_order_release);
         return false;
     }
 
-    out = g_result;
-    g_state.store(0, std::memory_order_release);
+    out = GResult;
+    GState.store(0, std::memory_order_release);
     return out.count > 0;
 }
 

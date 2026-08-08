@@ -56,7 +56,7 @@ struct ModuleBaseFinder {
 int phdrCallback(struct dl_phdr_info *info, size_t /*size*/, void *data)
 {
     auto *finder = static_cast<ModuleBaseFinder *>(data);
-    if (info->dlpi_name && info->dlpi_name[0] != '\0' && std::string(info->dlpi_name) == finder->target) {
+    if (info->dlpi_name != nullptr && info->dlpi_name[0] != '\0' && std::string(info->dlpi_name) == finder->target) {
         finder->base = static_cast<std::uint64_t>(info->dlpi_addr);
         return 1;
     }
@@ -65,7 +65,7 @@ int phdrCallback(struct dl_phdr_info *info, size_t /*size*/, void *data)
 
 std::uint64_t moduleBaseForPath(const std::string &path)
 {
-    ModuleBaseFinder finder{path, 0};
+    ModuleBaseFinder finder{.target = path, .base = 0};
     dl_iterate_phdr(phdrCallback, &finder);
     return finder.base;
 }

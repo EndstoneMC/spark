@@ -1,5 +1,6 @@
 #include "native/symbol/symbol_guess.h"
 
+#include <algorithm>
 #include <string_view>
 #include <utility>
 
@@ -94,7 +95,6 @@ std::unordered_map<std::uint64_t, GuessResult> analyzeMainModuleSymbols(std::spa
 #include <map>
 #include <mutex>
 #include <set>
-#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -138,7 +138,7 @@ std::vector<std::uint64_t> decodeRipRelativeLeaTargets(std::span<const std::uint
                     stop = true;
                     break;
                 }
-                const std::size_t offset = static_cast<std::size_t>(instruction.addr - function_rva);
+                const auto offset = static_cast<std::size_t>(instruction.addr - function_rva);
                 if (!visited.insert(offset).second) {
                     stop = true;
                     break;
@@ -209,11 +209,13 @@ std::optional<DecodedThunk> jumpTarget(const _DInst &instruction, bool adjusts_t
         return std::nullopt;
     }
     if (instruction.ops[0].type == O_PC) {
-        return DecodedThunk{INSTRUCTION_GET_TARGET(&instruction), false, adjusts_this};
+        return DecodedThunk{
+            .target = INSTRUCTION_GET_TARGET(&instruction), .indirect = false, .adjusts_this = adjusts_this};
     }
     if ((instruction.flags & FLAG_RIP_RELATIVE) != 0 && instruction.ops[0].type == O_SMEM &&
         instruction.ops[0].index == R_RIP) {
-        return DecodedThunk{INSTRUCTION_GET_RIP_TARGET(&instruction), true, adjusts_this};
+        return DecodedThunk{
+            .target = INSTRUCTION_GET_RIP_TARGET(&instruction), .indirect = true, .adjusts_this = adjusts_this};
     }
     return std::nullopt;
 }
@@ -258,7 +260,7 @@ std::optional<DecodedThunk> decodeStrictThunk(std::span<const std::uint8_t> code
         first->ops[1].type == O_SMEM && first->ops[1].index == R_RIP && (first->flags & FLAG_RIP_RELATIVE) != 0 &&
         second->opcode == I_JMP && second->opsNo == 1 && second->ops[0].type == O_REG &&
         second->ops[0].index == first->ops[0].index) {
-        return DecodedThunk{INSTRUCTION_GET_RIP_TARGET(&*first), true, false};
+        return DecodedThunk{.target = INSTRUCTION_GET_RIP_TARGET(&*first), .indirect = true, .adjusts_this = false};
     }
     return std::nullopt;
 }
@@ -309,19 +311,19 @@ struct GuessTable {
     symbol_guess::linux::BuildStats stats;
 };
 
-std::mutex published_stats_mutex;
-symbol_guess::linux::BuildStats published_stats;
+std::mutex PublishedStatsMutex;
+symbol_guess::linux::BuildStats PublishedStats;
 
 void publishStats(const symbol_guess::linux::BuildStats &stats)
 {
-    std::scoped_lock lock(published_stats_mutex);
-    published_stats = stats;
+    std::scoped_lock lock(PublishedStatsMutex);
+    PublishedStats = stats;
 }
 
 symbol_guess::linux::BuildStats readPublishedStats()
 {
-    std::scoped_lock lock(published_stats_mutex);
-    return published_stats;
+    std::scoped_lock lock(PublishedStatsMutex);
+    return PublishedStats;
 }
 
 // Bounds-checked read-only view of the main executable, addressed by RVA
@@ -339,16 +341,15 @@ public:
         sections_ = std::move(collect.sections);
         eh_frame_hdr_ = collect.eh_frame_hdr;
         eh_frame_hdr_size_ = collect.eh_frame_hdr_size;
-        std::sort(sections_.begin(), sections_.end(),
-                  [](const Section &a, const Section &b) { return a.begin < b.begin; });
+        std::ranges::sort(sections_, [](const Section &a, const Section &b) { return a.begin < b.begin; });
         return !sections_.empty();
     }
 
-    std::uint64_t bias() const { return bias_; }
+    [[nodiscard]] std::uint64_t bias() const { return bias_; }
 
-    const std::vector<Section> &sections() const { return sections_; }
+    [[nodiscard]] const std::vector<Section> &sections() const { return sections_; }
 
-    std::size_t imageBytes() const
+    [[nodiscard]] std::size_t imageBytes() const
     {
         std::size_t total = 0;
         for (const Section &section : sections_) {
@@ -361,11 +362,11 @@ public:
         return total;
     }
 
-    std::uint64_t ehFrameHdr() const { return eh_frame_hdr_; }
+    [[nodiscard]] std::uint64_t ehFrameHdr() const { return eh_frame_hdr_; }
 
-    std::uint64_t ehFrameHdrSize() const { return eh_frame_hdr_size_; }
+    [[nodiscard]] std::uint64_t ehFrameHdrSize() const { return eh_frame_hdr_size_; }
 
-    const Section *sectionContaining(std::uint64_t rva, std::uint64_t length) const
+    [[nodiscard]] const Section *sectionContaining(std::uint64_t rva, std::uint64_t length) const
     {
         for (const Section &s : sections_) {
             if (rva >= s.begin && rva < s.end && length <= s.end - rva) {
@@ -375,7 +376,10 @@ public:
         return nullptr;
     }
 
-    const std::uint8_t *at(std::uint64_t rva) const { return reinterpret_cast<const std::uint8_t *>(bias_ + rva); }
+    [[nodiscard]] const std::uint8_t *at(std::uint64_t rva) const
+    {
+        return reinterpret_cast<const std::uint8_t *>(bias_ + rva);
+    }
 
     bool read(std::uint64_t rva, void *out, std::size_t length) const override
     {
@@ -386,13 +390,13 @@ public:
         return true;
     }
 
-    bool executable(std::uint64_t rva, std::size_t length) const override
+    [[nodiscard]] bool executable(std::uint64_t rva, std::size_t length) const override
     {
         const Section *section = sectionContaining(rva, length);
         return section != nullptr && section->executable;
     }
 
-    std::uint64_t readableEnd(std::uint64_t rva) const override
+    [[nodiscard]] std::uint64_t readableEnd(std::uint64_t rva) const override
     {
         const Section *section = sectionContaining(rva, 1);
         return section != nullptr ? section->end : 0;
@@ -429,7 +433,7 @@ private:
         auto *collect = static_cast<Collect *>(data);
         collect->found = true;
         collect->bias = static_cast<std::uint64_t>(info->dlpi_addr);
-        for (int i = 0; i < info->dlpi_phnum; ++i) {
+        for (int i = 0; std::cmp_less(i, info->dlpi_phnum); ++i) {
             const ElfW(Phdr) &ph = info->dlpi_phdr[i];
             if (ph.p_type == PT_GNU_EH_FRAME) {
                 collect->eh_frame_hdr = static_cast<std::uint64_t>(ph.p_vaddr);
@@ -477,7 +481,7 @@ std::string readCString(const ImageView &img, std::uint64_t rva, std::uint64_t m
     for (std::uint64_t i = 0; i < limit; ++i) {
         const auto c = static_cast<unsigned char>(p[i]);
         if (c == '\0') {
-            return std::string(p, i);
+            return {p, i};
         }
         if ((c < 0x20 && c != '\t') || c > 0x7e) {
             return {};
@@ -494,8 +498,9 @@ void collectFunctions(const ImageView &img, GuessTable &table)
             text_base = section.begin;
         }
     }
-    table.ranges = symbol_guess::dwarf::parseEhFrameHeader(img, img.ehFrameHdr(), img.ehFrameHdrSize(),
-                                                           {text_base, 0, true, false}, &table.range_stats);
+    table.ranges = symbol_guess::dwarf::parseEhFrameHeader(
+        img, img.ehFrameHdr(), img.ehFrameHdrSize(),
+        {.text = text_base, .data = 0, .has_text = true, .has_data = false}, &table.range_stats);
     table.stats.table_entries = table.range_stats.table_entries;
     table.stats.eh_frame_records = table.range_stats.eh_frame_records;
     table.stats.function_ranges = table.range_stats.function_ranges;
@@ -580,7 +585,7 @@ std::string classNameFromTypeInfo(const std::string &mangled)
     std::free(demangled);
     // __cxa_demangle on _ZTS<name> yields "typeinfo name for <class>".
     constexpr std::string_view kPrefix = "typeinfo name for ";
-    if (out.rfind(kPrefix, 0) == 0) {
+    if (out.starts_with(kPrefix)) {
         out.erase(0, kPrefix.size());
     }
     return out;
@@ -770,7 +775,7 @@ void collectVtableLabels(const ImageView &img, GuessTable &table)
             // Complete-object and secondary vtables use zero or a small
             // negative adjustment. Positive construction-vtable offsets and
             // implausibly large values are not stable ownership evidence.
-            if (offset_to_top > 0 || offset_to_top < -(1ll << 24) || (offset_to_top & 7) != 0) {
+            if (offset_to_top > 0 || offset_to_top < -(1LL << 24) || (offset_to_top & 7) != 0) {
                 continue;
             }
             std::uint64_t type_info_pointer = 0;
@@ -791,9 +796,9 @@ void collectVtableLabels(const ImageView &img, GuessTable &table)
             type_infos.push_back({type_info_rva, vptr_value, class_name});
             ++table.stats.vtables;
             const std::uint64_t vtable = rva + 8;
-            for (std::uint64_t slot = 0; vtable + 8u * (slot + 1) <= section.end; ++slot) {
+            for (std::uint64_t slot = 0; vtable + 8U * (slot + 1) <= section.end; ++slot) {
                 std::uint64_t entry = 0;
-                std::memcpy(&entry, img.at(vtable + 8u * slot), 8);
+                std::memcpy(&entry, img.at(vtable + 8U * slot), 8);
                 std::uint64_t target = 0;
                 if (!img.toRva(entry, target)) {
                     break;
@@ -844,7 +849,7 @@ void collectVtableLabels(const ImageView &img, GuessTable &table)
         if (was_conflict && !inheritance.empty()) {
             ++table.stats.vtable_inheritance_resolved;
         }
-        table.labels.emplace(function, std::move(label));
+        table.labels.emplace(function, label);
         ++table.stats.vtable_labels;
     }
 }
@@ -879,7 +884,7 @@ std::vector<StringCandidate> decodeStrings(const ImageView &img, const FunctionR
             }
         }
     }
-    std::sort(candidates.begin(), candidates.end(), [](const StringCandidate &a, const StringCandidate &b) {
+    std::ranges::sort(candidates, [](const StringCandidate &a, const StringCandidate &b) {
         if (a.score != b.score) {
             return a.score > b.score;
         }
@@ -971,7 +976,7 @@ std::vector<std::uint64_t> decodeDirectCallTargets(std::span<const std::uint8_t>
                     stop = true;
                     break;
                 }
-                const std::size_t offset = static_cast<std::size_t>(instruction.addr - function_rva);
+                const auto offset = static_cast<std::size_t>(instruction.addr - function_rva);
                 if (!visited.insert(offset).second) {
                     stop = true;
                     break;
@@ -1142,10 +1147,10 @@ std::unordered_map<std::uint64_t, GuessResult> guessBatch(std::span<const std::u
         while (!display.empty() && (display.front() == ' ' || display.front() == '\t')) {
             display.remove_prefix(1);
         }
-        constexpr std::size_t kMaxDisplay = 40;
-        std::string message(display.substr(0, kMaxDisplay));
-        if (display.size() > kMaxDisplay) {
-            message.resize(kMaxDisplay - 3);
+        constexpr std::size_t k_max_display = 40;
+        std::string message(display.substr(0, k_max_display));
+        if (display.size() > k_max_display) {
+            message.resize(k_max_display - 3);
             message += "...";
         }
         message += " (+";
@@ -1231,8 +1236,9 @@ std::unordered_map<std::uint64_t, GuessResult> guessBatch(std::span<const std::u
         }
 
         if (candidates.size() == 1) {
-            const symbol_guess::TypedLabel body_label{"call?: " + lambda_name + " (lambda body)", GuessKind::Call,
-                                                      Confidence::Medium};
+            const symbol_guess::TypedLabel body_label{.label = "call?: " + lambda_name + " (lambda body)",
+                                                      .kind = GuessKind::Call,
+                                                      .confidence = Confidence::Medium};
             for (std::uint64_t rva : root_inputs.at(candidates[0])) {
                 out[rva] = makeGuess(candidates[0], body_label);
             }
@@ -1257,10 +1263,11 @@ std::unordered_map<std::uint64_t, GuessResult> guessBatch(std::span<const std::u
         const auto code = std::span(img.at(function->begin), static_cast<std::size_t>(function->end - function->begin));
 
         // Knuth's multiplicative hash constant 0x9E3779B9 (little-endian).
-        const unsigned char kHashConstant[] = {0xB9, 0x79, 0x37, 0x9E};
-        if (std::search(code.begin(), code.end(), kHashConstant, kHashConstant + 4) != code.end()) {
-            const symbol_guess::TypedLabel label{"type?: hash_table_lookup (Knuth multiplicative hash)",
-                                                 GuessKind::Type, Confidence::Medium};
+        const unsigned char k_hash_constant[] = {0xB9, 0x79, 0x37, 0x9E};
+        if (std::search(code.begin(), code.end(), k_hash_constant, k_hash_constant + 4) != code.end()) {
+            const symbol_guess::TypedLabel label{.label = "type?: hash_table_lookup (Knuth multiplicative hash)",
+                                                 .kind = GuessKind::Type,
+                                                 .confidence = Confidence::Medium};
             for (std::uint64_t rva : inputs) {
                 out[rva] = makeGuess(root, label);
             }
@@ -1270,10 +1277,11 @@ std::unordered_map<std::uint64_t, GuessResult> guessBatch(std::span<const std::u
 
         // CityHash/FarmHash 64-bit hash multiplier 0x9DDFEA08EB382D69
         // (little-endian). Used in Hash128to64 and similar integer hash functions.
-        const unsigned char kHash64Constant[] = {0x69, 0x2D, 0x38, 0xEB, 0x08, 0xEA, 0xDF, 0x9D};
-        if (std::search(code.begin(), code.end(), kHash64Constant, kHash64Constant + 8) != code.end()) {
-            const symbol_guess::TypedLabel label{"type?: hash_table_lookup (64-bit hash multiplier)", GuessKind::Type,
-                                                 Confidence::Medium};
+        const unsigned char k_hash64_constant[] = {0x69, 0x2D, 0x38, 0xEB, 0x08, 0xEA, 0xDF, 0x9D};
+        if (std::search(code.begin(), code.end(), k_hash64_constant, k_hash64_constant + 8) != code.end()) {
+            const symbol_guess::TypedLabel label{.label = "type?: hash_table_lookup (64-bit hash multiplier)",
+                                                 .kind = GuessKind::Type,
+                                                 .confidence = Confidence::Medium};
             for (std::uint64_t rva : inputs) {
                 out[rva] = makeGuess(root, label);
             }
@@ -1284,12 +1292,13 @@ std::unordered_map<std::uint64_t, GuessResult> guessBatch(std::span<const std::u
         // Atomic operations in small functions.
         if (code.size() < 100) {
             // lock cmpxchg: F0 0F B1 or F0 48 0F B1
-            const unsigned char kLockCmpxchg[] = {0xF0, 0x0F, 0xB1};
-            const unsigned char kLockCmpxchg64[] = {0xF0, 0x48, 0x0F, 0xB1};
-            if (std::search(code.begin(), code.end(), kLockCmpxchg, kLockCmpxchg + 3) != code.end() ||
-                std::search(code.begin(), code.end(), kLockCmpxchg64, kLockCmpxchg64 + 4) != code.end()) {
-                const symbol_guess::TypedLabel label{"type?: atomic_cas_loop (lock cmpxchg)", GuessKind::Type,
-                                                     Confidence::Medium};
+            const unsigned char k_lock_cmpxchg[] = {0xF0, 0x0F, 0xB1};
+            const unsigned char k_lock_cmpxchg64[] = {0xF0, 0x48, 0x0F, 0xB1};
+            if (std::search(code.begin(), code.end(), k_lock_cmpxchg, k_lock_cmpxchg + 3) != code.end() ||
+                std::search(code.begin(), code.end(), k_lock_cmpxchg64, k_lock_cmpxchg64 + 4) != code.end()) {
+                const symbol_guess::TypedLabel label{.label = "type?: atomic_cas_loop (lock cmpxchg)",
+                                                     .kind = GuessKind::Type,
+                                                     .confidence = Confidence::Medium};
                 for (std::uint64_t rva : inputs) {
                     out[rva] = makeGuess(root, label);
                 }
@@ -1298,12 +1307,13 @@ std::unordered_map<std::uint64_t, GuessResult> guessBatch(std::span<const std::u
             }
 
             // lock xadd: F0 0F C1 or F0 48 0F C1
-            const unsigned char kLockXadd[] = {0xF0, 0x0F, 0xC1};
-            const unsigned char kLockXadd64[] = {0xF0, 0x48, 0x0F, 0xC1};
-            if (std::search(code.begin(), code.end(), kLockXadd, kLockXadd + 3) != code.end() ||
-                std::search(code.begin(), code.end(), kLockXadd64, kLockXadd64 + 4) != code.end()) {
-                const symbol_guess::TypedLabel label{"type?: atomic_fetch_add (lock xadd)", GuessKind::Type,
-                                                     Confidence::Medium};
+            const unsigned char k_lock_xadd[] = {0xF0, 0x0F, 0xC1};
+            const unsigned char k_lock_xadd64[] = {0xF0, 0x48, 0x0F, 0xC1};
+            if (std::search(code.begin(), code.end(), k_lock_xadd, k_lock_xadd + 3) != code.end() ||
+                std::search(code.begin(), code.end(), k_lock_xadd64, k_lock_xadd64 + 4) != code.end()) {
+                const symbol_guess::TypedLabel label{.label = "type?: atomic_fetch_add (lock xadd)",
+                                                     .kind = GuessKind::Type,
+                                                     .confidence = Confidence::Medium};
                 for (std::uint64_t rva : inputs) {
                     out[rva] = makeGuess(root, label);
                 }
@@ -1329,8 +1339,9 @@ std::unordered_map<std::uint64_t, GuessResult> guessBatch(std::span<const std::u
                 }
             }
             if (shift_right_1_count >= 2 && not_count >= 1) {
-                const symbol_guess::TypedLabel label{"type?: binary_search (shift-right halving)", GuessKind::Type,
-                                                     Confidence::Medium};
+                const symbol_guess::TypedLabel label{.label = "type?: binary_search (shift-right halving)",
+                                                     .kind = GuessKind::Type,
+                                                     .confidence = Confidence::Medium};
                 for (std::uint64_t rva : inputs) {
                     out[rva] = makeGuess(root, label);
                 }

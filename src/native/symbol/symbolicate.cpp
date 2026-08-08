@@ -183,6 +183,7 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
         rf.class_name = basename(module_path);
 
         Dl_info info{};
+        // NOLINTNEXTLINE(performance-no-int-to-ptr)
         if (key.raw_address != 0 && dladdr(reinterpret_cast<void *>(key.raw_address), &info) != 0 &&
             info.dli_sname != nullptr) {
             int status = 0;
@@ -227,6 +228,7 @@ bool isSleepFrame(std::uint64_t raw_address)
         return false;
     }
     Dl_info info{};
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
     if (dladdr(reinterpret_cast<void *>(raw_address), &info) == 0 || info.dli_sname == nullptr) {
         return false;
     }
@@ -238,7 +240,7 @@ bool isSleepFrame(std::uint64_t raw_address)
             return true;
         }
     }
-    for (std::string_view exact :
+    for (std::string_view exact :  // NOLINT(readability-use-anyofallof)
          {std::string_view("poll"), std::string_view("ppoll"), std::string_view("select"), std::string_view("pselect"),
           std::string_view("sched_yield"), std::string_view("usleep")}) {
         if (name == exact) {

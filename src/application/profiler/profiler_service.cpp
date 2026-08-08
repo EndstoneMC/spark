@@ -516,7 +516,7 @@ void ProfilerService::viewerUpdateLoop()
             if (!viewer_worker_running_.load()) {
                 break;
             }
-            work = std::move(*viewer_work_);
+            work = std::move(viewer_work_).value_or(ViewerWorkItem{});
             viewer_work_.reset();
             viewer_work_active_ = true;
         }

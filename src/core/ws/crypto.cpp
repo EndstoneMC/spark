@@ -22,7 +22,7 @@ std::vector<std::uint8_t> pkeyToPkcs8(EVP_PKEY *key)
     }
     if (i2d_PKCS8PrivateKey_bio(bio, key, nullptr, nullptr, 0, nullptr, nullptr)) {
         char *buf = nullptr;
-        long len = BIO_get_mem_data(bio, &buf);
+        long len = BIO_get_mem_data(bio, &buf);  // NOLINT(google-runtime-int)
         if (len > 0) {
             out.assign(reinterpret_cast<const std::uint8_t *>(buf), reinterpret_cast<const std::uint8_t *>(buf) + len);
         }
@@ -41,7 +41,7 @@ std::vector<std::uint8_t> pkeyToX509(EVP_PKEY *key)
     }
     if (i2d_PUBKEY_bio(bio, key)) {
         char *buf = nullptr;
-        long len = BIO_get_mem_data(bio, &buf);
+        long len = BIO_get_mem_data(bio, &buf);  // NOLINT(google-runtime-int)
         if (len > 0) {
             out.assign(reinterpret_cast<const std::uint8_t *>(buf), reinterpret_cast<const std::uint8_t *>(buf) + len);
         }
@@ -53,14 +53,14 @@ std::vector<std::uint8_t> pkeyToX509(EVP_PKEY *key)
 // Helper: load an EVP_PKEY from X.509 SubjectPublicKeyInfo DER.
 EVP_PKEY *x509ToPkey(const std::uint8_t *data, std::size_t len)
 {
-    return d2i_PUBKEY(nullptr, &data, static_cast<long>(len));
+    return d2i_PUBKEY(nullptr, &data, static_cast<long>(len));  // NOLINT(google-runtime-int)
 }
 
 // Helper: load an EVP_PKEY from PKCS#8 DER.
 EVP_PKEY *pkcs8ToPkey(const std::uint8_t *data, std::size_t len)
 {
     const unsigned char *p = data;
-    return d2i_AutoPrivateKey(nullptr, &p, static_cast<long>(len));
+    return d2i_AutoPrivateKey(nullptr, &p, static_cast<long>(len));  // NOLINT(google-runtime-int)
 }
 
 }  // namespace

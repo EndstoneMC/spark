@@ -69,8 +69,8 @@ ProcessStats gatherProcessStats()
 {
     ProcessStats stats;
     std::ifstream f("/proc/self/statm");
-    long pages_total = 0, pages_resident = 0;
-    const long page_size = sysconf(_SC_PAGESIZE);
+    std::int64_t pages_total = 0, pages_resident = 0;
+    const auto page_size = sysconf(_SC_PAGESIZE);
     if (page_size > 0 && f >> pages_total >> pages_resident) {
         stats.virtual_bytes = static_cast<std::int64_t>(pages_total) * page_size;
         stats.rss_bytes = static_cast<std::int64_t>(pages_resident) * page_size;
@@ -82,7 +82,7 @@ ProcessStats gatherProcessStats()
     std::string key;
     while (status >> key) {
         if (key == "Threads:") {
-            long threads = 0;
+            std::int64_t threads = 0;
             if (status >> threads && threads > 0 && threads <= (std::numeric_limits<int>::max)()) {
                 stats.threads = static_cast<int>(threads);
                 stats.threads_present = true;
@@ -97,8 +97,8 @@ ProcessStats gatherProcessStats()
 CpuSnapshot captureCpuSnapshot()
 {
     CpuSnapshot s;
-    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
-    long ticks_per_second = sysconf(_SC_CLK_TCK);
+    const auto ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    const auto ticks_per_second = sysconf(_SC_CLK_TCK);
     s.cpu_threads = ncpu > 0 ? static_cast<int>(ncpu) : 1;
     s.process_ticks_per_second = ticks_per_second > 0 ? static_cast<double>(ticks_per_second) : 100.0;
     bool process_valid = false;
@@ -113,7 +113,7 @@ CpuSnapshot captureCpuSnapshot()
             std::istringstream iss(content.substr(rparen + 1));
             std::string tok;
             int index = 0;
-            unsigned long long utime = 0, stime = 0;
+            std::uint64_t utime = 0, stime = 0;
             while (iss >> tok) {
                 if (index == 11) {
                     utime = std::strtoull(tok.c_str(), nullptr, 10);  // field 14
@@ -134,7 +134,7 @@ CpuSnapshot captureCpuSnapshot()
         std::ifstream f("/proc/stat");
         std::string label;
         f >> label;  // "cpu"
-        unsigned long long value = 0, total = 0, idle_all = 0;
+        std::uint64_t value = 0, total = 0, idle_all = 0;
         int index = 0;
         while (index < 8 && f >> value) {
             total += value;
@@ -157,7 +157,7 @@ SystemStats gatherSystemStats(const std::string &disk_path)
 {
     SystemStats s;
 
-    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    const auto ncpu = sysconf(_SC_NPROCESSORS_ONLN);
     if (ncpu > 0 && ncpu <= (std::numeric_limits<int>::max)()) {
         s.cpu_threads = static_cast<int>(ncpu);
         s.cpu_present = true;
@@ -168,7 +168,7 @@ SystemStats gatherSystemStats(const std::string &disk_path)
         std::ifstream f("/proc/cpuinfo");
         std::string line;
         while (std::getline(f, line)) {
-            if (line.rfind("model name", 0) == 0) {
+            if (line.starts_with("model name")) {
                 std::size_t colon = line.find(':');
                 if (colon != std::string::npos) {
                     std::size_t start = line.find_first_not_of(" \t", colon + 1);
@@ -186,13 +186,13 @@ SystemStats gatherSystemStats(const std::string &disk_path)
     {
         std::ifstream f("/proc/meminfo");
         std::string line;
-        long long mem_total = 0, mem_avail = 0, swap_total = 0, swap_free = 0;
+        std::int64_t mem_total = 0, mem_avail = 0, swap_total = 0, swap_free = 0;
         bool have_mem_total = false, have_mem_available = false;
         bool have_swap_total = false, have_swap_free = false;
         while (std::getline(f, line)) {
             std::istringstream iss(line);
             std::string key;
-            long long value = 0;
+            std::int64_t value = 0;
             iss >> key >> value;
             if (key == "MemTotal:") {
                 mem_total = value;

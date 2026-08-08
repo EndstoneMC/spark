@@ -46,19 +46,25 @@
 namespace spark {
 namespace {
 
-constexpr std::size_t kStackDepth = 48;
-constexpr std::size_t kEventCapacity = 16384;
-constexpr std::size_t kLiveIndexCapacity = kEventCapacity * 2;
-constexpr std::size_t kLiveIndexShards = 64;
-constexpr std::size_t kLiveIndexShardCapacity = kLiveIndexCapacity / kLiveIndexShards;
-constexpr std::size_t kMaxSampledThreads = 256;
-constexpr std::size_t kMaxAllocationModules = 512;
-constexpr std::size_t kMaxProfileNodes = 131072;
-constexpr std::size_t kMaxPendingSamples = 32768;
-constexpr std::size_t kMaxTickDecisions = 100000;
-constexpr std::size_t kTickEventCapacity = 4096;
-constexpr std::int32_t kMaxProfileWindows = 86400;
-constexpr std::size_t kFramesToSkip = 4;
+constexpr std::size_t KStackDepth = 48;
+constexpr std::size_t KEventCapacity = 16384;
+constexpr std::size_t KLiveIndexCapacity = KEventCapacity * 2;
+constexpr std::size_t KLiveIndexShards = 64;
+constexpr std::size_t KLiveIndexShardCapacity = KLiveIndexCapacity / KLiveIndexShards;
+constexpr std::size_t KMaxSampledThreads = 256;
+constexpr std::size_t KMaxAllocationModules = 512;
+constexpr std::size_t KMaxProfileNodes = 131072;
+constexpr std::size_t KMaxPendingSamples = 32768;
+constexpr std::size_t KMaxTickDecisions = 100000;
+constexpr std::size_t KTickEventCapacity = 4096;
+constexpr std::int32_t KMaxProfileWindows = 86400;
+constexpr std::size_t KFramesToSkip = 4;
+
+void *tombstonePointer() noexcept
+{
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
+    return reinterpret_cast<void *>(static_cast<std::uintptr_t>(1));
+}
 
 std::uint64_t monotonicMs() noexcept
 {
@@ -107,7 +113,7 @@ struct AllocationSampler::Impl {
         std::int32_t window = 0;
         std::uint16_t depth = 0;
         bool thread_observation = false;
-        cpptrace::frame_ptr frames[kStackDepth]{};
+        cpptrace::frame_ptr frames[KStackDepth]{};
     };
 
     struct TickEvent {
@@ -127,7 +133,7 @@ struct AllocationSampler::Impl {
         std::uint64_t os_thread_id = 0;
         std::int32_t window = 0;
         std::uint16_t depth = 0;
-        cpptrace::frame_ptr frames[kStackDepth]{};
+        cpptrace::frame_ptr frames[KStackDepth]{};
     };
 
     struct LiveIndexEntry {
@@ -150,7 +156,7 @@ struct AllocationSampler::Impl {
 
         bool allocate(std::string &error)
         {
-            const std::size_t bytes = sizeof(Cell) * kEventCapacity;
+            const std::size_t bytes = sizeof(Cell) * KEventCapacity;
             void *memory = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             if (memory == MAP_FAILED) {
                 storage = nullptr;
@@ -158,7 +164,7 @@ struct AllocationSampler::Impl {
                 return false;
             }
             storage = static_cast<Cell *>(memory);
-            for (std::size_t i = 0; i < kEventCapacity; ++i) {
+            for (std::size_t i = 0; i < KEventCapacity; ++i) {
                 ::new (static_cast<void *>(&storage[i])) Cell{};
                 storage[i].sequence.store(i, std::memory_order_relaxed);
             }
@@ -172,7 +178,7 @@ struct AllocationSampler::Impl {
         void release() noexcept
         {
             if (storage != nullptr) {
-                ::munmap(storage, sizeof(Cell) * kEventCapacity);
+                ::munmap(storage, sizeof(Cell) * KEventCapacity);
                 storage = nullptr;
             }
             producer.store(0, std::memory_order_relaxed);
@@ -185,7 +191,7 @@ struct AllocationSampler::Impl {
             std::size_t position = producer.load(std::memory_order_relaxed);
             Cell *cell = nullptr;
             for (;;) {
-                cell = &storage[position & (kEventCapacity - 1)];
+                cell = &storage[position & (KEventCapacity - 1)];
                 const std::size_t sequence = cell->sequence.load(std::memory_order_acquire);
                 const std::intptr_t difference =
                     static_cast<std::intptr_t>(sequence) - static_cast<std::intptr_t>(position);
@@ -216,7 +222,7 @@ struct AllocationSampler::Impl {
             std::size_t position = consumer.load(std::memory_order_relaxed);
             Cell *cell = nullptr;
             for (;;) {
-                cell = &storage[position & (kEventCapacity - 1)];
+                cell = &storage[position & (KEventCapacity - 1)];
                 const std::size_t sequence = cell->sequence.load(std::memory_order_acquire);
                 const std::intptr_t difference =
                     static_cast<std::intptr_t>(sequence) - static_cast<std::intptr_t>(position + 1);
@@ -234,7 +240,7 @@ struct AllocationSampler::Impl {
             }
             event = cell->event;
             size.fetch_sub(1, std::memory_order_relaxed);
-            cell->sequence.store(position + kEventCapacity, std::memory_order_release);
+            cell->sequence.store(position + KEventCapacity, std::memory_order_release);
             return true;
         }
     };
@@ -253,8 +259,8 @@ struct AllocationSampler::Impl {
 
     class HookCallGuard {
     public:
-        HookCallGuard() noexcept { active_hook_calls.fetch_add(1, std::memory_order_acq_rel); }
-        ~HookCallGuard() { active_hook_calls.fetch_sub(1, std::memory_order_release); }
+        HookCallGuard() noexcept { mActiveHookCalls.fetch_add(1, std::memory_order_acq_rel); }
+        ~HookCallGuard() { mActiveHookCalls.fetch_sub(1, std::memory_order_release); }
     };
 
     class TrackingCallGuard {
@@ -300,7 +306,7 @@ struct AllocationSampler::Impl {
                 state_->inside_hook = false;
             }
         }
-        bool owner() const noexcept { return owner_; }
+        [[nodiscard]] bool owner() const noexcept { return owner_; }
 
     private:
         ThreadSamplingState *state_ = nullptr;
@@ -328,8 +334,8 @@ struct AllocationSampler::Impl {
         bool previous_ = false;
     };
 
-    static std::atomic<Impl *> active_instance;
-    static std::atomic<std::uint64_t> active_hook_calls;
+    static std::atomic<Impl *> mActiveInstance;
+    static std::atomic<std::uint64_t> mActiveHookCalls;
 
     ElfImportHooks hooks;
     MallocFn real_malloc = nullptr;
@@ -384,7 +390,7 @@ struct AllocationSampler::Impl {
     std::atomic<bool> profile_nodes_exhausted{false};
     std::uint64_t last_module_rescan_ms = 0;
 
-    std::array<pthread_rwlock_t, kLiveIndexShards> live_index_locks{};
+    std::array<pthread_rwlock_t, KLiveIndexShards> live_index_locks{};
     pthread_mutex_t live_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_key_t thread_state_key{};
     bool thread_state_key_created = false;
@@ -410,23 +416,23 @@ struct AllocationSampler::Impl {
 
     EventQueue events;
     std::thread aggregator_thread;
-    BoundedEventQueue<TickEvent, kTickEventCapacity> ticks;
+    BoundedEventQueue<TickEvent, KTickEventCapacity> ticks;
     CallTree tree;
     std::map<std::uint64_t, ThreadCallTree> thread_trees;
-    AllocationThreadFilter thread_filter{kMaxSampledThreads, kLiveIndexCapacity};
+    AllocationThreadFilter thread_filter{KMaxSampledThreads, KLiveIndexCapacity};
     ModuleTable modules;
     std::map<std::int32_t, WindowTickStats> window_ticks;
     std::unordered_map<std::uint64_t, std::vector<Sample>> buckets;
     std::size_t pending_samples = 0;
-    std::size_t profile_nodes_remaining = kMaxProfileNodes;
+    std::size_t profile_nodes_remaining = KMaxProfileNodes;
     std::vector<std::uint8_t> tick_decisions;
 
-    RecoverySink *recovery_sink_ = nullptr;
-    std::unordered_set<std::uint64_t> journaled_threads_;
+    RecoverySink *recovery_sink = nullptr;
+    std::unordered_set<std::uint64_t> journaled_threads;
 
     static Impl *activeOrAbort() noexcept
     {
-        Impl *impl = active_instance.load(std::memory_order_acquire);
+        Impl *impl = mActiveInstance.load(std::memory_order_acquire);
         if (impl == nullptr) {
             std::abort();
         }
@@ -487,7 +493,7 @@ struct AllocationSampler::Impl {
 
     static void releaseThreadState(void *value) noexcept
     {
-        if (value == nullptr || value == reinterpret_cast<void *>(static_cast<std::uintptr_t>(1))) {
+        if (value == nullptr || value == tombstonePointer()) {
             return;
         }
         auto *state = static_cast<ThreadSamplingState *>(value);
@@ -502,14 +508,14 @@ struct AllocationSampler::Impl {
         if (!thread_state_key_created) {
             return nullptr;
         }
-        const std::uint64_t tid = static_cast<std::uint64_t>(::syscall(SYS_gettid));
+        const auto tid = static_cast<std::uint64_t>(::syscall(SYS_gettid));
         void *value = ::pthread_getspecific(thread_state_key);
-        if (value == reinterpret_cast<void *>(static_cast<std::uintptr_t>(1))) {
+        if (value == tombstonePointer()) {
             return nullptr;
         }
         auto *state = static_cast<ThreadSamplingState *>(value);
-        const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(state);
-        const std::uintptr_t begin = reinterpret_cast<std::uintptr_t>(thread_states.data());
+        const auto address = reinterpret_cast<std::uintptr_t>(state);
+        const auto begin = reinterpret_cast<std::uintptr_t>(thread_states.data());
         const std::size_t state_limit =
             config.thread_state_limit_for_testing == 0
                 ? thread_states.size()
@@ -575,18 +581,18 @@ struct AllocationSampler::Impl {
     static std::uint64_t liveIndexHash(void *pointer) noexcept
     {
         const auto value = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer) >> 4);
-        return value * 11400714819323198485ull;
+        return value * 11400714819323198485ULL;
     }
 
     static std::size_t liveIndexShard(std::uint64_t hash) noexcept
     {
-        return static_cast<std::size_t>(hash & (kLiveIndexShards - 1));
+        return static_cast<std::size_t>(hash & (KLiveIndexShards - 1));
     }
 
     static std::size_t liveIndexSlot(std::uint64_t hash, std::size_t shard, std::size_t offset = 0) noexcept
     {
-        const std::size_t within = (static_cast<std::size_t>(hash >> 6) + offset) & (kLiveIndexShardCapacity - 1);
-        return shard * kLiveIndexShardCapacity + within;
+        const std::size_t within = (static_cast<std::size_t>(hash >> 6) + offset) & (KLiveIndexShardCapacity - 1);
+        return shard * KLiveIndexShardCapacity + within;
     }
 
     void retireAllocation(LiveAllocation *allocation, std::uint64_t released_ms) noexcept
@@ -627,7 +633,7 @@ struct AllocationSampler::Impl {
             return nullptr;
         }
         LiveAllocation *detached = nullptr;
-        for (std::size_t offset = 0; offset < kLiveIndexShardCapacity; ++offset) {
+        for (std::size_t offset = 0; offset < KLiveIndexShardCapacity; ++offset) {
             LiveIndexEntry &entry = live_index[liveIndexSlot(hash, shard, offset)];
             if (entry.pointer == nullptr) {
                 break;
@@ -638,7 +644,7 @@ struct AllocationSampler::Impl {
                     break;
                 }
                 detached = entry.allocation;
-                entry.pointer = reinterpret_cast<void *>(static_cast<std::uintptr_t>(1));
+                entry.pointer = tombstonePointer();
                 entry.allocation_id = 0;
                 entry.allocation = nullptr;
                 break;
@@ -837,31 +843,36 @@ struct AllocationSampler::Impl {
         }
         LiveAllocation *replaced = nullptr;
         bool inserted = false;
-        std::size_t tombstone = kLiveIndexCapacity;
-        for (std::size_t offset = 0; offset < kLiveIndexShardCapacity; ++offset) {
+        std::size_t tombstone = KLiveIndexCapacity;
+        for (std::size_t offset = 0; offset < KLiveIndexShardCapacity; ++offset) {
             const std::size_t slot = liveIndexSlot(hash, shard, offset);
             LiveIndexEntry &entry = live_index[slot];
-            if (entry.pointer == reinterpret_cast<void *>(static_cast<std::uintptr_t>(1))) {
-                if (tombstone == kLiveIndexCapacity) {
+            if (entry.pointer == tombstonePointer()) {
+                if (tombstone == KLiveIndexCapacity) {
                     tombstone = slot;
                 }
                 continue;
             }
             if (entry.pointer == allocation->pointer) {
                 replaced = entry.allocation;
-                entry = {allocation->pointer, allocation->allocation_id, allocation};
+                entry = {.pointer = allocation->pointer,
+                         .allocation_id = allocation->allocation_id,
+                         .allocation = allocation};
                 inserted = true;
                 break;
             }
             if (entry.pointer == nullptr) {
-                LiveIndexEntry &destination = live_index[tombstone != kLiveIndexCapacity ? tombstone : slot];
-                destination = {allocation->pointer, allocation->allocation_id, allocation};
+                LiveIndexEntry &destination = live_index[tombstone != KLiveIndexCapacity ? tombstone : slot];
+                destination = {.pointer = allocation->pointer,
+                               .allocation_id = allocation->allocation_id,
+                               .allocation = allocation};
                 inserted = true;
                 break;
             }
         }
-        if (!inserted && tombstone != kLiveIndexCapacity) {
-            live_index[tombstone] = {allocation->pointer, allocation->allocation_id, allocation};
+        if (!inserted && tombstone != KLiveIndexCapacity) {
+            live_index[tombstone] = {
+                .pointer = allocation->pointer, .allocation_id = allocation->allocation_id, .allocation = allocation};
             inserted = true;
         }
         ::pthread_rwlock_unlock(&live_index_locks[shard]);
@@ -902,7 +913,7 @@ struct AllocationSampler::Impl {
         ByteSamplingState &state = thread.bytes;
         const std::uint64_t current_generation = generation.load(std::memory_order_relaxed);
         const std::uint64_t interval = interval_bytes.load(std::memory_order_relaxed);
-        const std::uint64_t current_tid = static_cast<std::uint64_t>(::syscall(SYS_gettid));
+        const auto current_tid = static_cast<std::uint64_t>(::syscall(SYS_gettid));
         if (state.generation != current_generation) {
             resetByteSamplingState(state, current_generation,
                                    sampling_seed.load(std::memory_order_relaxed) ^ current_generation ^ current_tid,
@@ -914,7 +925,7 @@ struct AllocationSampler::Impl {
             const std::uint64_t next = next_session_thread_id.fetch_add(1, std::memory_order_relaxed);
             thread.session_thread_id = next;
             thread.identity_announced = false;
-            if (next <= kMaxSampledThreads) {
+            if (next <= KMaxSampledThreads) {
                 registered_threads.fetch_add(1, std::memory_order_relaxed);
             }
             else {
@@ -942,12 +953,12 @@ struct AllocationSampler::Impl {
         allocation->thread_id = thread.session_thread_id;
         allocation->os_thread_id = thread.os_thread_id;
         const std::uint64_t started = started_ms.load(std::memory_order_relaxed);
-        allocation->window = static_cast<std::int32_t>((std::min)(static_cast<std::uint64_t>(kMaxProfileWindows - 1),
+        allocation->window = static_cast<std::int32_t>((std::min)(static_cast<std::uint64_t>(KMaxProfileWindows - 1),
                                                                   started != 0 && allocation->allocated_ms >= started
                                                                       ? (allocation->allocated_ms - started) / 1000
                                                                       : 0));
         allocation->depth = static_cast<std::uint16_t>(
-            cpptrace::safe_generate_raw_trace(allocation->frames, kStackDepth, kFramesToSkip));
+            cpptrace::safe_generate_raw_trace(allocation->frames, KStackDepth, KFramesToSkip));
         if (allocation->depth == 0 || !insertLiveAllocation(allocation)) {
             dropped_samples.fetch_add(1, std::memory_order_relaxed);
             lifecycle_dropped.fetch_add(1, std::memory_order_relaxed);
@@ -1018,16 +1029,16 @@ struct AllocationSampler::Impl {
 
     bool allocateLifecycleStorage(std::string &error)
     {
-        void *records = ::mmap(nullptr, sizeof(LiveAllocation) * kEventCapacity, PROT_READ | PROT_WRITE,
+        void *records = ::mmap(nullptr, sizeof(LiveAllocation) * KEventCapacity, PROT_READ | PROT_WRITE,
                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        void *index = ::mmap(nullptr, sizeof(LiveIndexEntry) * kLiveIndexCapacity, PROT_READ | PROT_WRITE,
+        void *index = ::mmap(nullptr, sizeof(LiveIndexEntry) * KLiveIndexCapacity, PROT_READ | PROT_WRITE,
                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (records == MAP_FAILED || index == MAP_FAILED) {
             if (records != MAP_FAILED) {
-                ::munmap(records, sizeof(LiveAllocation) * kEventCapacity);
+                ::munmap(records, sizeof(LiveAllocation) * KEventCapacity);
             }
             if (index != MAP_FAILED) {
-                ::munmap(index, sizeof(LiveIndexEntry) * kLiveIndexCapacity);
+                ::munmap(index, sizeof(LiveIndexEntry) * KLiveIndexCapacity);
             }
             error = "mmap for Linux allocation lifecycle tracking failed: " + std::string(std::strerror(errno));
             return false;
@@ -1035,7 +1046,7 @@ struct AllocationSampler::Impl {
         live_storage = static_cast<LiveAllocation *>(records);
         live_index = static_cast<LiveIndexEntry *>(index);
         free_live = nullptr;
-        for (std::size_t i = 0; i < kEventCapacity; ++i) {
+        for (std::size_t i = 0; i < KEventCapacity; ++i) {
             live_storage[i].next = free_live;
             free_live = &live_storage[i];
         }
@@ -1045,11 +1056,11 @@ struct AllocationSampler::Impl {
     void releaseLifecycleStorage() noexcept
     {
         if (live_storage != nullptr) {
-            ::munmap(live_storage, sizeof(LiveAllocation) * kEventCapacity);
+            ::munmap(live_storage, sizeof(LiveAllocation) * KEventCapacity);
             live_storage = nullptr;
         }
         if (live_index != nullptr) {
-            ::munmap(live_index, sizeof(LiveIndexEntry) * kLiveIndexCapacity);
+            ::munmap(live_index, sizeof(LiveIndexEntry) * KLiveIndexCapacity);
             live_index = nullptr;
         }
         free_live = nullptr;
@@ -1077,13 +1088,18 @@ struct AllocationSampler::Impl {
         }
 
         const std::array specs{
-            ElfImportHookSpec{"malloc", reinterpret_cast<void *>(&hookMalloc), true},
-            ElfImportHookSpec{"calloc", reinterpret_cast<void *>(&hookCalloc), true},
-            ElfImportHookSpec{"realloc", reinterpret_cast<void *>(&hookRealloc), true},
-            ElfImportHookSpec{"free", reinterpret_cast<void *>(&hookFree), true},
-            ElfImportHookSpec{"reallocarray", reinterpret_cast<void *>(&hookReallocArray), false},
-            ElfImportHookSpec{"aligned_alloc", reinterpret_cast<void *>(&hookAlignedAlloc), false},
-            ElfImportHookSpec{"posix_memalign", reinterpret_cast<void *>(&hookPosixMemalign), false},
+            ElfImportHookSpec{.name = "malloc", .replacement = reinterpret_cast<void *>(&hookMalloc), .required = true},
+            ElfImportHookSpec{.name = "calloc", .replacement = reinterpret_cast<void *>(&hookCalloc), .required = true},
+            ElfImportHookSpec{
+                .name = "realloc", .replacement = reinterpret_cast<void *>(&hookRealloc), .required = true},
+            ElfImportHookSpec{.name = "free", .replacement = reinterpret_cast<void *>(&hookFree), .required = true},
+            ElfImportHookSpec{
+                .name = "reallocarray", .replacement = reinterpret_cast<void *>(&hookReallocArray), .required = false},
+            ElfImportHookSpec{
+                .name = "aligned_alloc", .replacement = reinterpret_cast<void *>(&hookAlignedAlloc), .required = false},
+            ElfImportHookSpec{.name = "posix_memalign",
+                              .replacement = reinterpret_cast<void *>(&hookPosixMemalign),
+                              .required = false},
         };
         if (!hooks.prepare(specs, error)) {
             return false;
@@ -1117,7 +1133,7 @@ struct AllocationSampler::Impl {
             return true;
         }
         Impl *expected = nullptr;
-        if (!active_instance.compare_exchange_strong(expected, this, std::memory_order_release,
+        if (!mActiveInstance.compare_exchange_strong(expected, this, std::memory_order_release,
                                                      std::memory_order_relaxed) &&
             expected != this) {
             error = "another native allocation sampler backend is already active";
@@ -1125,26 +1141,27 @@ struct AllocationSampler::Impl {
         }
         if (!hooks.install(error)) {
             expected = this;
-            active_instance.compare_exchange_strong(expected, nullptr, std::memory_order_release,
+            mActiveInstance.compare_exchange_strong(expected, nullptr, std::memory_order_release,
                                                     std::memory_order_relaxed);
             return false;
         }
         return true;
     }
 
-    bool waitFor(std::atomic<std::uint64_t> &counter, const char *description, std::string &error) noexcept
+    static bool waitFor(std::atomic<std::uint64_t> &counter, const char *description, std::string &error) noexcept
     {
         for (int attempt = 0; attempt < 5000; ++attempt) {
             if (counter.load(std::memory_order_acquire) == 0) {
                 return true;
             }
-            timespec delay{0, 1000000};
+            timespec delay{.tv_sec = 0, .tv_nsec = 1000000};
             ::nanosleep(&delay, nullptr);
         }
         try {
             error = std::string("timed out waiting for ") + description + " to quiesce";
         }
         catch (...) {
+            error.clear();
         }
         return false;
     }
@@ -1158,8 +1175,8 @@ struct AllocationSampler::Impl {
         FrameKey key;
         const std::size_t prev_module_count = modules.size();
         key.module = modules.intern(path);
-        if (recovery_sink_ && modules.size() > prev_module_count) {
-            recovery_sink_->journalModuleDef(key.module, path);
+        if (recovery_sink && modules.size() > prev_module_count) {
+            recovery_sink->journalModuleDef(key.module, path);
         }
         key.rva = static_cast<std::uint64_t>(object.address_relative_to_object_start);
         key.raw_address = static_cast<std::uint64_t>(object.raw_address);
@@ -1183,11 +1200,11 @@ struct AllocationSampler::Impl {
         sample_count.fetch_add(1, std::memory_order_relaxed);
         sampled_bytes.fetch_add(sample.weight, std::memory_order_relaxed);
 
-        if (recovery_sink_) {
-            if (journaled_threads_.insert(sample.thread_id).second) {
-                recovery_sink_->journalThreadDef(sample.thread_id, sample.thread_id, sample.thread_name);
+        if (recovery_sink) {
+            if (journaled_threads.insert(sample.thread_id).second) {
+                recovery_sink->journalThreadDef(sample.thread_id, sample.thread_id, sample.thread_name);
             }
-            recovery_sink_->journalSample(sample);
+            recovery_sink->journalSample(sample);
         }
     }
 
@@ -1247,7 +1264,7 @@ struct AllocationSampler::Impl {
             }
         }
         else {
-            if (sample.tick_id >= kMaxTickDecisions || pending_samples == kMaxPendingSamples) {
+            if (sample.tick_id >= KMaxTickDecisions || pending_samples == KMaxPendingSamples) {
                 dropped_samples.fetch_add(1, std::memory_order_relaxed);
             }
             else {
@@ -1262,10 +1279,9 @@ struct AllocationSampler::Impl {
         const std::uint64_t stopped_ms = monotonicMs();
         std::uint64_t total_age = 0;
         std::uint64_t maximum_age = 0;
-        for (std::size_t i = 0; i < kLiveIndexCapacity; ++i) {
+        for (std::size_t i = 0; i < KLiveIndexCapacity; ++i) {
             const LiveIndexEntry &entry = live_index[i];
-            if (entry.pointer == nullptr || entry.pointer == reinterpret_cast<void *>(static_cast<std::uintptr_t>(1)) ||
-                entry.allocation == nullptr) {
+            if (entry.pointer == nullptr || entry.pointer == tombstonePointer() || entry.allocation == nullptr) {
                 continue;
             }
             const LiveAllocation &allocation = *entry.allocation;
@@ -1307,14 +1323,14 @@ struct AllocationSampler::Impl {
         while (ticks.dequeue(tick)) {
             const bool keep =
                 config.only_ticks_over_ms <= 0 || tick.mspt_ms > static_cast<double>(config.only_ticks_over_ms);
-            if (config.only_ticks_over_ms > 0 && tick.tick_id < kMaxTickDecisions) {
+            if (config.only_ticks_over_ms > 0 && tick.tick_id < KMaxTickDecisions) {
                 if (tick_decisions.size() <= tick.tick_id) {
                     tick_decisions.resize(static_cast<std::size_t>(tick.tick_id + 1), 0);
                 }
                 tick_decisions[static_cast<std::size_t>(tick.tick_id)] = keep ? 2 : 1;
             }
-            if (recovery_sink_) {
-                recovery_sink_->journalTickEvent(tick.tick_id, tick.mspt_ms);
+            if (recovery_sink) {
+                recovery_sink->journalTickEvent(tick.tick_id, tick.mspt_ms);
             }
             flushOrDrop(tick.tick_id, keep);
         }
@@ -1362,14 +1378,14 @@ struct AllocationSampler::Impl {
         tree = CallTree{};
         thread_trees.clear();
         thread_filter.clear();
-        modules = ModuleTable{kMaxAllocationModules};
+        modules = ModuleTable{KMaxAllocationModules};
         window_ticks.clear();
         buckets.clear();
         pending_samples = 0;
-        profile_nodes_remaining = kMaxProfileNodes;
+        profile_nodes_remaining = KMaxProfileNodes;
         profile_nodes_exhausted.store(false, std::memory_order_relaxed);
         tick_decisions.clear();
-        journaled_threads_.clear();
+        journaled_threads.clear();
         current_tick.store(0, std::memory_order_relaxed);
         hook_calls.store(0, std::memory_order_relaxed);
         successful_allocation_calls.store(0, std::memory_order_relaxed);
@@ -1523,11 +1539,11 @@ struct AllocationSampler::Impl {
         if (hooks.installed() && !hooks.uninstall(error)) {
             return false;
         }
-        if (!waitFor(active_hook_calls, "Linux allocation hook thunks", error)) {
+        if (!waitFor(mActiveHookCalls, "Linux allocation hook thunks", error)) {
             return false;
         }
         Impl *expected = this;
-        active_instance.compare_exchange_strong(expected, nullptr, std::memory_order_release,
+        mActiveInstance.compare_exchange_strong(expected, nullptr, std::memory_order_release,
                                                 std::memory_order_relaxed);
         releaseThreadStateRegistry();
         return true;
@@ -1552,7 +1568,7 @@ struct AllocationSampler::Impl {
         }
         TrackingSuppressionGuard suppress(*this);
         const std::uint64_t finished = current_tick.fetch_add(1, std::memory_order_relaxed);
-        if (config.only_ticks_over_ms > 0 && !ticks.enqueue(TickEvent{finished, mspt_ms})) {
+        if (config.only_ticks_over_ms > 0 && !ticks.enqueue(TickEvent{.tick_id = finished, .mspt_ms = mspt_ms})) {
             dropped_tick_events.fetch_add(1, std::memory_order_relaxed);
         }
         const std::uint64_t now = monotonicMs();
@@ -1568,7 +1584,7 @@ struct AllocationSampler::Impl {
         }
         const std::uint64_t started = started_ms.load(std::memory_order_relaxed);
         const std::int32_t window =
-            static_cast<std::int32_t>((std::min)(static_cast<std::uint64_t>(kMaxProfileWindows - 1),
+            static_cast<std::int32_t>((std::min)(static_cast<std::uint64_t>(KMaxProfileWindows - 1),
                                                  started != 0 && now >= started ? (now - started) / 1000 : 0));
         WindowTickStats &stats = window_ticks[window];
         ++stats.ticks;
@@ -1577,8 +1593,8 @@ struct AllocationSampler::Impl {
     }
 };
 
-std::atomic<AllocationSampler::Impl *> AllocationSampler::Impl::active_instance{nullptr};
-std::atomic<std::uint64_t> AllocationSampler::Impl::active_hook_calls{0};
+std::atomic<AllocationSampler::Impl *> AllocationSampler::Impl::mActiveInstance{nullptr};
+std::atomic<std::uint64_t> AllocationSampler::Impl::mActiveHookCalls{0};
 
 AllocationSampler::AllocationSampler() : impl_(std::make_unique<Impl>()) {}
 
@@ -1604,7 +1620,7 @@ bool AllocationSampler::start(const AllocationSamplerConfig &config, std::string
 
 void AllocationSampler::setRecoverySink(RecoverySink *sink)
 {
-    impl_->recovery_sink_ = sink;
+    impl_->recovery_sink = sink;
 }
 
 bool AllocationSampler::stop(std::string &error)
@@ -1689,7 +1705,7 @@ std::uint64_t AllocationSampler::droppedTickEvents() const
 }
 std::uint64_t AllocationSampler::tickEventCapacity()
 {
-    return kTickEventCapacity;
+    return KTickEventCapacity;
 }
 std::uint64_t AllocationSampler::enqueuedSamples() const
 {
@@ -1701,7 +1717,7 @@ std::uint64_t AllocationSampler::eventQueueHighWaterMark() const
 }
 std::uint64_t AllocationSampler::eventQueueCapacity()
 {
-    return kEventCapacity;
+    return KEventCapacity;
 }
 std::uint64_t AllocationSampler::freedSamples() const
 {
@@ -1725,7 +1741,7 @@ std::uint64_t AllocationSampler::peakLiveSamples() const
 }
 std::uint64_t AllocationSampler::liveIndexCapacity()
 {
-    return kEventCapacity;
+    return KEventCapacity;
 }
 std::uint64_t AllocationSampler::sampledThreadCount() const
 {
@@ -1733,7 +1749,7 @@ std::uint64_t AllocationSampler::sampledThreadCount() const
 }
 std::uint64_t AllocationSampler::threadRootCapacity()
 {
-    return kMaxSampledThreads + 1;
+    return KMaxSampledThreads + 1;
 }
 std::uint64_t AllocationSampler::overflowThreadCount() const
 {
@@ -1761,11 +1777,11 @@ std::uint64_t AllocationSampler::moduleRegistryCount() const
 }
 std::uint64_t AllocationSampler::moduleRegistryCapacity()
 {
-    return kMaxAllocationModules;
+    return KMaxAllocationModules;
 }
 std::uint64_t AllocationSampler::profileNodeCapacity()
 {
-    return kMaxProfileNodes;
+    return KMaxProfileNodes;
 }
 bool AllocationSampler::dataIncomplete() const
 {
