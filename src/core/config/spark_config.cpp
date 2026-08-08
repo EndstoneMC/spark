@@ -5,11 +5,13 @@
 #include <sstream>
 #include <string>
 
+#include <toml.hpp>
+
 namespace spark {
 
 namespace {
 
-// --- Minimal JSON value model (flat, sufficient for config.json) ---
+// --- Minimal JSON value model (for legacy config.json migration only) ---
 
 struct JsonValue {
     enum class Type { Null, Bool, Number, String, Array, Object };
@@ -186,8 +188,6 @@ private:
     std::size_t pos_ = 0;
 };
 
-// --- JSON serialiser ---
-
 std::string jsonEscape(std::string_view s)
 {
     std::string out;
@@ -222,14 +222,33 @@ SparkConfig::SparkConfig(std::filesystem::path file)
 {
 }
 
-bool SparkConfig::load()
+bool SparkConfig::load(std::vector<std::string> *migrated_trusted_keys)
 {
     last_error_.clear();
 
-    if (!std::filesystem::exists(file_)) {
-        return false;
+    // config.toml takes priority.
+    if (std::filesystem::exists(file_)) {
+        if (!loadToml())
+            return false;
+        return true;
     }
 
+    // Fall back to legacy config.json migration.
+    auto json_path = file_;
+    json_path.replace_extension(".json");
+    if (std::filesystem::exists(json_path)) {
+        if (migrateFromJson(migrated_trusted_keys)) {
+            return true;
+        }
+        // Migration failed - fall through to return false so the caller
+        // writes a fresh default config.toml.
+    }
+
+    return false;
+}
+
+bool SparkConfig::loadToml()
+{
     std::ifstream in(file_);
     if (!in) {
         last_error_ = "Unable to open config file for reading";
@@ -240,14 +259,62 @@ bool SparkConfig::load()
     ss << in.rdbuf();
     std::string text = ss.str();
 
-    JsonParser parser(text);
-    JsonValue root;
-    if (!parser.parse(root) || root.type != JsonValue::Type::Object) {
-        last_error_ = "Malformed JSON in config file - using defaults";
+    toml::parse_result result;
+    try {
+        result = toml::parse(text);
+    } catch (const toml::parse_error &e) {
+        last_error_ = "Malformed TOML in config file - using defaults";
         return false;
     }
 
     // Strings
+    if (auto v = result["viewerUrl"].value<std::string>())
+        viewer_url = *v;
+    if (auto v = result["bytebinUrl"].value<std::string>())
+        bytebin_url = *v;
+    if (auto v = result["bytesocksHost"].value<std::string>())
+        bytesocks_host = *v;
+    if (auto v = result["backgroundProfilerThreadGrouper"].value<std::string>())
+        background_profiler_thread_grouper = *v;
+    if (auto v = result["backgroundProfilerThreadDumper"].value<std::string>())
+        background_profiler_thread_dumper = *v;
+
+    // Booleans
+    if (auto v = result["backgroundProfiler"].value<bool>())
+        background_profiler_enabled = *v;
+    if (auto v = result["disableResponseBroadcast"].value<bool>())
+        disable_response_broadcast = *v;
+
+    // Integers
+    if (auto v = result["backgroundProfilerInterval"].value<int64_t>())
+        background_profiler_interval = static_cast<int>(*v);
+
+    return true;
+}
+
+bool SparkConfig::migrateFromJson(std::vector<std::string> *migrated_trusted_keys)
+{
+    auto json_path = file_;
+    json_path.replace_extension(".json");
+
+    std::ifstream in(json_path);
+    if (!in) {
+        last_error_ = "Unable to open legacy config.json for reading";
+        return false;
+    }
+
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    std::string text = ss.str();
+
+    JsonParser parser(text);
+    JsonValue root;
+    if (!parser.parse(root) || root.type != JsonValue::Type::Object) {
+        last_error_ = "Malformed JSON in legacy config.json - using defaults";
+        return false;
+    }
+
+    // Extract values from JSON.
     if (const JsonValue *v = root.find("viewerUrl"); v && v->type == JsonValue::Type::String)
         viewer_url = v->str_val;
     if (const JsonValue *v = root.find("bytebinUrl"); v && v->type == JsonValue::Type::String)
@@ -258,27 +325,71 @@ bool SparkConfig::load()
         background_profiler_thread_grouper = v->str_val;
     if (const JsonValue *v = root.find("backgroundProfilerThreadDumper"); v && v->type == JsonValue::Type::String)
         background_profiler_thread_dumper = v->str_val;
-
-    // Booleans
     if (const JsonValue *v = root.find("backgroundProfiler"); v && v->type == JsonValue::Type::Bool)
         background_profiler_enabled = v->bool_val;
     if (const JsonValue *v = root.find("disableResponseBroadcast"); v && v->type == JsonValue::Type::Bool)
         disable_response_broadcast = v->bool_val;
-
-    // Integers
     if (const JsonValue *v = root.find("backgroundProfilerInterval"); v && v->type == JsonValue::Type::Number)
         background_profiler_interval = static_cast<int>(v->num_val);
 
-    // String array (trusted keys)
-    if (const JsonValue *v = root.find("trustedKeys"); v && v->type == JsonValue::Type::Array) {
-        trusted_keys.clear();
-        for (const JsonValue &elem : v->arr_val) {
-            if (elem.type == JsonValue::Type::String)
-                trusted_keys.push_back(elem.str_val);
+    // Extract trustedKeys for the caller to seed TrustedViewersState.
+    if (migrated_trusted_keys) {
+        migrated_trusted_keys->clear();
+        if (const JsonValue *v = root.find("trustedKeys"); v && v->type == JsonValue::Type::Array) {
+            for (const JsonValue &elem : v->arr_val) {
+                if (elem.type == JsonValue::Type::String)
+                    migrated_trusted_keys->push_back(elem.str_val);
+            }
         }
     }
 
+    // Write config.toml with migrated values.
+    if (!save()) {
+        // save() already set last_error_.
+        return false;
+    }
+
+    // Rename config.json to config.json.bak.
+    std::error_code ec;
+    auto bak_path = json_path;
+    bak_path += ".bak";
+    std::filesystem::rename(json_path, bak_path, ec);
+    if (ec) {
+        // Non-fatal: config.toml was already written successfully.
+        last_error_ = "config.toml created but could not rename config.json: " + ec.message();
+    }
+
     return true;
+}
+
+void SparkConfig::writeTemplate(std::ostream &out) const
+{
+    out << "# spark configuration file\n";
+    out << "# https://spark.lucko.me/docs/Configuration\n";
+    out << "\n";
+    out << "# URL of the spark viewer\n";
+    out << "viewerUrl = \"" << jsonEscape(viewer_url) << "\"\n";
+    out << "\n";
+    out << "# URL of the bytebin upload endpoint\n";
+    out << "bytebinUrl = \"" << jsonEscape(bytebin_url) << "\"\n";
+    out << "\n";
+    out << "# Host of the bytesocks websocket\n";
+    out << "bytesocksHost = \"" << jsonEscape(bytesocks_host) << "\"\n";
+    out << "\n";
+    out << "# Whether the background profiler should run\n";
+    out << "backgroundProfiler = " << (background_profiler_enabled ? "true" : "false") << "\n";
+    out << "\n";
+    out << "# Interval (in seconds) between background profiles\n";
+    out << "backgroundProfilerInterval = " << background_profiler_interval << "\n";
+    out << "\n";
+    out << "# Thread grouping strategy for the background profiler\n";
+    out << "backgroundProfilerThreadGrouper = \"" << jsonEscape(background_profiler_thread_grouper) << "\"\n";
+    out << "\n";
+    out << "# Thread dumper for the background profiler\n";
+    out << "backgroundProfilerThreadDumper = \"" << jsonEscape(background_profiler_thread_dumper) << "\"\n";
+    out << "\n";
+    out << "# Disable broadcasting profiler results to all players\n";
+    out << "disableResponseBroadcast = " << (disable_response_broadcast ? "true" : "false") << "\n";
 }
 
 bool SparkConfig::save() const
@@ -286,23 +397,7 @@ bool SparkConfig::save() const
     last_error_.clear();
 
     std::ostringstream ss;
-    ss << "{\n";
-    ss << "  \"_header\": \"spark configuration file - https://spark.lucko.me/docs/Configuration\",\n";
-    ss << "  \"viewerUrl\": \"" << jsonEscape(viewer_url) << "\",\n";
-    ss << "  \"bytebinUrl\": \"" << jsonEscape(bytebin_url) << "\",\n";
-    ss << "  \"bytesocksHost\": \"" << jsonEscape(bytesocks_host) << "\",\n";
-    ss << "  \"backgroundProfiler\": " << (background_profiler_enabled ? "true" : "false") << ",\n";
-    ss << "  \"backgroundProfilerInterval\": " << background_profiler_interval << ",\n";
-    ss << "  \"backgroundProfilerThreadGrouper\": \"" << jsonEscape(background_profiler_thread_grouper) << "\",\n";
-    ss << "  \"backgroundProfilerThreadDumper\": \"" << jsonEscape(background_profiler_thread_dumper) << "\",\n";
-    ss << "  \"disableResponseBroadcast\": " << (disable_response_broadcast ? "true" : "false") << ",\n";
-    ss << "  \"trustedKeys\": [";
-    for (std::size_t i = 0; i < trusted_keys.size(); ++i) {
-        if (i > 0) ss << ", ";
-        ss << "\"" << jsonEscape(trusted_keys[i]) << "\"";
-    }
-    ss << "]\n";
-    ss << "}\n";
+    writeTemplate(ss);
 
     std::error_code ec;
     std::filesystem::create_directories(file_.parent_path(), ec);

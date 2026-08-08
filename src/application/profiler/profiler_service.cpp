@@ -32,11 +32,12 @@ ProfilerService::ProfilerService(StatisticsService &statistics,
                                  std::filesystem::path profile_storage_dir,
                                  std::string bytebin_url,
                                  std::string viewer_url,
+                                 std::string bytesocks_host,
                                  bool background_enabled,
                                  int background_interval,
                                  std::string background_thread_grouper,
                                  std::string background_thread_dumper,
-                                 SparkConfig &config,
+                                 TrustedViewersState &trusted_viewers,
                                  MainThreadDispatcher &dispatcher,
                                  ProfileMetadataProvider &metadata_provider,
                                  ResultNotifier &notifier)
@@ -54,7 +55,8 @@ ProfilerService::ProfilerService(StatisticsService &statistics,
       background_thread_dumper_(std::move(background_thread_dumper)),
       bytebin_url_(std::move(bytebin_url)),
       viewer_url_(std::move(viewer_url)),
-      config_(config)
+      bytesocks_host_(std::move(bytesocks_host)),
+      trusted_viewers_(trusted_viewers)
 {
 }
 
@@ -468,7 +470,7 @@ void ProfilerService::cmdOpen(CommandSender &sender)
     }
 
     ViewerSocket::Config config;
-    config.bytesocks_host = config_.bytesocks_host;
+    config.bytesocks_host = bytesocks_host_;
     config.bytebin_url = bytebin_url_;
     config.viewer_url = viewer_url_;
     config.user_agent = std::string("endstone-spark/") + kVersion;
@@ -476,10 +478,7 @@ void ProfilerService::cmdOpen(CommandSender &sender)
     viewer_socket_ = std::make_unique<ViewerSocket>(std::move(config), std::move(key_pair));
     viewer_socket_->setIsKeyTrustedCallback([this](const std::vector<std::uint8_t> &key) {
         std::string b64 = base64Encode(key.data(), key.size());
-        for (const auto &trusted : config_.trusted_keys) {
-            if (trusted == b64) return true;
-        }
-        return false;
+        return trusted_viewers_.contains(b64);
     });
 
     std::string url = viewer_socket_->open(
@@ -596,13 +595,12 @@ void ProfilerService::cmdTrustViewer(CommandSender &sender, const Arguments &arg
         }
         std::string b64 = base64Encode(key.data(), key.size());
         // Avoid duplicates.
-        if (std::find(config_.trusted_keys.begin(), config_.trusted_keys.end(), b64)
-            != config_.trusted_keys.end()) {
+        if (trusted_viewers_.contains(b64)) {
             sender.sendMessage("Client '{}' is already trusted.", id);
             continue;
         }
-        config_.trusted_keys.push_back(b64);
-        config_.save();
+        trusted_viewers_.add(b64);
+        trusted_viewers_.save();
         viewer_socket_->sendClientTrusted(id);
         sender.sendMessage("Client '{}' is now trusted.", id);
     }

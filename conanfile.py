@@ -16,5 +16,6 @@ class SparkRecipe(ConanFile):
         self.requires("zlib/1.3.1")
         self.requires("expected-lite/0.9.0")
         self.requires("libcurl/8.21.0")
+        self.requires("tomlplusplus/3.0.1")
         if self.settings.os != "Windows":
             self.requires("openssl/3.6.3")

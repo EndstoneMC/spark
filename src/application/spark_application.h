@@ -15,6 +15,7 @@
 #include "application/tick_monitor/tick_monitor_command.h"
 #include "core/activity/activity_log.h"
 #include "core/config/spark_config.h"
+#include "core/config/trusted_viewers.h"
 #include "core/recovery/recovery_player.h"
 #include "core/recovery/stall_watchdog.h"
 #include "core/stats/statistics_service.h"
@@ -30,6 +31,7 @@ public:
                      std::filesystem::path profile_storage_dir,
                      std::filesystem::path activity_log_file,
                      SparkConfig config,
+                     TrustedViewersState trusted_viewers,
                      MainThreadDispatcher &dispatcher,
                      ProfileMetadataProvider &metadata_provider,
                      ResultNotifier &notifier);
@@ -61,6 +63,7 @@ private:
 
     StatisticsService statistics_;
     SparkConfig config_;
+    TrustedViewersState trusted_viewers_;
     MainThreadDispatcher &dispatcher_;
     ProfileMetadataProvider &metadata_provider_;
     ResultNotifier &notifier_;

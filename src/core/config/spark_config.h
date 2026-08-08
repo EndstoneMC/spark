@@ -7,19 +7,27 @@
 
 namespace spark {
 
-// Persistent Spark configuration loaded from config.json in the plugin data
+// Persistent Spark configuration loaded from config.toml in the plugin data
 // directory.  All fields have safe defaults; a missing or malformed file
 // produces a warning and falls back to those defaults.  Unknown keys are
 // silently ignored so that future config additions do not break older builds.
+//
+// The file is user-owned: save() is only for first-time default creation.
+// Runtime mutations (e.g. trust-viewer) go through TrustedViewersState, never
+// through this class.
 class SparkConfig {
 public:
     explicit SparkConfig(std::filesystem::path file);
 
-    // Reads the JSON config file.  On any error, fields keep their current
-    // (default) values and the method returns false.
-    bool load();
+    // Loads config.toml.  If config.toml does not exist but a legacy
+    // config.json is present, migrates: reads JSON values, writes config.toml,
+    // renames config.json to config.json.bak.  If migrated_trusted_keys is
+    // non-null and trustedKeys was present in the legacy config.json, fills it
+    // with those keys so the caller can seed TrustedViewersState.
+    bool load(std::vector<std::string> *migrated_trusted_keys = nullptr);
 
-    // Writes the current configuration back to the file as pretty-printed JSON.
+    // Writes the default config.toml template with explanatory comments.
+    // Only for first-time creation; never called during normal operation.
     bool save() const;
 
     // --- URL endpoints ---
@@ -36,13 +44,14 @@ public:
     // --- Response behaviour ---
     bool disable_response_broadcast = false;
 
-    // --- Trusted viewer public keys (base64-encoded X.509) ---
-    std::vector<std::string> trusted_keys;
-
     // Returns the last load/save error message, or empty if none.
     const std::string &lastError() const { return last_error_; }
 
 private:
+    bool loadToml();
+    bool migrateFromJson(std::vector<std::string> *migrated_trusted_keys);
+    void writeTemplate(std::ostream &out) const;
+
     std::filesystem::path file_;
     mutable std::string last_error_;
 };

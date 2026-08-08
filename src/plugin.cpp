@@ -18,6 +18,7 @@
 #include "application/spark_application.h"
 #include "core/command/arguments.h"
 #include "core/config/spark_config.h"
+#include "core/config/trusted_viewers.h"
 #include "core/stats/executable_hash.h"
 #include "net/profile_file.h"
 #include "platform/endstone/adapters.h"
@@ -50,14 +51,23 @@ public:
         metadata_provider_ = std::make_unique<spark::endstone_adapter::EndstoneMetadataProvider>(
             *this, getServer(), bds_executable_sha256_);
 
-        spark::SparkConfig config(getDataFolder() / "config.json");
-        if (!config.load()) {
+        spark::SparkConfig config(getDataFolder() / "config.toml");
+        std::vector<std::string> migrated_trusted_keys;
+        if (!config.load(&migrated_trusted_keys)) {
             if (!config.lastError().empty()) {
                 getLogger().warning("Failed to load spark config: {}", config.lastError());
             }
             if (!config.save()) {
                 getLogger().warning("Failed to write default spark config: {}", config.lastError());
             }
+        }
+
+        spark::TrustedViewersState trusted_viewers(getDataFolder() / "trusted-viewers.json");
+        trusted_viewers.load();
+        if (!migrated_trusted_keys.empty()) {
+            for (const auto &key : migrated_trusted_keys)
+                trusted_viewers.add(key);
+            trusted_viewers.save();
         }
 
         notifier_ = std::make_unique<spark::endstone_adapter::EndstoneNotifier>(
@@ -68,6 +78,7 @@ public:
             spark::profileStorageDirectory(getDataFolder()),
             getDataFolder() / "activity.json",
             std::move(config),
+            std::move(trusted_viewers),
             *dispatcher_, *metadata_provider_, *notifier_);
 
         app_->statistics().start();

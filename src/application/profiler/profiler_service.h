@@ -17,7 +17,7 @@
 #include "application/profiler/profile_exporter.h"
 #include "core/activity/activity_log.h"
 #include "core/command/arguments.h"
-#include "core/config/spark_config.h"
+#include "core/config/trusted_viewers.h"
 #include "core/profiler/profiler.h"
 #include "core/stats/network_monitor.h"
 #include "core/stats/statistics_service.h"
@@ -36,11 +36,12 @@ public:
                     std::filesystem::path profile_storage_dir,
                     std::string bytebin_url,
                     std::string viewer_url,
+                    std::string bytesocks_host,
                     bool background_enabled,
                     int background_interval,
                     std::string background_thread_grouper,
                     std::string background_thread_dumper,
-                    SparkConfig &config,
+                    TrustedViewersState &trusted_viewers,
                     MainThreadDispatcher &dispatcher,
                     ProfileMetadataProvider &metadata_provider,
                     ResultNotifier &notifier);
@@ -167,7 +168,8 @@ private:
 
     std::string bytebin_url_;
     std::string viewer_url_;
-    SparkConfig &config_;
+    std::string bytesocks_host_;
+    TrustedViewersState &trusted_viewers_;
 };
 
 }  // namespace spark

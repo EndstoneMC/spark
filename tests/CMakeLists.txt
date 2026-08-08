@@ -48,6 +48,12 @@ set_target_properties(spark_config_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_config_test COMMAND spark_config_test)
 
+add_executable(spark_trusted_viewers_test core/config/trusted_viewers_test.cpp)
+target_link_libraries(spark_trusted_viewers_test PRIVATE spark_core)
+set_target_properties(spark_trusted_viewers_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_trusted_viewers_test COMMAND spark_trusted_viewers_test)
+
 add_executable(spark_crypto_test core/ws/crypto_test.cpp)
 target_link_libraries(spark_crypto_test PRIVATE spark_core)
 set_target_properties(spark_crypto_test PROPERTIES

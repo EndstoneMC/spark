@@ -14,6 +14,7 @@ find_package(cpptrace REQUIRED)
 find_package(concurrentqueue REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(CURL REQUIRED)
+find_package(tomlplusplus REQUIRED)
 if (NOT WIN32)
     find_package(OpenSSL REQUIRED)
 endif ()
@@ -98,6 +99,7 @@ endif ()
 # --- platform-independent core: profiler, stats, proto, net (no Endstone) ---
 add_library(spark_core STATIC
         src/core/config/spark_config.cpp
+        src/core/config/trusted_viewers.cpp
         src/core/recovery/journal_reader.cpp
         src/core/recovery/recovery_player.cpp
         src/core/recovery/recovery_writer.cpp
@@ -125,10 +127,10 @@ add_library(spark_core STATIC
 target_include_directories(spark_core PUBLIC src)
 if (WIN32)
     target_sources(spark_core PRIVATE src/core/ws/crypto_cng.cpp)
-    target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl bcrypt)
+    target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl tomlplusplus::tomlplusplus bcrypt)
 else ()
     target_sources(spark_core PRIVATE src/core/ws/crypto.cpp)
-    target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl OpenSSL::Crypto)
+    target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl tomlplusplus::tomlplusplus OpenSSL::Crypto)
 endif ()
 if (WIN32)
     target_compile_definitions(spark_core PUBLIC NOMINMAX)
