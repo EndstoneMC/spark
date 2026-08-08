@@ -23,9 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Endstone APIs and never stops the profiler.
 - Add persistent Spark configuration (`config.toml` in the plugin data directory)
   with configurable `viewerUrl`, `bytebinUrl`, `bytesocksHost`, background
-  profiler settings, and response broadcast toggle. Missing or malformed config
-  falls back to safe defaults. Trusted viewer keys are stored separately in
-  `trusted-viewers.json`.
+  profiler settings, and response broadcast toggle. Invalid config is reported and
+  preserved byte-for-byte while that startup uses safe defaults. Trusted viewer
+  keys are stored separately in `trusted-viewers.json`.
 - Add automatic background profiler that starts on plugin enable and runs
   indefinitely at a configurable interval (default 10ms). A foreground
   profiler (`/spark profiler start`) pauses the background session; stopping
@@ -93,6 +93,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound continuous background profile history to the upstream one-hour retention
+  window while preserving complete finite foreground profiles.
+- Keep live viewer metadata capture on the server thread and move relay setup,
+  compression, health uploads, and profile uploads to owned background workers.
+- Complete WebSocket receive-worker joins after remote disconnects and make live
+  viewer open/close/reconnect safe during stop, shutdown, and network failure.
+- Isolate recovery journal segments by session, validate segment continuity, retain
+  journals after profile save failures, and synchronize writer teardown with the
+  stall watchdog.
+- Validate activity page numbers without narrowing or overflowing pagination
+  arithmetic, including values above `INT_MAX`.
+- Preserve invalid user-owned `config.toml` files and validate endpoint, enum,
+  interval, type, and integer bounds before applying configuration.
+- Validate foreground profiler options before pausing the background profiler and
+  keep stop, cancel, timeout, and export transitions consistent.
+- Use non-blocking allocation lifecycle shards under contention and mark exported
+  allocation data incomplete whenever callback accounting is dropped.
+- Isolate delayed Linux sampling signals by capture generation and wait for queued
+  deliveries before restoring the process signal handler.
+- Serialize process-wide Windows DbgHelp ownership so live symbolization cannot
+  clean up an active capture session.
+- Rebaseline network interfaces on counter reset or reappearance, use 64-bit
+  Windows counters, and calculate rates from measured elapsed time.
+- Enforce formatting and project-owned clang-tidy checks in CI, and publish GitHub
+  releases only after both platform artifacts pass their full test suites.
+- Match upstream pool grouping labels for threads whose names do not identify a
+  numbered worker pool.
 - Save `.sparkprofile` files as raw uncompressed protobuf instead of gzip-compressed
   data. The spark viewer's file upload expects uncompressed protobuf; gzip-wrapped
   files could not be opened when manually uploaded to spark.lucko.me. Bytebin uploads

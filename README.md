@@ -130,7 +130,14 @@ Run the command again to disable the monitor.
 profiler is running. It connects to the spark WebSocket relay, uploads sampler
 data every 10 seconds, and displays the viewer URL in chat. The viewer stays
 live until the profiler is stopped, cancelled, or times out. Allocation profiles
-do not support the live viewer.
+do not support the live viewer. Relay connection, compression, and uploads run
+asynchronously; command completion and failures are reported back on the server
+thread without waiting for a network timeout.
+
+When the automatic background profiler is enabled, a valid foreground start
+pauses it. An invalid start leaves it running. Explicitly stopping and exporting
+the foreground profile restarts the background profiler after export completes;
+cancel or timeout leaves it paused until Spark is reloaded.
 
 When a client connects to the live viewer, the server checks the client's
 public key against the trusted viewer list in `trusted-viewers.json`. Trusted clients
@@ -300,7 +307,8 @@ the profiler, ensuring that stall evidence is preserved for diagnosis.
 Spark reads a `config.toml` file from the plugin data directory on startup. If the
 file does not exist, spark writes one with default values and explanatory comments.
 The file is user-owned: spark never rewrites it during normal operation. Missing or
-malformed fields fall back to defaults; unknown fields are silently ignored.
+invalid fields make Spark report the configuration error and use defaults for that
+startup, while preserving the file byte-for-byte. Unknown fields are silently ignored.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
