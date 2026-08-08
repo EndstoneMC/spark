@@ -52,8 +52,7 @@ public:
             *this, getServer(), bds_executable_sha256_);
 
         spark::SparkConfig config(getDataFolder() / "config.toml");
-        std::vector<std::string> migrated_trusted_keys;
-        if (!config.load(&migrated_trusted_keys)) {
+        if (!config.load()) {
             if (!config.lastError().empty()) {
                 getLogger().warning("Failed to load spark config: {}", config.lastError());
             }
@@ -64,11 +63,6 @@ public:
 
         spark::TrustedViewersState trusted_viewers(getDataFolder() / "trusted-viewers.json");
         trusted_viewers.load();
-        if (!migrated_trusted_keys.empty()) {
-            for (const auto &key : migrated_trusted_keys)
-                trusted_viewers.add(key);
-            trusted_viewers.save();
-        }
 
         notifier_ = std::make_unique<spark::endstone_adapter::EndstoneNotifier>(
             *this, getServer(), config.disable_response_broadcast);

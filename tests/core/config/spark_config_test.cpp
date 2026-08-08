@@ -27,9 +27,6 @@ void writeFile(const std::filesystem::path &path, const std::string &content)
 void cleanup(const std::filesystem::path &path)
 {
     std::filesystem::remove(path);
-    auto bak = path;
-    bak += ".bak";
-    std::filesystem::remove(bak);
 }
 
 void test_defaults()
@@ -195,8 +192,8 @@ void test_save_and_reload()
     cleanup(path);
 
     SparkConfig config(path);
-    config.save();  // Create the file first.
-    config.load();  // Load it.
+    config.save();
+    config.load();
 
     config.viewer_url = "https://saved.example.com/";
     config.bytebin_url = "https://upload-saved.example.com/";
@@ -214,112 +211,6 @@ void test_save_and_reload()
     assert(config2.background_profiler_interval == 25);
 
     std::printf("  [PASS] save and reload\n");
-}
-
-void test_json_migration()
-{
-    auto dir = tempDir();
-    auto toml_path = dir / "migration_test.toml";
-    auto json_path = dir / "migration_test.json";
-    cleanup(toml_path);
-    cleanup(json_path);
-    std::filesystem::remove(json_path);  // Remove .bak too via cleanup.
-
-    // Write a legacy config.json.
-    std::string json = R"({
-        "viewerUrl": "https://migrated.example.com/",
-        "bytebinUrl": "https://upload-migrated.example.com/",
-        "bytesocksHost": "ws.migrated.com",
-        "backgroundProfiler": false,
-        "backgroundProfilerInterval": 30,
-        "backgroundProfilerThreadGrouper": "by-name",
-        "backgroundProfilerThreadDumper": "all",
-        "disableResponseBroadcast": true,
-        "trustedKeys": ["key1", "key2"]
-    })";
-    writeFile(json_path, json);
-
-    // Load config.toml - should trigger migration from config.json.
-    SparkConfig config(toml_path);
-    std::vector<std::string> migrated_keys;
-    bool ok = config.load(&migrated_keys);
-    assert(ok);
-
-    // Values should come from the JSON.
-    assert(config.viewer_url == "https://migrated.example.com/");
-    assert(config.bytebin_url == "https://upload-migrated.example.com/");
-    assert(config.bytesocks_host == "ws.migrated.com");
-    assert(config.background_profiler_enabled == false);
-    assert(config.background_profiler_interval == 30);
-    assert(config.background_profiler_thread_grouper == "by-name");
-    assert(config.background_profiler_thread_dumper == "all");
-    assert(config.disable_response_broadcast == true);
-
-    // Trusted keys should be extracted for the caller.
-    assert(migrated_keys.size() == 2);
-    assert(migrated_keys[0] == "key1");
-    assert(migrated_keys[1] == "key2");
-
-    // config.toml should now exist.
-    assert(std::filesystem::exists(toml_path));
-
-    // config.json should be renamed to config.json.bak.
-    assert(!std::filesystem::exists(json_path));
-    assert(std::filesystem::exists(json_path.string() + ".bak"));
-
-    // Reloading should now load from config.toml (not migrate again).
-    SparkConfig config2(toml_path);
-    assert(config2.load());
-    assert(config2.viewer_url == "https://migrated.example.com/");
-
-    std::printf("  [PASS] JSON migration\n");
-}
-
-void test_json_migration_no_trusted_keys()
-{
-    auto dir = tempDir();
-    auto toml_path = dir / "migration_no_keys.toml";
-    auto json_path = dir / "migration_no_keys.json";
-    cleanup(toml_path);
-    cleanup(json_path);
-    std::filesystem::remove(json_path);
-
-    writeFile(json_path, R"({"viewerUrl": "https://simple.example.com/"})");
-
-    SparkConfig config(toml_path);
-    std::vector<std::string> migrated_keys;
-    bool ok = config.load(&migrated_keys);
-    assert(ok);
-    assert(migrated_keys.empty());
-    assert(config.viewer_url == "https://simple.example.com/");
-
-    std::printf("  [PASS] JSON migration without trusted keys\n");
-}
-
-void test_toml_takes_priority_over_json()
-{
-    auto dir = tempDir();
-    auto toml_path = dir / "priority_test.toml";
-    auto json_path = dir / "priority_test.json";
-    cleanup(toml_path);
-    cleanup(json_path);
-    std::filesystem::remove(json_path);
-
-    // Write both files with different values.
-    writeFile(toml_path, R"(viewerUrl = "https://from-toml.example.com/"
-)");
-    writeFile(json_path, R"({"viewerUrl": "https://from-json.example.com/"})");
-
-    SparkConfig config(toml_path);
-    assert(config.load());
-
-    // TOML takes priority.
-    assert(config.viewer_url == "https://from-toml.example.com/");
-
-    // config.json should NOT be renamed (no migration happened).
-    assert(std::filesystem::exists(json_path));
-
-    std::printf("  [PASS] TOML priority over JSON\n");
 }
 
 void test_empty_toml()
@@ -372,9 +263,6 @@ int main()
     test_toml_partial();
     test_save_creates_toml();
     test_save_and_reload();
-    test_json_migration();
-    test_json_migration_no_trusted_keys();
-    test_toml_takes_priority_over_json();
     test_empty_toml();
     test_toml_with_comments();
     std::printf("All SparkConfig tests passed!\n");

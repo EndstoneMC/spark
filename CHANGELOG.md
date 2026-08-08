@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add persistent Spark configuration (`config.json` in the plugin data directory)
   with configurable `viewerUrl`, `bytebinUrl`, `bytesocksHost`, background
-  profiler settings, response broadcast toggle, and trusted viewer key storage.
-  Missing or malformed config falls back to safe defaults.
+  profiler settings, and response broadcast toggle. Missing or malformed config
+  falls back to safe defaults. Trusted viewer keys are stored separately in
+  `trusted-viewers.json`.
 - Add automatic background profiler that starts on plugin enable and runs
   indefinitely at a configurable interval (default 10ms). A foreground
   profiler (`/spark profiler start`) pauses the background session; stopping

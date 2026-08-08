@@ -272,9 +272,10 @@ coverage.
 
 ## Configuration
 
-Spark reads a `config.json` file from the plugin data directory on startup. If the
-file does not exist, spark writes one with default values. Missing or malformed
-fields fall back to defaults; unknown fields are silently ignored.
+Spark reads a `config.toml` file from the plugin data directory on startup. If the
+file does not exist, spark writes one with default values and explanatory comments.
+The file is user-owned: spark never rewrites it during normal operation. Missing or
+malformed fields fall back to defaults; unknown fields are silently ignored.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

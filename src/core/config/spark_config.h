@@ -3,7 +3,6 @@
 
 #include <filesystem>
 #include <string>
-#include <vector>
 
 namespace spark {
 
@@ -19,12 +18,9 @@ class SparkConfig {
 public:
     explicit SparkConfig(std::filesystem::path file);
 
-    // Loads config.toml.  If config.toml does not exist but a legacy
-    // config.json is present, migrates: reads JSON values, writes config.toml,
-    // renames config.json to config.json.bak.  If migrated_trusted_keys is
-    // non-null and trustedKeys was present in the legacy config.json, fills it
-    // with those keys so the caller can seed TrustedViewersState.
-    bool load(std::vector<std::string> *migrated_trusted_keys = nullptr);
+    // Loads config.toml.  On any error, fields keep their current (default)
+    // values and the method returns false.
+    bool load();
 
     // Writes the default config.toml template with explanatory comments.
     // Only for first-time creation; never called during normal operation.
@@ -48,8 +44,6 @@ public:
     const std::string &lastError() const { return last_error_; }
 
 private:
-    bool loadToml();
-    bool migrateFromJson(std::vector<std::string> *migrated_trusted_keys);
     void writeTemplate(std::ostream &out) const;
 
     std::filesystem::path file_;
