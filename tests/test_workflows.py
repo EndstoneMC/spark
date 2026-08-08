@@ -12,6 +12,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(workflow.count("conanfile.py"), 2)
         self.assertEqual(workflow.count("tools/run_clang_tidy.py"), 2)
         self.assertEqual(workflow.count("--dry-run --Werror"), 2)
+        self.assertEqual(workflow.count("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"), 2)
 
     def test_release_is_published_after_both_artifacts(self):
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")

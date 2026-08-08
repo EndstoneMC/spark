@@ -60,7 +60,7 @@ jobs:
         run: conan install . --build=missing
 
       - name: Configure
-        run: cmake --preset conan-relwithdebinfo
+        run: cmake --preset conan-relwithdebinfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build
         run: cmake --build --preset conan-relwithdebinfo
@@ -126,7 +126,7 @@ jobs:
         run: conan install . --build=missing
 
       - name: Configure
-        run: cmake --preset conan-relwithdebinfo
+        run: cmake --preset conan-relwithdebinfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build
         run: cmake --build --preset conan-relwithdebinfo
