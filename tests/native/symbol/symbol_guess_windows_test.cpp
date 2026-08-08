@@ -283,7 +283,7 @@ bool testRttiVtableAmbiguity() {
     addClass(fixture, 0x2000, ".?AVWidget@@", 0x2808, {0x1010});
     Engine engine = fixture.engine();
     const std::uint64_t query = 0x1010;
-    CHECK(engine.guess(std::span(&query, 1)).at(query) ==
+    CHECK(engine.guess(std::span(&query, 1)).at(query).label ==
           "vtable: Widget::vfn[0]");
   }
   {
@@ -293,7 +293,7 @@ bool testRttiVtableAmbiguity() {
     addClass(fixture, 0x2000, ".?AVWidget@@", 0x2808, {0x1010, 0x1010});
     Engine engine = fixture.engine();
     const std::uint64_t query = 0x1010;
-    CHECK(engine.guess(std::span(&query, 1)).at(query) ==
+    CHECK(engine.guess(std::span(&query, 1)).at(query).label ==
           "vtable?: Widget::<virtual>");
   }
   {
@@ -323,7 +323,7 @@ bool testInvalidRttiAndThunk() {
   addClass(fixture, 0x2000, ".?AVChannel@@", 0x2808, {0x1000}, 16);
   Engine engine = fixture.engine();
   const std::uint64_t query = 0x1080;
-  CHECK(engine.guess(std::span(&query, 1)).at(query) ==
+  CHECK(engine.guess(std::span(&query, 1)).at(query).label ==
         "vtable: Channel::vfn[0]");
   CHECK(engine.stats().thunk_resolved == 1);
 
@@ -351,7 +351,7 @@ bool testAslrIndependence() {
   const auto preferred = build(PeFixture::kBase);
   const auto relocated = build(0x7ff600000000ull);
   CHECK(preferred == relocated);
-  CHECK(preferred.at(0x1010) == "vtable: Widget::vfn[0]");
+  CHECK(preferred.at(0x1010).label == "vtable: Widget::vfn[0]");
   return true;
 }
 
@@ -368,7 +368,7 @@ bool testDecodedStringsAndScoring() {
   Engine engine = fixture.engine();
   const std::uint64_t query = 0x1008;
   const auto guesses = engine.guess(std::span(&query, 1));
-  CHECK(guesses.at(query) == "str: Server Level - tick");
+  CHECK(guesses.at(query).label == "str: Server Level - tick");
   CHECK(spark::symbol_guess::windows::scoreStringHint("Server Level - tick") >
         spark::symbol_guess::windows::scoreStringHint(
             "%.2f MB of dynamic properties were saved during the last minute"));
@@ -431,7 +431,7 @@ bool testChainedRootStringUniqueness() {
   fixture.putBytes(0x1107, {0xc3});
   Engine engine = fixture.engine();
   const std::uint64_t query = 0x1110;
-  CHECK(engine.guess(std::span(&query, 1)).at(query) ==
+  CHECK(engine.guess(std::span(&query, 1)).at(query).label ==
         "str: Level - tick chained work");
   return true;
 }
@@ -592,7 +592,7 @@ int evaluateMappedPe(int argc, char **argv) {
   for (std::uint64_t rva : rvas) {
     const auto it = guesses.find(rva);
     std::printf("0x%llx\t%s\n", static_cast<unsigned long long>(rva),
-                it != guesses.end() ? it->second.c_str() : "");
+                it != guesses.end() ? it->second.label.c_str() : "");
   }
   const auto stats = engine.stats();
   std::fprintf(

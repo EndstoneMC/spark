@@ -10,6 +10,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "native/symbol/symbol_guess.h"
+
 namespace spark::symbol_guess {
 
 enum class EvidenceSource {
@@ -26,6 +28,17 @@ struct VtableEvidence {
   bool via_thunk = false;
 
   bool operator==(const VtableEvidence &) const = default;
+};
+
+// A label with its evidence type and confidence already determined at
+// construction time, so callers never need to reverse-parse the prefix.
+struct TypedLabel {
+  std::string label;
+  GuessKind kind = GuessKind::None;
+  Confidence confidence = Confidence::None;
+
+  bool empty() const { return label.empty(); }
+  bool operator==(const TypedLabel &) const = default;
 };
 
 // Maps direct inheritance relationships so that shared vtable implementations
@@ -52,16 +65,16 @@ private:
 // evidence is useful but cannot identify the exact member (for example, one
 // class mapping the same implementation to several vtable slots). Conflicting
 // evidence returns an empty label instead of hiding the conflict behind '?'.
-std::string formatEvidenceLabel(EvidenceSource source, std::string_view message,
-                                bool tentative = false);
-std::string chooseVtableLabel(std::vector<VtableEvidence> evidence,
-                              const InheritanceMap *inheritance = nullptr);
+TypedLabel formatEvidenceLabel(EvidenceSource source, std::string_view message,
+                               bool tentative = false);
+TypedLabel chooseVtableLabel(std::vector<VtableEvidence> evidence,
+                             const InheritanceMap *inheritance = nullptr);
 
 // Deterministic semantic scoring shared by both native backends. Scores are an
 // internal ranking, not probabilities: accepted strings below the strong
 // threshold are displayed as `str?:`, never as a confidence percentage.
 int scoreStringHint(std::string_view value);
-std::string formatStringHint(std::string_view value, int score);
+TypedLabel formatStringHint(std::string_view value, int score);
 
 inline constexpr int kMinimumStringHintScore = 50;
 inline constexpr int kStrongStringHintScore = 80;

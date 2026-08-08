@@ -9,6 +9,20 @@ namespace spark::symbol_guess {
 
 namespace {
 
+GuessKind guessKindFromSource(EvidenceSource source) {
+  switch (source) {
+  case EvidenceSource::Rtti:
+    return GuessKind::Rtti;
+  case EvidenceSource::String:
+    return GuessKind::String;
+  case EvidenceSource::Vtable:
+    return GuessKind::Vtable;
+  case EvidenceSource::Thunk:
+    return GuessKind::Thunk;
+  }
+  return GuessKind::None;
+}
+
 std::string lower(std::string_view value) {
   std::string out(value);
   std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
@@ -135,8 +149,8 @@ InheritanceMap::findCommonAncestor(const std::set<std::string> &classes) const {
   return std::nullopt;
 }
 
-std::string formatEvidenceLabel(EvidenceSource source, std::string_view message,
-                                bool tentative) {
+TypedLabel formatEvidenceLabel(EvidenceSource source, std::string_view message,
+                               bool tentative) {
   if (message.empty()) {
     return {};
   }
@@ -146,11 +160,12 @@ std::string formatEvidenceLabel(EvidenceSource source, std::string_view message,
   }
   out += ": ";
   out += message;
-  return out;
+  return {std::move(out), guessKindFromSource(source),
+          tentative ? Confidence::Medium : Confidence::High};
 }
 
-std::string chooseVtableLabel(std::vector<VtableEvidence> evidence,
-                              const InheritanceMap *inheritance) {
+TypedLabel chooseVtableLabel(std::vector<VtableEvidence> evidence,
+                             const InheritanceMap *inheritance) {
   std::sort(evidence.begin(), evidence.end(),
             [](const VtableEvidence &a, const VtableEvidence &b) {
               if (a.class_name != b.class_name) {
@@ -346,7 +361,7 @@ int scoreStringHint(std::string_view value) {
   return score;
 }
 
-std::string formatStringHint(std::string_view value, int score) {
+TypedLabel formatStringHint(std::string_view value, int score) {
   if (score < kMinimumStringHintScore) {
     return {};
   }

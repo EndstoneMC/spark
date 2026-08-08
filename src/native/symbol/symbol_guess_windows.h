@@ -25,6 +25,7 @@ struct FunctionRange {
 };
 
 using VtableEvidence = ::spark::symbol_guess::VtableEvidence;
+using TypedLabel = ::spark::symbol_guess::TypedLabel;
 
 struct BuildStats {
   bool initialized = false;
@@ -65,7 +66,7 @@ public:
 
   bool valid() const;
   const FunctionRange *functionContaining(std::uint64_t rva) const;
-  std::unordered_map<std::uint64_t, std::string>
+  std::unordered_map<std::uint64_t, TypedLabel>
   guess(std::span<const std::uint64_t> rvas);
   BuildStats stats() const;
 
@@ -76,11 +77,11 @@ private:
 
 // Pure ranking helpers kept in the internal Windows component so formal tests
 // can lock down ambiguity and string-quality policy without private BDS data.
-std::string chooseVtableLabel(std::vector<VtableEvidence> evidence);
+TypedLabel chooseVtableLabel(std::vector<VtableEvidence> evidence);
 int scoreStringHint(std::string_view value);
-std::string formatStringHint(std::string_view value);
+TypedLabel formatStringHint(std::string_view value);
 
-std::unordered_map<std::uint64_t, std::string>
+std::unordered_map<std::uint64_t, TypedLabel>
 guessCurrentModuleSymbols(std::span<const std::uint64_t> rvas);
 BuildStats currentModuleStats();
 

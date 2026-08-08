@@ -23,21 +23,43 @@ int main() {
   using spark::symbol_guess::VtableEvidence;
 
   CHECK(spark::symbol_guess::formatEvidenceLabel(
-            EvidenceSource::Rtti, "ServerLevel") == "rtti: ServerLevel");
+            EvidenceSource::Rtti, "ServerLevel").label == "rtti: ServerLevel");
   CHECK(spark::symbol_guess::formatEvidenceLabel(EvidenceSource::String,
-                                                 "chunk loading", true) ==
+                                                 "chunk loading", true).label ==
         "str?: chunk loading");
-  CHECK(spark::symbol_guess::formatEvidenceLabel(EvidenceSource::Vtable, "") ==
-        "");
+  CHECK(spark::symbol_guess::formatEvidenceLabel(EvidenceSource::Vtable, "").empty());
 
-  CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 3, false, false}}) ==
+  // Typed kind/confidence checks.
+  {
+    auto rtti = spark::symbol_guess::formatEvidenceLabel(
+        EvidenceSource::Rtti, "ServerLevel");
+    CHECK(rtti.kind == spark::GuessKind::Rtti);
+    CHECK(rtti.confidence == spark::Confidence::High);
+
+    auto str_tent = spark::symbol_guess::formatEvidenceLabel(
+        EvidenceSource::String, "chunk loading", true);
+    CHECK(str_tent.kind == spark::GuessKind::String);
+    CHECK(str_tent.confidence == spark::Confidence::Medium);
+
+    auto vtable = spark::symbol_guess::formatEvidenceLabel(
+        EvidenceSource::Vtable, "A::vfn[0]");
+    CHECK(vtable.kind == spark::GuessKind::Vtable);
+    CHECK(vtable.confidence == spark::Confidence::High);
+
+    auto thunk = spark::symbol_guess::formatEvidenceLabel(
+        EvidenceSource::Thunk, "target", true);
+    CHECK(thunk.kind == spark::GuessKind::Thunk);
+    CHECK(thunk.confidence == spark::Confidence::Medium);
+  }
+
+  CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 3, false, false}}).label ==
         "vtable: Widget::vfn[3]");
   CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 3, true, false},
                                                 {"Widget", 3, false, true},
-                                                {"Widget", 3, false, true}}) ==
+                                                {"Widget", 3, false, true}}).label ==
         "vtable: Widget::vfn[3]");
   CHECK(spark::symbol_guess::chooseVtableLabel(
-            {{"Widget", 1, false, false}, {"Widget", 4, false, false}}) ==
+            {{"Widget", 1, false, false}, {"Widget", 4, false, false}}).label ==
         "vtable?: Widget::<virtual>");
   CHECK(spark::symbol_guess::chooseVtableLabel(
             {{"Widget", 3, false, false}, {"Gadget", 3, false, false}})
@@ -71,13 +93,13 @@ int main() {
     // Both share slot 3 -> high confidence on ancestor.
     CHECK(spark::symbol_guess::chooseVtableLabel(
               {{"Widget", 3, false, false}, {"Gadget", 3, false, false}},
-              &inh) ==
+              &inh).label ==
           "vtable: Widget::vfn[3]");
 
     // Different slots (Widget=3, Gadget=7) -> tentative, no slot.
     CHECK(spark::symbol_guess::chooseVtableLabel(
               {{"Widget", 3, false, false}, {"Gadget", 7, false, false}},
-              &inh) ==
+              &inh).label ==
           "vtable?: Widget::<virtual>");
 
     // Ancestor not in evidence but all slots agree -> high confidence.
@@ -87,7 +109,7 @@ int main() {
       inh2.addBase("D2", "Widget");
       CHECK(spark::symbol_guess::chooseVtableLabel(
                 {{"D1", 5, false, false}, {"D2", 5, false, false}},
-                &inh2) ==
+                &inh2).label ==
             "vtable: Widget::vfn[5]");
     }
   }
@@ -133,13 +155,13 @@ int main() {
   CHECK(tentative >= spark::symbol_guess::kMinimumStringHintScore);
   CHECK(tentative < spark::symbol_guess::kStrongStringHintScore);
   CHECK(spark::symbol_guess::formatStringHint(
-            "Level - tick redstone", strong) == "str: Level - tick redstone");
-  CHECK(spark::symbol_guess::formatStringHint("Run one task", tentative) ==
+            "Level - tick redstone", strong).label == "str: Level - tick redstone");
+  CHECK(spark::symbol_guess::formatStringHint("Run one task", tentative).label ==
         "str?: Run one task");
   CHECK(spark::symbol_guess::formatStringHint(
             "Name: ", spark::symbol_guess::scoreStringHint("Name: "))
             .empty());
-  CHECK(spark::symbol_guess::formatStringHint("Level - tick redstone", strong)
+  CHECK(spark::symbol_guess::formatStringHint("Level - tick redstone", strong).label
             .find('%') == std::string::npos);
 
   // BDS trace strings: "N _functionName" pattern.
@@ -147,7 +169,7 @@ int main() {
       spark::symbol_guess::scoreStringHint("2 _deserializeEntity");
   CHECK(trace >= spark::symbol_guess::kMinimumStringHintScore);
   CHECK(trace < spark::symbol_guess::kStrongStringHintScore);
-  CHECK(spark::symbol_guess::formatStringHint("2 _deserializeEntity", trace) ==
+  CHECK(spark::symbol_guess::formatStringHint("2 _deserializeEntity", trace).label ==
         "str?: 2 _deserializeEntity");
 
   // Short trace without domain keywords stays below threshold.

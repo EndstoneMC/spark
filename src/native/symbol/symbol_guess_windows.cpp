@@ -118,7 +118,7 @@ std::string classNameFromTypeDescriptor(std::string_view mangled) {
 
 } // namespace
 
-std::string chooseVtableLabel(std::vector<VtableEvidence> evidence) {
+TypedLabel chooseVtableLabel(std::vector<VtableEvidence> evidence) {
   return ::spark::symbol_guess::chooseVtableLabel(std::move(evidence), nullptr);
 }
 
@@ -126,7 +126,7 @@ int scoreStringHint(std::string_view value) {
   return ::spark::symbol_guess::scoreStringHint(value);
 }
 
-std::string formatStringHint(std::string_view value) {
+TypedLabel formatStringHint(std::string_view value) {
   return ::spark::symbol_guess::formatStringHint(value, scoreStringHint(value));
 }
 
@@ -143,7 +143,7 @@ struct Engine::Impl {
   // of the hundreds of thousands of .pdata entries in BDS.
   std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>
       chained_fragment_starts;
-  std::unordered_map<std::uint32_t, std::string> vtable_labels;
+  std::unordered_map<std::uint32_t, TypedLabel> vtable_labels;
   mutable std::mutex mutex;
   BuildStats stats;
 
@@ -567,7 +567,7 @@ struct Engine::Impl {
       }
     }
     for (auto &[root, evidence] : candidates) {
-      std::string label =
+      TypedLabel label =
           ::spark::symbol_guess::windows::chooseVtableLabel(evidence);
       if (label.empty()) {
         ++stats.vtable_conflicts;
@@ -737,7 +737,7 @@ struct Engine::Impl {
       bytes += sizeof(root) + fragments.capacity() * sizeof(std::uint32_t) + 32;
     }
     for (const auto &[root, label] : vtable_labels) {
-      bytes += sizeof(root) + label.capacity() + 48;
+      bytes += sizeof(root) + label.label.capacity() + 48;
     }
     stats.approximate_bytes = bytes;
   }
@@ -760,7 +760,7 @@ struct Engine::Impl {
             .count());
   }
 
-  std::unordered_map<std::uint64_t, std::string>
+  std::unordered_map<std::uint64_t, TypedLabel>
   guess(std::span<const std::uint64_t> rvas) {
     std::lock_guard lock(mutex);
     const auto start = Clock::now();
@@ -772,7 +772,7 @@ struct Engine::Impl {
     batch.shared_strings = 0;
     batch.string_labels = 0;
 
-    std::unordered_map<std::uint64_t, std::string> out;
+    std::unordered_map<std::uint64_t, TypedLabel> out;
     out.reserve(rvas.size());
     std::map<std::uint32_t, std::vector<std::uint64_t>> root_inputs;
     for (std::uint64_t rva : rvas) {
@@ -804,7 +804,7 @@ struct Engine::Impl {
       scanCandidateReferences(candidate_targets, references);
     }
     for (const auto &[root, candidates] : string_candidates) {
-      std::string label;
+      TypedLabel label;
       for (const StringCandidate &candidate : candidates) {
         const auto refs = references.find(candidate.target);
         if (refs != references.end() && refs->second.size() == 1 &&
@@ -853,10 +853,10 @@ const FunctionRange *Engine::functionContaining(std::uint64_t rva) const {
   return impl_ != nullptr ? impl_->containing(rva) : nullptr;
 }
 
-std::unordered_map<std::uint64_t, std::string>
+std::unordered_map<std::uint64_t, TypedLabel>
 Engine::guess(std::span<const std::uint64_t> rvas) {
   return impl_ != nullptr ? impl_->guess(rvas)
-                          : std::unordered_map<std::uint64_t, std::string>{};
+                          : std::unordered_map<std::uint64_t, TypedLabel>{};
 }
 
 BuildStats Engine::stats() const {
@@ -902,7 +902,7 @@ Engine &currentEngine() {
 
 } // namespace
 
-std::unordered_map<std::uint64_t, std::string>
+std::unordered_map<std::uint64_t, TypedLabel>
 guessCurrentModuleSymbols(std::span<const std::uint64_t> rvas) {
   if (rvas.empty()) {
     return {};

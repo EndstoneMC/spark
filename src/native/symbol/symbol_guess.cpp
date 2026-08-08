@@ -1,4 +1,5 @@
 #include "native/symbol/symbol_guess.h"
+#include "native/symbol/symbol_guess_evidence.h"
 
 #include <string_view>
 #include <utility>
@@ -6,44 +7,15 @@
 namespace spark {
 namespace {
 
-GuessResult resultFromLabel(std::uint64_t function_rva, std::string label,
-                            std::uint32_t evidence_count = 1) {
+GuessResult makeGuess(std::uint64_t function_rva,
+                      const symbol_guess::TypedLabel &tl,
+                      std::uint32_t evidence_count = 1) {
   GuessResult result;
   result.function_rva = function_rva;
-  result.label = std::move(label);
-  result.evidence_count = result.label.empty() ? 0 : evidence_count;
-  struct Prefix {
-    std::string_view text;
-    GuessKind kind;
-    Confidence confidence;
-  };
-  static constexpr Prefix prefixes[] = {
-      {"rtti: ", GuessKind::Rtti, Confidence::High},
-      {"rtti?: ", GuessKind::Rtti, Confidence::Medium},
-      {"str: ", GuessKind::String, Confidence::High},
-      {"str?: ", GuessKind::String, Confidence::Medium},
-      {"vtable: ", GuessKind::Vtable, Confidence::High},
-      {"vtable?: ", GuessKind::Vtable, Confidence::Medium},
-      {"thunk: ", GuessKind::Thunk, Confidence::High},
-      {"thunk?: ", GuessKind::Thunk, Confidence::Medium},
-      {"call: ", GuessKind::Call, Confidence::High},
-      {"call?: ", GuessKind::Call, Confidence::Medium},
-      {"import: ", GuessKind::Import, Confidence::High},
-      {"import?: ", GuessKind::Import, Confidence::Medium},
-      {"context?: ", GuessKind::Context, Confidence::Low},
-      {"type: ", GuessKind::Type, Confidence::High},
-      {"type?: ", GuessKind::Type, Confidence::Medium},
-  };
-  for (const Prefix &prefix : prefixes) {
-    if (result.label.starts_with(prefix.text)) {
-      result.kind = prefix.kind;
-      result.confidence = prefix.confidence;
-      break;
-    }
-  }
-  if (!result.label.empty() && result.kind == GuessKind::None) {
-    result.confidence = Confidence::Low;
-  }
+  result.label = tl.label;
+  result.kind = tl.kind;
+  result.confidence = tl.confidence;
+  result.evidence_count = tl.label.empty() ? 0 : evidence_count;
   return result;
 }
 
@@ -72,21 +44,29 @@ std::string guessMainModuleSymbol(std::uint64_t rva) {
   const auto guesses =
       symbol_guess::windows::guessCurrentModuleSymbols(std::span(&rva, 1));
   const auto it = guesses.find(rva);
-  return it != guesses.end() ? it->second : std::string{};
+  return it != guesses.end() ? it->second.label : std::string{};
 }
 
 std::unordered_map<std::uint64_t, std::string>
 guessMainModuleSymbols(std::span<const std::uint64_t> rvas) {
-  return symbol_guess::windows::guessCurrentModuleSymbols(rvas);
+  const auto typed = symbol_guess::windows::guessCurrentModuleSymbols(rvas);
+  std::unordered_map<std::uint64_t, std::string> out;
+  out.reserve(typed.size());
+  for (const auto &[rva, tl] : typed) {
+    if (!tl.label.empty()) {
+      out.emplace(rva, tl.label);
+    }
+  }
+  return out;
 }
 
 std::unordered_map<std::uint64_t, GuessResult>
 analyzeMainModuleSymbols(std::span<const std::uint64_t> rvas) {
-  const auto labels = symbol_guess::windows::guessCurrentModuleSymbols(rvas);
+  const auto typed = symbol_guess::windows::guessCurrentModuleSymbols(rvas);
   std::unordered_map<std::uint64_t, GuessResult> results;
-  results.reserve(labels.size());
-  for (const auto &[rva, label] : labels) {
-    results.emplace(rva, resultFromLabel(rva, label));
+  results.reserve(typed.size());
+  for (const auto &[rva, tl] : typed) {
+    results.emplace(rva, makeGuess(rva, tl));
   }
   return results;
 }
@@ -95,7 +75,6 @@ analyzeMainModuleSymbols(std::span<const std::uint64_t> rvas) {
 
 #elif defined(__linux__) && defined(__x86_64__)
 
-#include "native/symbol/symbol_guess_evidence.h"
 #include "native/symbol/symbol_guess_dwarf.h"
 #include "native/symbol/symbol_guess_linux.h"
 
@@ -348,7 +327,7 @@ using FunctionRange = symbol_guess::dwarf::FunctionRange;
 
 struct GuessTable {
   std::vector<FunctionRange> ranges;
-  std::unordered_map<std::uint64_t, std::string> labels;
+  std::unordered_map<std::uint64_t, symbol_guess::TypedLabel> labels;
   symbol_guess::dwarf::ParseStats range_stats;
   symbol_guess::linux::BuildStats stats;
 };
@@ -589,8 +568,8 @@ strictThunkEdge(const ImageView &img, const GuessTable &table,
   return target_function->root;
 }
 
-std::string thunkLabelFromTarget(std::string_view target_label) {
-  const GuessResult target = resultFromLabel(0, std::string(target_label));
+symbol_guess::TypedLabel
+thunkLabelFromTarget(const symbol_guess::TypedLabel &target) {
   if (target.kind == GuessKind::None || target.label.empty()) {
     return {};
   }
@@ -598,9 +577,10 @@ std::string thunkLabelFromTarget(std::string_view target_label) {
   if (separator == std::string::npos || separator + 2 >= target.label.size()) {
     return {};
   }
-  return std::string(target.confidence == Confidence::High ? "thunk: "
-                                                           : "thunk?: ") +
-         target.label.substr(separator + 2);
+  return symbol_guess::formatEvidenceLabel(
+      symbol_guess::EvidenceSource::Thunk,
+      target.label.substr(separator + 2),
+      target.confidence != Confidence::High);
 }
 
 // "N6detail11ChunkSourceE" -> "detail::ChunkSource". Uses the ABI demangler,
@@ -885,7 +865,7 @@ void collectVtableLabels(const ImageView &img, GuessTable &table) {
     }
     const bool was_conflict = pre_classes.size() > 1;
 
-    const std::string label =
+    const symbol_guess::TypedLabel label =
         symbol_guess::chooseVtableLabel(std::move(evidence), &inheritance);
     if (label.empty()) {
       ++table.stats.vtable_conflicts;
@@ -1110,7 +1090,7 @@ guessBatch(std::span<const std::uint64_t> rvas) {
   for (std::uint64_t rva : rvas) {
     if (const FunctionRange *function = functionContaining(table, rva)) {
       root_inputs[function->root].push_back(rva);
-      out.try_emplace(rva, resultFromLabel(function->root, {}, 0));
+      out.try_emplace(rva, GuessResult{.function_rva = function->root});
     }
   }
   batch.sampled_functions = root_inputs.size();
@@ -1121,7 +1101,7 @@ guessBatch(std::span<const std::uint64_t> rvas) {
     if (const auto label = table.labels.find(root);
         label != table.labels.end()) {
       for (std::uint64_t rva : inputs) {
-        out[rva] = resultFromLabel(root, label->second);
+        out[rva] = makeGuess(root, label->second);
       }
       continue;
     }
@@ -1133,11 +1113,12 @@ guessBatch(std::span<const std::uint64_t> rvas) {
       ++batch.thunk_resolved;
       if (const auto target_label = table.labels.find(*thunk_target);
           target_label != table.labels.end()) {
-        const std::string label = thunkLabelFromTarget(target_label->second);
+        const symbol_guess::TypedLabel label =
+            thunkLabelFromTarget(target_label->second);
         if (!label.empty()) {
           ++batch.thunk_labels;
           for (std::uint64_t rva : inputs) {
-            out[rva] = resultFromLabel(root, label, 2);
+            out[rva] = makeGuess(root, label, 2);
           }
           continue;
         }
@@ -1160,7 +1141,7 @@ guessBatch(std::span<const std::uint64_t> rvas) {
     scanCandidateReferences(img, table, candidate_targets, references);
   }
   for (const auto &[root, candidates] : string_candidates) {
-    std::string label;
+    symbol_guess::TypedLabel label;
     for (const StringCandidate &candidate : candidates) {
       if (candidate.score < symbol_guess::kMinimumStringHintScore) {
         break;
@@ -1181,7 +1162,7 @@ guessBatch(std::span<const std::uint64_t> rvas) {
     }
     ++batch.string_labels;
     for (std::uint64_t rva : root_inputs.at(root)) {
-      out[rva] = resultFromLabel(root, label);
+      out[rva] = makeGuess(root, label);
     }
   }
 
@@ -1234,11 +1215,12 @@ guessBatch(std::span<const std::uint64_t> rvas) {
     message += " (+";
     message += std::to_string(unique_weak.size() - 1);
     message += " more)";
-    const std::string accumulated_label = symbol_guess::formatEvidenceLabel(
-        symbol_guess::EvidenceSource::String, message, true);
+    const symbol_guess::TypedLabel accumulated_label =
+        symbol_guess::formatEvidenceLabel(
+            symbol_guess::EvidenceSource::String, message, true);
     ++batch.string_accumulated_labels;
     for (std::uint64_t rva : root_inputs.at(root)) {
-      out[rva] = resultFromLabel(root, accumulated_label);
+      out[rva] = makeGuess(root, accumulated_label);
     }
   }
 
@@ -1251,7 +1233,7 @@ guessBatch(std::span<const std::uint64_t> rvas) {
     if (label_it == table.labels.end()) {
       continue;
     }
-    const std::string &vtable_label = label_it->second;
+    const std::string &vtable_label = label_it->second.label;
     if (vtable_label.find("function::__func<") == std::string::npos ||
         vtable_label.find("::vfn[6]") == std::string::npos) {
       continue;
@@ -1320,10 +1302,12 @@ guessBatch(std::span<const std::uint64_t> rvas) {
     }
 
     if (candidates.size() == 1) {
-      const std::string body_label =
-          "call?: " + lambda_name + " (lambda body)";
+      const symbol_guess::TypedLabel body_label{
+          "call?: " + lambda_name + " (lambda body)",
+          GuessKind::Call,
+          Confidence::Medium};
       for (std::uint64_t rva : root_inputs.at(candidates[0])) {
-        out[rva] = resultFromLabel(candidates[0], body_label);
+        out[rva] = makeGuess(candidates[0], body_label);
       }
       ++batch.lambda_body_labels;
     }
@@ -1352,10 +1336,11 @@ guessBatch(std::span<const std::uint64_t> rvas) {
     const unsigned char kHashConstant[] = {0xB9, 0x79, 0x37, 0x9E};
     if (std::search(code.begin(), code.end(), kHashConstant,
                     kHashConstant + 4) != code.end()) {
-      const std::string label =
-          "type?: hash_table_lookup (Knuth multiplicative hash)";
+      const symbol_guess::TypedLabel label{
+          "type?: hash_table_lookup (Knuth multiplicative hash)",
+          GuessKind::Type, Confidence::Medium};
       for (std::uint64_t rva : inputs) {
-        out[rva] = resultFromLabel(root, label);
+        out[rva] = makeGuess(root, label);
       }
       ++batch.code_pattern_labels;
       continue;
@@ -1367,10 +1352,11 @@ guessBatch(std::span<const std::uint64_t> rvas) {
         0x69, 0x2D, 0x38, 0xEB, 0x08, 0xEA, 0xDF, 0x9D};
     if (std::search(code.begin(), code.end(), kHash64Constant,
                     kHash64Constant + 8) != code.end()) {
-      const std::string label =
-          "type?: hash_table_lookup (64-bit hash multiplier)";
+      const symbol_guess::TypedLabel label{
+          "type?: hash_table_lookup (64-bit hash multiplier)",
+          GuessKind::Type, Confidence::Medium};
       for (std::uint64_t rva : inputs) {
-        out[rva] = resultFromLabel(root, label);
+        out[rva] = makeGuess(root, label);
       }
       ++batch.code_pattern_labels;
       continue;
@@ -1385,9 +1371,11 @@ guessBatch(std::span<const std::uint64_t> rvas) {
                       kLockCmpxchg + 3) != code.end() ||
           std::search(code.begin(), code.end(), kLockCmpxchg64,
                       kLockCmpxchg64 + 4) != code.end()) {
-        const std::string label = "type?: atomic_cas_loop (lock cmpxchg)";
+        const symbol_guess::TypedLabel label{
+            "type?: atomic_cas_loop (lock cmpxchg)",
+            GuessKind::Type, Confidence::Medium};
         for (std::uint64_t rva : inputs) {
-          out[rva] = resultFromLabel(root, label);
+          out[rva] = makeGuess(root, label);
         }
         ++batch.code_pattern_labels;
         continue;
@@ -1400,9 +1388,11 @@ guessBatch(std::span<const std::uint64_t> rvas) {
                       kLockXadd + 3) != code.end() ||
           std::search(code.begin(), code.end(), kLockXadd64,
                       kLockXadd64 + 4) != code.end()) {
-        const std::string label = "type?: atomic_fetch_add (lock xadd)";
+        const symbol_guess::TypedLabel label{
+            "type?: atomic_fetch_add (lock xadd)",
+            GuessKind::Type, Confidence::Medium};
         for (std::uint64_t rva : inputs) {
-          out[rva] = resultFromLabel(root, label);
+          out[rva] = makeGuess(root, label);
         }
         ++batch.code_pattern_labels;
         continue;
@@ -1433,10 +1423,11 @@ guessBatch(std::span<const std::uint64_t> rvas) {
         }
       }
       if (shift_right_1_count >= 2 && not_count >= 1) {
-        const std::string label =
-            "type?: binary_search (shift-right halving)";
+        const symbol_guess::TypedLabel label{
+            "type?: binary_search (shift-right halving)",
+            GuessKind::Type, Confidence::Medium};
         for (std::uint64_t rva : inputs) {
-          out[rva] = resultFromLabel(root, label);
+          out[rva] = makeGuess(root, label);
         }
         ++batch.code_pattern_labels;
         continue;
@@ -1478,7 +1469,7 @@ GuessTable buildTable() {
           (sizeof(decltype(table.labels)::value_type) + sizeof(void *) * 2);
   for (const auto &[root, label] : table.labels) {
     (void)root;
-    table.stats.approximate_bytes += label.capacity();
+    table.stats.approximate_bytes += label.label.capacity();
   }
   table.stats.initialized = true;
   table.stats.build_microseconds = static_cast<std::uint64_t>(
