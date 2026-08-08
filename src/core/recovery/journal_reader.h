@@ -12,6 +12,21 @@
 
 namespace spark {
 
+// Session configuration parsed from a SessionConfig journal record.
+struct SessionConfig {
+    bool present = false;
+    std::uint32_t interval_us = 4000;
+    std::int32_t only_ticks_over_ms = 0;
+    bool all_threads = false;
+    bool regex_threads = false;
+    bool ignore_sleeping = false;
+    std::uint8_t thread_grouper = 1;  // ByPool
+    std::string creator_name = "Console";
+    bool creator_is_player = false;
+    std::string comment;
+    std::vector<std::string> thread_patterns;
+};
+
 // A parsed journal record.
 struct JournalRecord {
     RecordType type;
@@ -29,6 +44,7 @@ struct JournalRecord {
     bool asStallBegin(std::uint64_t &detected_ns, std::uint64_t &last_tick_ns) const;
     bool asStallEnd(std::uint64_t &detected_ns, std::uint64_t &recovered_ns) const;
     bool asCleanEnd(std::uint64_t &timestamp_ns) const;
+    bool asSessionConfig(SessionConfig &config) const;
 };
 
 // Result of reading a journal session.
@@ -37,6 +53,7 @@ struct JournalReadResult {
     std::uint64_t session_id = 0;
     std::uint64_t created_ns = 0;
     bool has_clean_end = false;
+    SessionConfig session_config;
     std::vector<JournalRecord> records;
     std::uint64_t corrupt_records = 0;  // CRC mismatches
     std::uint64_t truncated_records = 0; // incomplete trailing records

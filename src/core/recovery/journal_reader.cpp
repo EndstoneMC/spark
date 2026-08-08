@@ -135,6 +135,42 @@ bool JournalRecord::asCleanEnd(std::uint64_t &timestamp_ns) const
     return c.u64(timestamp_ns);
 }
 
+bool JournalRecord::asSessionConfig(SessionConfig &config) const
+{
+    ByteCursor c(payload.data(), payload.size());
+    if (!c.u32(config.interval_us)) return false;
+    if (!c.i32(config.only_ticks_over_ms)) return false;
+    std::uint8_t b;
+    if (!c.u8(b)) return false;
+    config.all_threads = b != 0;
+    if (!c.u8(b)) return false;
+    config.regex_threads = b != 0;
+    if (!c.u8(b)) return false;
+    config.ignore_sleeping = b != 0;
+    if (!c.u8(config.thread_grouper)) return false;
+    std::uint16_t len;
+    if (!c.u16(len)) return false;
+    std::string_view sv;
+    if (!c.stringView(sv, len)) return false;
+    config.creator_name.assign(sv.data(), sv.size());
+    if (!c.u8(b)) return false;
+    config.creator_is_player = b != 0;
+    if (!c.u16(len)) return false;
+    if (!c.stringView(sv, len)) return false;
+    config.comment.assign(sv.data(), sv.size());
+    std::uint16_t count;
+    if (!c.u16(count)) return false;
+    config.thread_patterns.clear();
+    config.thread_patterns.reserve(count);
+    for (std::uint16_t i = 0; i < count; ++i) {
+        if (!c.u16(len)) return false;
+        if (!c.stringView(sv, len)) return false;
+        config.thread_patterns.emplace_back(sv.data(), sv.size());
+    }
+    config.present = true;
+    return true;
+}
+
 // --- JournalReader ---
 
 bool JournalReader::readSegment(const std::filesystem::path &path, JournalReadResult &result)
@@ -223,6 +259,9 @@ bool JournalReader::readSegment(const std::filesystem::path &path, JournalReadRe
 
         if (rec.type == RecordType::CleanEnd) {
             result.has_clean_end = true;
+        }
+        if (rec.type == RecordType::SessionConfig && !result.session_config.present) {
+            rec.asSessionConfig(result.session_config);
         }
         result.records.push_back(std::move(rec));
     }

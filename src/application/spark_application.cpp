@@ -1,9 +1,13 @@
 #include "application/spark_application.h"
 
 #include <chrono>
+#include <exception>
+#include <filesystem>
 #include <utility>
 
 #include "native/sampler/heartbeat.h"
+#include "net/gzip.h"
+#include "net/profile_file.h"
 
 namespace spark {
 
@@ -144,6 +148,7 @@ void SparkApplication::onTick(double mspt)
 
 void SparkApplication::enable()
 {
+    recoverPreviousSession();
     watchdog_.start();
     profiler_.startBackgroundProfiler();
 }
@@ -152,6 +157,54 @@ void SparkApplication::shutdown()
 {
     profiler_.shutdown();
     watchdog_.stop();
+}
+
+void SparkApplication::recoverPreviousSession()
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+    if (!fs::exists(recovery_dir_, ec) || ec) return;
+
+    // Check for any segment-*.jnl files.
+    bool has_journal = false;
+    for (const auto &entry : fs::directory_iterator(recovery_dir_, ec)) {
+        if (ec) break;
+        if (!entry.is_regular_file()) continue;
+        auto name = entry.path().filename().string();
+        if (name.size() >= 8 && name.substr(0, 8) == "segment-" &&
+            name.size() >= 4 && name.substr(name.size() - 4) == ".jnl") {
+            has_journal = true;
+            break;
+        }
+    }
+    if (!has_journal) return;
+
+    RecoveredProfile profile = RecoveryPlayer::replay(recovery_dir_);
+    if (!profile.valid) {
+        fs::remove_all(recovery_dir_, ec);
+        fs::create_directories(recovery_dir_, ec);
+        return;
+    }
+
+    // Compress and save.
+    try {
+        std::string compressed = gzipCompress(profile.serialized_proto);
+        ProfileFileResult saved = saveProfileToDirectory(
+            fs::path(recovery_dir_).parent_path(), compressed, profile.session_start_ms);
+        if (saved.ok) {
+            notifier_.notify("crash recovery",
+                             "Recovered profile saved to " + saved.path.string() +
+                             " - open it at " + config_.viewer_url);
+        }
+    }
+    catch (const std::exception &) {
+        // Best-effort: delete the journal regardless so we don't loop.
+    }
+
+    // Clear the recovery directory for the new session.
+    fs::remove_all(recovery_dir_, ec);
+    fs::create_directories(recovery_dir_, ec);
 }
 
 }  // namespace spark

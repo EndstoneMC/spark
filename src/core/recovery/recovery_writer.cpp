@@ -136,6 +136,20 @@ void RecoveryWriter::journalCleanEnd()
     requestFlush();
 }
 
+void RecoveryWriter::journalSessionConfig(
+    std::uint32_t interval_us, std::int32_t only_ticks_over_ms,
+    bool all_threads, bool regex_threads, bool ignore_sleeping,
+    std::uint8_t thread_grouper, std::string_view creator_name,
+    bool creator_is_player, std::string_view comment,
+    const std::vector<std::string> &thread_patterns)
+{
+    enqueue(RecordType::SessionConfig,
+            buildSessionConfigPayload(interval_us, only_ticks_over_ms,
+                                      all_threads, regex_threads, ignore_sleeping,
+                                      thread_grouper, creator_name,
+                                      creator_is_player, comment, thread_patterns));
+}
+
 void RecoveryWriter::requestFlush()
 {
     flush_requested_.store(true, std::memory_order_release);

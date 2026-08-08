@@ -332,6 +332,14 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
             recovery_writer_ = std::make_unique<RecoveryWriter>(std::move(wc));
             if (recovery_writer_->start()) {
                 sampler_.setRecoverySink(recovery_writer_.get());
+                recovery_writer_->journalSessionConfig(
+                    static_cast<std::uint32_t>(interval_),
+                    options.only_ticks_over_ms > 0 ? static_cast<std::int32_t>(options.only_ticks_over_ms) : 0,
+                    config.all_threads, config.regex_threads, config.ignore_sleeping,
+                    static_cast<std::uint8_t>(options.thread_grouper),
+                    options.creator_name, options.creator_is_player,
+                    options.comment, options.threads);
+                recovery_writer_->requestFlush();
             } else {
                 sampler_.setRecoverySink(nullptr);
                 recovery_writer_.reset();

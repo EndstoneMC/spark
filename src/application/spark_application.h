@@ -15,6 +15,7 @@
 #include "application/tick_monitor/tick_monitor_command.h"
 #include "core/activity/activity_log.h"
 #include "core/config/spark_config.h"
+#include "core/recovery/recovery_player.h"
 #include "core/recovery/stall_watchdog.h"
 #include "core/stats/statistics_service.h"
 
@@ -56,6 +57,7 @@ public:
 
 private:
     void registerCommands();
+    void recoverPreviousSession();
 
     StatisticsService statistics_;
     SparkConfig config_;

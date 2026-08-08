@@ -99,6 +99,7 @@ endif ()
 add_library(spark_core STATIC
         src/core/config/spark_config.cpp
         src/core/recovery/journal_reader.cpp
+        src/core/recovery/recovery_player.cpp
         src/core/recovery/recovery_writer.cpp
         src/core/recovery/stall_watchdog.cpp
         src/core/util/base64.cpp

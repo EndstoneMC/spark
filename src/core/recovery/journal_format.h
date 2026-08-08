@@ -31,6 +31,7 @@ enum class RecordType : std::uint8_t {
     StallBegin = 5,
     StallEnd   = 6,
     CleanEnd   = 7,
+    SessionConfig = 8,
 };
 
 // Maximum payload size guard (prevents a corrupt length field from causing
@@ -162,6 +163,30 @@ inline JournalBuffer buildCleanEndPayload(std::uint64_t timestamp_ns)
 {
     JournalBuffer p;
     p.u64(timestamp_ns);
+    return p;
+}
+
+inline JournalBuffer buildSessionConfigPayload(
+    std::uint32_t interval_us, std::int32_t only_ticks_over_ms,
+    bool all_threads, bool regex_threads, bool ignore_sleeping,
+    std::uint8_t thread_grouper, std::string_view creator_name,
+    bool creator_is_player, std::string_view comment,
+    const std::vector<std::string> &thread_patterns)
+{
+    JournalBuffer p;
+    p.u32(interval_us);
+    p.i32(only_ticks_over_ms);
+    p.u8(all_threads ? 1 : 0);
+    p.u8(regex_threads ? 1 : 0);
+    p.u8(ignore_sleeping ? 1 : 0);
+    p.u8(thread_grouper);
+    p.str(creator_name);
+    p.u8(creator_is_player ? 1 : 0);
+    p.str(comment);
+    p.u16(static_cast<std::uint16_t>(thread_patterns.size()));
+    for (const auto &pat : thread_patterns) {
+        p.str(pat);
+    }
     return p;
 }
 
