@@ -96,6 +96,35 @@ void Sampler::stop()
     Capture::disarm();
 }
 
+void Sampler::pauseForExport()
+{
+    if (!running_.exchange(false)) {
+        return;
+    }
+    wait_cv_.notify_all();
+    if (sampler_thread_.joinable()) {
+        sampler_thread_.join();
+    }
+    agg_running_.store(false);
+    if (aggregator_thread_.joinable()) {
+        aggregator_thread_.join();
+    }
+    // Intentionally do NOT disarm Capture or reset session data.
+}
+
+void Sampler::resumeAfterExport()
+{
+    if (running_.load()) {
+        return;
+    }
+    // Capture backend is still armed from the original start(); session data
+    // (tree, thread_trees, modules, start_time_) is preserved.
+    running_.store(true);
+    agg_running_.store(true);
+    aggregator_thread_ = std::thread(&Sampler::aggregatorLoop, this);
+    sampler_thread_ = std::thread(&Sampler::samplerLoop, this);
+}
+
 void Sampler::resetSession()
 {
     Sample sample;

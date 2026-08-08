@@ -579,6 +579,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.plugins = ctx.plugins;
     meta.world = ctx.world;
     meta.window_stats = ctx.window_stats;
+    meta.socket_channel_info_proto = ctx.socket_channel_info_proto;
     meta.extra_platform_metadata["Statistics history available ms"] = std::to_string(ctx.statistics.history_span_ms);
 
     // Populate ping rolling average if samples were collected.
@@ -648,6 +649,20 @@ std::string Profiler::stop(const ExportContext &ctx)
         return {};
     }
     return exportData(ctx);
+}
+
+std::string Profiler::liveExport(const ExportContext &ctx)
+{
+    if (!running_.load()) {
+        return {};
+    }
+    if (mode_ == ProfileMode::Allocation) {
+        return {};
+    }
+    sampler_.pauseForExport();
+    std::string data = exportData(ctx);
+    sampler_.resumeAfterExport();
+    return data;
 }
 
 bool Profiler::cancel(std::string &error)

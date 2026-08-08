@@ -14,6 +14,7 @@ find_package(cpptrace REQUIRED)
 find_package(concurrentqueue REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
 include(FetchContent)
@@ -95,6 +96,7 @@ endif ()
 # --- platform-independent core: profiler, stats, proto, net (no Endstone) ---
 add_library(spark_core STATIC
         src/core/config/spark_config.cpp
+        src/core/util/base64.cpp
         src/core/util/format.cpp
         src/core/activity/activity_log.cpp
         src/core/command/arguments.cpp
@@ -105,12 +107,16 @@ add_library(spark_core STATIC
         src/core/stats/network_monitor.cpp
         src/core/stats/tick_monitor.cpp
         src/core/stats/system_stats.cpp
+        src/core/ws/crypto.cpp
+        src/core/ws/ws_proto.cpp
+        src/core/ws/viewer_socket.cpp
         src/proto/sampler_data.cpp
         src/net/gzip.cpp
         src/net/bytebin.cpp
-        src/net/profile_file.cpp)
+        src/net/profile_file.cpp
+        src/net/websocket.cpp)
 target_include_directories(spark_core PUBLIC src)
-target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl)
+target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl OpenSSL::Crypto)
 if (WIN32)
     target_compile_definitions(spark_core PUBLIC NOMINMAX)
     target_link_libraries(spark_core PUBLIC iphlpapi)

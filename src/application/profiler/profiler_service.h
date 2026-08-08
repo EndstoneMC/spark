@@ -18,6 +18,7 @@
 #include "core/profiler/profiler.h"
 #include "core/stats/network_monitor.h"
 #include "core/stats/statistics_service.h"
+#include "core/ws/viewer_socket.h"
 
 namespace spark {
 
@@ -49,6 +50,7 @@ public:
     void cmdStop(CommandSender &sender, const Arguments &args);
     void cmdInfo(CommandSender &sender);
     void cmdCancel(CommandSender &sender);
+    void cmdOpen(CommandSender &sender);
 
     // Called every server tick.
     void onTick(double mspt);
@@ -94,6 +96,8 @@ private:
     void runExport();
     void announceResult();
     bool startBackgroundSession();
+    void closeViewerSocket();
+    std::string uploadSamplerData(const std::string &channel_info_proto);
 
     StatisticsService &statistics_;
     std::string bds_executable_sha256_;
@@ -127,6 +131,11 @@ private:
     std::function<std::vector<int>()> ping_samples_provider_;
     std::function<std::map<std::string, NetworkInterfaceSnapshot>()> network_snapshot_provider_;
     std::function<ActivityLog *()> activity_log_provider_;
+
+    std::unique_ptr<ViewerSocket> viewer_socket_;
+    std::int64_t last_viewer_upload_ms_ = 0;
+    std::string bytebin_url_;
+    std::string viewer_url_;
 };
 
 }  // namespace spark

@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   patterns (Knuth multiplicative hash, 64-bit hash multiplier, atomic
   `lock cmpxchg`/`lock xadd`, binary search range-halving) with low-confidence
   `type?` behavior hints.
+- Add `/spark profiler viewer` command to open a live, auto-updating spark
+  viewer during an active execution profile. Connects to the spark WebSocket
+  relay with RSA2048-signed messages and uploads sampler data every 10 seconds.
+  The viewer closes automatically when the profiler stops, is cancelled, or
+  times out.
 
 ### Fixed
 

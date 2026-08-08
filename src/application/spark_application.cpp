@@ -41,7 +41,7 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
 void SparkApplication::registerCommands()
 {
     registry_.registerCommand(
-        "profiler", "start/stop/info/cancel an execution or allocation profile",
+        "profiler", "start/stop/info/cancel/viewer an execution or allocation profile",
         [this](CommandSender &sender, const Arguments &args) {
             const std::string &action = args.subCommand();
             if (action == "start") {
@@ -52,6 +52,9 @@ void SparkApplication::registerCommands()
             }
             else if (action == "cancel") {
                 profiler_.cmdCancel(sender);
+            }
+            else if (action == "viewer") {
+                profiler_.cmdOpen(sender);
             }
             else {
                 profiler_.cmdInfo(sender);

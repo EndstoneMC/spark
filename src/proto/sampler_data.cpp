@@ -569,6 +569,11 @@ std::string buildSamplerData(const ProfileMetadata &meta, const std::vector<Thre
         w.message(7, entry);
     }
 
+    // socket_channel_info (8): SocketChannelInfo for live viewer.
+    if (!meta.socket_channel_info_proto.empty()) {
+        w.message(8, meta.socket_channel_info_proto);
+    }
+
     return out;
 }
 

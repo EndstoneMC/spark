@@ -7,7 +7,10 @@
 #include <vector>
 
 #include "core/util/format.h"
+#include "core/ws/crypto.h"
 #include "core/stats/system_stats.h"
+#include "net/bytebin.h"
+#include "net/gzip.h"
 #include "spark_constants.h"
 
 namespace spark {
@@ -41,12 +44,14 @@ ProfilerService::ProfilerService(StatisticsService &statistics,
       metadata_provider_(metadata_provider),
       notifier_(notifier),
       exporter_(std::move(profile_storage_dir),
-                std::move(bytebin_url),
-                std::move(viewer_url)),
+                bytebin_url,
+                viewer_url),
       background_enabled_(background_enabled),
       background_interval_(background_interval),
       background_thread_grouper_(std::move(background_thread_grouper)),
-      background_thread_dumper_(std::move(background_thread_dumper))
+      background_thread_dumper_(std::move(background_thread_dumper)),
+      bytebin_url_(std::move(bytebin_url)),
+      viewer_url_(std::move(viewer_url))
 {
 }
 
@@ -281,6 +286,7 @@ void ProfilerService::cmdStop(CommandSender &sender, const Arguments &args)
         comment = comments.front();
     }
     sender.sendMessage("{}Stopping the profiler and finalizing results, please wait...", kColorGold);
+    closeViewerSocket();
     finishProfiler(sender.getName(), sender.isPlayer(), save, comment);
     if (background_enabled_) {
         restart_background_after_export_ = true;
@@ -424,6 +430,7 @@ void ProfilerService::cmdCancel(CommandSender &sender)
         return;
     }
     session_type_ = SessionType::None;
+    closeViewerSocket();
     if (failed) {
         sender.sendMessage("{}Failed allocation profile data was discarded: {}", kColorRed,
                            backend_error);
@@ -432,6 +439,85 @@ void ProfilerService::cmdCancel(CommandSender &sender)
     else {
         sender.sendMessage("{}Profiler has been cancelled.", kColorGold);
     }
+}
+
+void ProfilerService::cmdOpen(CommandSender &sender)
+{
+    if (viewer_socket_ && viewer_socket_->isOpen()) {
+        sender.sendMessage("A live viewer is already open.");
+        return;
+    }
+    if (!profiler_.running()) {
+        sender.sendMessage("The profiler isn't running! Start it first with: {}/spark profiler start", kColorGray);
+        return;
+    }
+    if (profiler_.mode() == spark::ProfileMode::Allocation) {
+        sender.sendMessage("Live viewer is not supported for allocation profiles.");
+        return;
+    }
+
+    auto key_pair = Crypto::generateKeyPair();
+    if (key_pair.public_key_x509.empty()) {
+        sender.sendErrorMessage("Failed to generate cryptographic key pair for the live viewer.");
+        return;
+    }
+
+    ViewerSocket::Config config;
+    config.bytesocks_host = config_.bytesocks_host;
+    config.bytebin_url = bytebin_url_;
+    config.viewer_url = viewer_url_;
+    config.user_agent = std::string("endstone-spark/") + kVersion;
+
+    viewer_socket_ = std::make_unique<ViewerSocket>(std::move(config), std::move(key_pair));
+
+    std::string url = viewer_socket_->open(
+        [this](const std::string &channel_info_proto) { return uploadSamplerData(channel_info_proto); });
+
+    if (url.empty()) {
+        sender.sendErrorMessage("Failed to open the live viewer. Check your network connection.");
+        viewer_socket_.reset();
+        return;
+    }
+
+    last_viewer_upload_ms_ = nowMs();
+    sender.sendMessage("{}Live viewer opened!{}", kColorGold, kColorGray);
+    sender.sendMessage("Open it at: {}", url);
+    sender.sendMessage("The viewer updates every 10 seconds while the profiler is running.");
+}
+
+std::string ProfilerService::uploadSamplerData(const std::string &channel_info_proto)
+{
+    ExportContext ctx;
+    ctx.bds_executable_sha256 = bds_executable_sha256_;
+    metadata_provider_.gatherServerMetadata(ctx, nowMs());
+    ctx.statistics = statistics_.snapshot();
+    ctx.system_stats = spark::gatherSystemStats(".");
+    metadata_provider_.gatherWorldMetadata(ctx);
+    if (ping_samples_provider_) {
+        ctx.ping_samples = ping_samples_provider_();
+    }
+    if (network_snapshot_provider_) {
+        ctx.net_snapshots = network_snapshot_provider_();
+    }
+    ctx.socket_channel_info_proto = channel_info_proto;
+
+    std::string body = profiler_.liveExport(ctx);
+    if (body.empty()) {
+        return {};
+    }
+    std::string compressed = gzipCompress(body);
+    UploadResult result = uploadToBytebin(compressed, bytebin_url_, kSamplerContentType,
+                                           std::string("endstone-spark/") + kVersion);
+    return result.ok ? result.key : std::string();
+}
+
+void ProfilerService::closeViewerSocket()
+{
+    if (viewer_socket_) {
+        viewer_socket_->close();
+        viewer_socket_.reset();
+    }
+    last_viewer_upload_ms_ = 0;
 }
 
 void ProfilerService::finishProfiler(const std::string &sender_name, bool sender_is_player,
@@ -547,6 +633,24 @@ void ProfilerService::onTick(double mspt)
     if (!profiler_.running()) {
         return;
     }
+
+    // Live viewer socket lifecycle.
+    if (viewer_socket_) {
+        if (!viewer_socket_->tick()) {
+            viewer_socket_.reset();
+        }
+        else if (viewer_socket_->isOpen()) {
+            auto now = nowMs();
+            if (now - last_viewer_upload_ms_ >= 10000) {
+                viewer_socket_->processWindowRotate(
+                    [this](const std::string &channel_info_proto) {
+                        return uploadSamplerData(channel_info_proto);
+                    });
+                last_viewer_upload_ms_ = now;
+            }
+        }
+    }
+
     std::string backend_error;
     const bool backend_failed = profiler_.backendFailure(backend_error);
     if (!backend_failed) {
@@ -556,6 +660,7 @@ void ProfilerService::onTick(double mspt)
     if (auto_end > 0 && nowMs() >= auto_end) {
         bool save = profiler_.options().save_to_file;
         const bool was_foreground = (session_type_ == SessionType::Foreground);
+        closeViewerSocket();
         finishProfiler(start_sender_name_, start_sender_is_player_, save, std::string());
         if (was_foreground && background_enabled_) {
             restart_background_after_export_ = true;

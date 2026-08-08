@@ -50,6 +50,7 @@ struct ProfileMetadata {
     std::map<std::string, std::string> extra_platform_metadata;
     std::vector<PluginInfo> plugins;
     WorldInfo world;
+    std::string socket_channel_info_proto;  // field 8: SocketChannelInfo (empty for non-live)
 };
 
 // Collect every distinct frame key present in the tree (for batch symbolication).

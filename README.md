@@ -25,6 +25,7 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 | `/spark profiler stop`          | Stop profiling and finalize the profile.                  |
 | `/spark profiler info`          | Show status of the running profiler.                      |
 | `/spark profiler cancel`        | Stop profiling without generating a profile.              |
+| `/spark profiler viewer`        | Open a live, auto-updating spark viewer for the running profile. |
 | `/spark tps`                    | Show rolling TPS, MSPT distributions, and CPU usage.      |
 | `/spark ping`                  | Show player ping RTT statistics (min/median/p95/max).    |
 | `/spark health`                 | Add process and host resources to the performance report.  |

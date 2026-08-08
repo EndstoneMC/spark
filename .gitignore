@@ -13,6 +13,7 @@ CMakeUserPresets.json
 
 # Profiles produced by --save-to-file
 *.sparkprofile
+profile.pb
 
 # Editor / OS
 .idea/

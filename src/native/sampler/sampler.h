@@ -53,6 +53,12 @@ public:
     bool start(const SamplerConfig &config);  // arms capture + spawns threads
     void stop();                              // stops + joins; safe to call once
 
+    // Temporarily stop both service threads without clearing accumulated data
+    // or disarming the capture backend. Allows safe concurrent reads from
+    // exportData() during a live viewer window rotate.
+    void pauseForExport();
+    void resumeAfterExport();
+
     void setTarget(std::uint64_t tid, std::string name = "Server thread")
     {
         target_tid_.store(tid);

@@ -57,6 +57,8 @@ struct ExportContext {
     std::vector<int> ping_samples;
     // Network interface rolling average snapshots (may be empty).
     std::map<std::string, NetworkInterfaceSnapshot> net_snapshots;
+    // Pre-serialized SocketChannelInfo proto for live viewer (empty for normal exports).
+    std::string socket_channel_info_proto;
 };
 
 // Owns either the execution sampler or the platform allocation sampler and turns
@@ -110,6 +112,11 @@ public:
     bool stopSampling(std::string &error);
     void stopSampling();  // compatibility helper that discards the error
     std::string exportData(const ExportContext &ctx) const;
+
+    // Export while the profiler is still running. Pauses sampler threads,
+    // serializes, then resumes. Returns empty string if not running or
+    // if the allocation sampler is active (live export not supported there).
+    std::string liveExport(const ExportContext &ctx);
 
     // Convenience (used by the self-test): stopSampling() + exportData().
     std::string stop(const ExportContext &ctx);
