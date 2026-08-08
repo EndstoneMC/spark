@@ -311,7 +311,7 @@ void testSessionConfigRoundTrip()
 {
     std::vector<std::string> patterns = {"Server thread", "Worker-*"};
     JournalBuffer payload = buildSessionConfigPayload(
-        8000, 50, true, false, true, 2, "Console", false, "test profile", patterns);
+        8000, 50, true, false, true, 2, 1, "Console", false, "test profile", patterns);
     auto record = serializeRecord(RecordType::SessionConfig, 0, payload);
 
     JournalRecord rec;
@@ -327,6 +327,7 @@ void testSessionConfigRoundTrip()
     assert(!sc.regex_threads);
     assert(sc.ignore_sleeping);
     assert(sc.thread_grouper == 2);
+    assert(sc.profile_type == 1);
     assert(sc.creator_name == "Console");
     assert(!sc.creator_is_player);
     assert(sc.comment == "test profile");
@@ -351,7 +352,7 @@ void testRecoveryPlayerReplay()
         std::exit(1);
     }
 
-    writer.journalSessionConfig(4000, 0, false, false, false, 1,
+    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0,
                                 "Console", false, "replay test", {"Server thread"});
     writer.journalModuleDef(0, "bedrock_server");
     writer.journalThreadDef(100, 200, "Server thread");

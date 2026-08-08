@@ -305,6 +305,27 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         }
         config.live_only = options.alloc_live_only;
         config.fail_aggregator_for_testing = options.fail_allocation_aggregator_for_testing;
+        if (!recovery_dir_.empty()) {
+            RecoveryWriter::Config wc;
+            wc.directory = recovery_dir_;
+            wc.session_id = static_cast<std::uint64_t>(session_start_ms);
+            recovery_writer_ = std::make_unique<RecoveryWriter>(std::move(wc));
+            if (recovery_writer_->start()) {
+                allocation_sampler_.setRecoverySink(recovery_writer_.get());
+                recovery_writer_->journalSessionConfig(
+                    static_cast<std::uint32_t>(interval_),
+                    options.only_ticks_over_ms > 0 ? static_cast<std::int32_t>(options.only_ticks_over_ms) : 0,
+                    config.all_threads, config.regex_threads, false,
+                    static_cast<std::uint8_t>(options.thread_grouper),
+                    1,
+                    options.creator_name, options.creator_is_player,
+                    options.comment, options.threads);
+                recovery_writer_->requestFlush();
+            } else {
+                allocation_sampler_.setRecoverySink(nullptr);
+                recovery_writer_.reset();
+            }
+        }
         started = allocation_sampler_.start(config, error);
     }
     else {
@@ -337,6 +358,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
                     options.only_ticks_over_ms > 0 ? static_cast<std::int32_t>(options.only_ticks_over_ms) : 0,
                     config.all_threads, config.regex_threads, config.ignore_sleeping,
                     static_cast<std::uint8_t>(options.thread_grouper),
+                    0,
                     options.creator_name, options.creator_is_player,
                     options.comment, options.threads);
                 recovery_writer_->requestFlush();
@@ -391,6 +413,7 @@ bool Profiler::stopSampling(std::string &error)
             }
             return false;
         }
+        stopRecoveryWriter();
     }
     else {
         sampler_.stop();
@@ -414,6 +437,7 @@ void Profiler::stopRecoveryWriter()
     recovery_writer_->requestFlush();
     recovery_writer_->stop();
     sampler_.setRecoverySink(nullptr);
+    allocation_sampler_.setRecoverySink(nullptr);
     recovery_writer_.reset();
 }
 
@@ -732,6 +756,7 @@ bool Profiler::shutdown(std::string &error)
         if (!allocation_sampler_.shutdown(error)) {
             return false;
         }
+        stopRecoveryWriter();
         running_.store(false);
         return true;
     }

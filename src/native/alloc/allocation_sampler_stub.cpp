@@ -42,6 +42,10 @@ void AllocationSampler::onTick(double)
 {
 }
 
+void AllocationSampler::setRecoverySink(RecoverySink *)
+{
+}
+
 const CallTree &AllocationSampler::tree() const
 {
     return impl_->tree;

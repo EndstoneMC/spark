@@ -169,7 +169,8 @@ inline JournalBuffer buildCleanEndPayload(std::uint64_t timestamp_ns)
 inline JournalBuffer buildSessionConfigPayload(
     std::uint32_t interval_us, std::int32_t only_ticks_over_ms,
     bool all_threads, bool regex_threads, bool ignore_sleeping,
-    std::uint8_t thread_grouper, std::string_view creator_name,
+    std::uint8_t thread_grouper, std::uint8_t profile_type,
+    std::string_view creator_name,
     bool creator_is_player, std::string_view comment,
     const std::vector<std::string> &thread_patterns)
 {
@@ -180,6 +181,7 @@ inline JournalBuffer buildSessionConfigPayload(
     p.u8(regex_threads ? 1 : 0);
     p.u8(ignore_sleeping ? 1 : 0);
     p.u8(thread_grouper);
+    p.u8(profile_type);
     p.str(creator_name);
     p.u8(creator_is_player ? 1 : 0);
     p.str(comment);

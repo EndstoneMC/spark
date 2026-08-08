@@ -177,7 +177,9 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     meta.start_time_ms = result.session_start_ms;
     meta.end_time_ms = nowMs();
     meta.interval = sc.present ? static_cast<std::int32_t>(sc.interval_us) : 4000;
-    meta.mode = ProfileMode::Execution;
+    meta.mode = sc.present && sc.profile_type == 1
+                    ? ProfileMode::Allocation
+                    : ProfileMode::Execution;
     meta.number_of_ticks = static_cast<std::int32_t>(result.tick_count);
     meta.engine_version = std::string("endstone-spark ") + kVersion + " (crash recovery)";
     meta.creator_name = sc.present ? sc.creator_name : "crash recovery";

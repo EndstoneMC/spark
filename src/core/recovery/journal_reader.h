@@ -21,6 +21,7 @@ struct SessionConfig {
     bool regex_threads = false;
     bool ignore_sleeping = false;
     std::uint8_t thread_grouper = 1;  // ByPool
+    std::uint8_t profile_type = 0;    // 0=execution, 1=allocation
     std::string creator_name = "Console";
     bool creator_is_player = false;
     std::string comment;

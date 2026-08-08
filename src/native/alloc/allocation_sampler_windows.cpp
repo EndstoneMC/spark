@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -643,6 +644,9 @@ struct AllocationSampler::Impl {
     std::size_t profile_nodes_remaining = kMaxProfileNodes;
     std::vector<std::uint8_t> tick_decisions;
     std::unordered_map<std::uintptr_t, ModuleId> module_cache;
+
+    RecoverySink *recovery_sink_ = nullptr;
+    std::unordered_set<std::uint64_t> journaled_threads_;
 
     ~Impl() = default;
 
@@ -2157,7 +2161,11 @@ struct AllocationSampler::Impl {
                                                             static_cast<DWORD>(sizeof(path)))
                                      : 0;
             module_path = length > 0 ? std::string(path, length) : std::string("unknown");
+            const std::size_t prev_module_count = modules.size();
             module_id = modules.intern(module_path);
+            if (recovery_sink_ && modules.size() > prev_module_count) {
+                recovery_sink_->journalModuleDef(module_id, module_path);
+            }
             if (module_cache.size() < kMaxModuleCacheEntries) {
                 module_cache.emplace(module_base, module_id);
             }
@@ -2188,6 +2196,14 @@ struct AllocationSampler::Impl {
         }
         sample_count.fetch_add(1, std::memory_order_relaxed);
         sampled_bytes.fetch_add(sample.weight, std::memory_order_relaxed);
+
+        if (recovery_sink_) {
+            if (journaled_threads_.insert(sample.thread_id).second) {
+                recovery_sink_->journalThreadDef(sample.thread_id, sample.thread_id,
+                                                 sample.thread_name);
+            }
+            recovery_sink_->journalSample(sample);
+        }
     }
 
     void flushOrDrop(std::uint64_t tick_id, bool keep)
@@ -2334,6 +2350,9 @@ struct AllocationSampler::Impl {
                 }
                 tick_decisions[static_cast<std::size_t>(tick.tick_id)] = keep ? 2 : 1;
             }
+            if (recovery_sink_) {
+                recovery_sink_->journalTickEvent(tick.tick_id, tick.mspt_ms);
+            }
             flushOrDrop(tick.tick_id, keep);
         }
 
@@ -2395,6 +2414,7 @@ struct AllocationSampler::Impl {
         profile_nodes_exhausted.store(false, std::memory_order_relaxed);
         tick_decisions.clear();
         module_cache.clear();
+        journaled_threads_.clear();
         current_tick.store(0, std::memory_order_relaxed);
         hook_calls.store(0, std::memory_order_relaxed);
         successful_allocation_calls.store(0, std::memory_order_relaxed);
@@ -2655,6 +2675,11 @@ AllocationSampler::~AllocationSampler()
 bool AllocationSampler::start(const AllocationSamplerConfig &config, std::string &error)
 {
     return impl_->startSession(config, error);
+}
+
+void AllocationSampler::setRecoverySink(RecoverySink *sink)
+{
+    impl_->recovery_sink_ = sink;
 }
 
 bool AllocationSampler::stop(std::string &error)

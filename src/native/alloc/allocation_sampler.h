@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "native/sampler/call_tree.h"
+#include "native/sampler/recovery_sink.h"
 #include "native/sampler/sampler.h"
 #include "native/sampler/types.h"
 
@@ -84,6 +85,10 @@ public:
     bool shutdown(std::string &error);
 
     void onTick(double mspt_ms);
+
+    // Sets the recovery sink for crash-safe journaling.  Must be called
+    // before start().  All RecoverySink methods are non-blocking.
+    void setRecoverySink(RecoverySink *sink);
 
     const CallTree &tree() const;
     const std::map<std::uint64_t, ThreadCallTree> &threadTrees() const;
