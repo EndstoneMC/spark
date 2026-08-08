@@ -328,6 +328,50 @@ void testWriterStopJoins()
     std::cout << "testWriterStopJoins: PASS\n";
 }
 
+void writeSegment(const std::filesystem::path &path, std::uint64_t session_id, std::uint32_t segment_number,
+                  std::uint32_t sequence, RecordType type, const JournalBuffer &payload)
+{
+    auto header = serializeFileHeader(session_id, session_id, segment_number);
+    auto record = serializeRecord(type, sequence, payload);
+    std::FILE *file = std::fopen(path.string().c_str(), "wb");
+    assert(file);
+    assert(std::fwrite(header.data(), 1, header.size(), file) == header.size());
+    assert(std::fwrite(record.data(), 1, record.size(), file) == record.size());
+    std::fclose(file);
+}
+
+void testSessionIsolation()
+{
+    auto dir = makeTempDir() / "session-isolation";
+    std::filesystem::create_directories(dir);
+
+    writeSegment(dir / "segment-0.jnl", 200, 0, 0, RecordType::TickEvent, buildTickEventPayload(1, 5.0));
+    writeSegment(dir / "segment-1.jnl", 100, 1, 1, RecordType::CleanEnd, buildCleanEndPayload(1));
+
+    auto result = JournalReader::readSession(dir);
+    assert(result.valid);
+    assert(result.session_id == 200);
+    assert(result.records.size() == 1);
+    assert(!result.has_clean_end);
+
+    RecoveryWriter::Config config;
+    config.directory = dir;
+    config.session_id = 300;
+    RecoveryWriter writer(config);
+    assert(writer.start());
+    writer.journalTickEvent(2, 6.0);
+    writer.stop();
+
+    assert(std::filesystem::exists(dir / "segment-0.jnl"));
+    assert(!std::filesystem::exists(dir / "segment-1.jnl"));
+    result = JournalReader::readSession(dir);
+    assert(result.valid);
+    assert(result.session_id == 300);
+    assert(result.records.size() == 1);
+    assert(!result.has_clean_end);
+    std::cout << "testSessionIsolation: PASS\n";
+}
+
 void testSessionConfigRoundTrip()
 {
     std::vector<std::string> patterns = {"Server thread", "Worker-*"};
@@ -541,6 +585,7 @@ int main()
     testTruncationRecovery();
     testCorruptCRC();
     testWriterStopJoins();
+    testSessionIsolation();
     testSessionConfigRoundTrip();
     testRecoveryPlayerReplay();
     testRecoveryPlayerEmptyJournal();

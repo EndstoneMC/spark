@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "core/config/spark_config.h"
 
@@ -115,12 +116,51 @@ backgroundProfiler = "not-a-bool"
 )");
 
     SparkConfig config(path);
-    assert(config.load());
+    assert(!config.load());
 
     assert(config.viewer_url == "https://spark.lucko.me/");
     assert(config.background_profiler_enabled == true);
 
     std::printf("  [PASS] wrong type\n");
+}
+
+void test_bootstrap_preserves_invalid_file()
+{
+    auto dir = tempDir();
+    auto path = dir / "bootstrap_invalid.toml";
+    cleanup(path);
+    const std::string malformed = "viewerUrl = \"unterminated";
+    writeFile(path, malformed);
+
+    SparkConfig config(path);
+    assert(!config.loadOrCreate());
+    std::ifstream in(path, std::ios::binary);
+    const std::string actual((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    assert(actual == malformed);
+    in.close();
+
+    cleanup(path);
+    SparkConfig missing(path);
+    assert(missing.loadOrCreate());
+    assert(std::filesystem::exists(path));
+    std::printf("  [PASS] bootstrap preserves invalid file\n");
+}
+
+void test_validation()
+{
+    auto dir = tempDir();
+    auto path = dir / "validation.toml";
+    const std::vector<std::string> invalid = {"backgroundProfilerInterval = -1\n",
+                                              "backgroundProfilerInterval = 9223372036854775807\n",
+                                              "backgroundProfilerThreadGrouper = \"invalid\"\n",
+                                              "backgroundProfilerThreadDumper = \"invalid\"\n", "bytebinUrl = \"\"\n"};
+    for (const auto &text : invalid) {
+        writeFile(path, text);
+        SparkConfig config(path);
+        assert(!config.load());
+        assert(config.background_profiler_interval == 10);
+    }
+    std::printf("  [PASS] validation\n");
 }
 
 void test_toml_unknown_field()
@@ -253,11 +293,14 @@ viewerUrl = "https://commented.example.com/"
 
 int main()
 {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("Running SparkConfig tests...\n");
     test_defaults();
     test_toml_valid_override();
     test_toml_invalid();
     test_toml_wrong_type();
+    test_bootstrap_preserves_invalid_file();
+    test_validation();
     test_toml_unknown_field();
     test_toml_partial();
     test_save_creates_toml();

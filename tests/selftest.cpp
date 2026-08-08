@@ -58,6 +58,10 @@
 
 namespace spark {
 
+struct ProfilerTestAccess {
+    static void expire(Profiler &profiler) { profiler.auto_end_time_ms_ = 1; }
+};
+
 struct ProfilerServiceTestAccess {
     static bool start(ProfilerService &service, const ProfilerOptions &options, std::uint64_t main_tid,
                       std::string &error)
@@ -73,6 +77,7 @@ struct ProfilerServiceTestAccess {
     }
 
     static void cancel(ProfilerService &service) { service.profiler_.cancel(); }
+    static void expire(ProfilerService &service) { ProfilerTestAccess::expire(service.profiler_); }
 };
 
 }  // namespace spark
@@ -211,6 +216,18 @@ public:
 class TestNotifier : public spark::ResultNotifier {
 public:
     void notify(const std::string &, const std::string &) override {}
+};
+
+class TestCommandSender : public spark::CommandSender {
+public:
+    std::string getName() const override { return "Console"; }
+    bool isPlayer() const override { return false; }
+    std::vector<std::string> messages;
+    std::vector<std::string> errors;
+
+private:
+    void sendImpl(const std::string &message) override { messages.push_back(message); }
+    void errorImpl(const std::string &message) override { errors.push_back(message); }
 };
 
 #if defined(_WIN32)
@@ -1089,6 +1106,107 @@ bool verifyLiveProfilerWindowStatistics(std::uint64_t worker_tid)
                      windows.size(), statistic_windows.size(), has_graph_fields);
         return false;
     }
+    return true;
+}
+
+bool verifyBackgroundCommandValidation(std::uint64_t worker_tid)
+{
+    const auto profile_directory = std::filesystem::temp_directory_path() / "spark-background-state-selftest";
+    std::filesystem::remove_all(profile_directory);
+    spark::StatisticsService statistics;
+    spark::TrustedViewersState trusted_viewers(std::filesystem::temp_directory_path() / "spark-selftest-viewers.json");
+    TestDispatcher dispatcher;
+    TestMetadataProvider metadata_provider;
+    TestNotifier notifier;
+    spark::ProfilerService service(statistics, {}, profile_directory, {}, {}, {}, true, 10, "by-pool", "default",
+                                   trusted_viewers, dispatcher, metadata_provider, notifier);
+    service.setMainThreadId(worker_tid);
+    service.startBackgroundProfiler();
+    if (!service.running() || !service.isBackgroundRunning()) {
+        std::fprintf(stderr, "background validation: background profiler did not start\n");
+        return false;
+    }
+
+    TestCommandSender sender;
+    service.cmdStart(sender, spark::Arguments({"start", "--interval", "invalid"}));
+    if (sender.errors.empty() || !service.running() || !service.isBackgroundRunning()) {
+        std::fprintf(stderr, "background validation: invalid foreground request stopped background profiling\n");
+        return false;
+    }
+
+    service.cmdStart(sender, spark::Arguments({"start", "--interval", "1"}));
+    if (!service.running() || service.isBackgroundRunning()) {
+        std::fprintf(stderr, "background validation: valid foreground request did not replace background profiling\n");
+        return false;
+    }
+    service.cmdCancel(sender);
+    service.onTick(50.0);
+    if (service.running()) {
+        std::fprintf(stderr, "background validation: cancelled foreground profile restarted background profiling\n");
+        return false;
+    }
+
+    service.startBackgroundProfiler();
+    service.cmdStart(sender, spark::Arguments({"start", "--interval", "1", "--save-to-file"}));
+    service.cmdStop(sender, spark::Arguments({"stop"}));
+    if (!waitForCondition([&service]() { return !service.exporting(); }, std::chrono::seconds(10)) ||
+        !service.running() || !service.isBackgroundRunning()) {
+        std::fprintf(stderr, "background validation: explicit stop did not restore background profiling\n");
+        return false;
+    }
+    service.cmdCancel(sender);
+
+    service.startBackgroundProfiler();
+    service.cmdStart(sender, spark::Arguments({"start", "--interval", "1", "--timeout", "11", "--save-to-file"}));
+    spark::ProfilerServiceTestAccess::expire(service);
+    service.onTick(50.0);
+    if (!waitForCondition([&service]() { return !service.exporting(); }, std::chrono::seconds(10))) {
+        std::fprintf(stderr, "background validation: timed profile did not finish exporting\n");
+        return false;
+    }
+    service.onTick(50.0);
+    if (service.running()) {
+        std::fprintf(stderr, "background validation: timed foreground profile restarted background profiling\n");
+        return false;
+    }
+    std::filesystem::remove_all(profile_directory);
+    return true;
+}
+
+bool verifyRecoveryWriterLifetime(std::uint64_t worker_tid)
+{
+    const auto directory = std::filesystem::temp_directory_path() / "spark-recovery-lifetime-selftest";
+    std::filesystem::remove_all(directory);
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        spark::Profiler profiler;
+        profiler.setRecoveryDirectory(directory);
+        spark::ProfilerOptions options;
+        options.interval_ms = 1;
+        std::string error;
+        if (!profiler.start(options, worker_tid, error)) {
+            std::fprintf(stderr, "recovery lifetime: profiler start failed: %s\n", error.c_str());
+            return false;
+        }
+
+        std::atomic<bool> running{true};
+        std::thread watchdog([&profiler, &running]() {
+            std::uint64_t sequence = 1;
+            while (running.load(std::memory_order_acquire)) {
+                profiler.journalStallBegin(sequence, sequence);
+                profiler.journalStallEnd(sequence, sequence + 1);
+                ++sequence;
+            }
+        });
+        if (!profiler.cancel(error)) {
+            running.store(false, std::memory_order_release);
+            watchdog.join();
+            std::fprintf(stderr, "recovery lifetime: profiler cancel failed: %s\n", error.c_str());
+            return false;
+        }
+        running.store(false, std::memory_order_release);
+        watchdog.join();
+    }
+    std::filesystem::remove_all(directory);
     return true;
 }
 
@@ -2414,6 +2532,7 @@ int main(int argc, char **argv)
         !verifyStatisticsService() || !verifySystemResourceStats() || !verifyWorldGaugeStatistics() ||
         !verifyWorldGaugeAbsentWhenNotRecorded() || !verifyThreadDiscovery() || !verifyMultiThreadSerialization() ||
         !verifyStatisticsSerialization() || !verifyLiveProfilerWindowStatistics(g_worker_tid.load()) ||
+        !verifyBackgroundCommandValidation(g_worker_tid.load()) || !verifyRecoveryWriterLifetime(g_worker_tid.load()) ||
         !verifyUploadFailure() || !verifyCaptureLifecycle() ||
 #if defined(_WIN32)
         !verifyWindowsThreadActivityDetection() ||

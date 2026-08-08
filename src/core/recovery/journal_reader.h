@@ -67,7 +67,8 @@ public:
     static JournalReadResult readSession(const std::filesystem::path &directory);
 
     // Reads a single segment file.  Exposed for testing.
-    static bool readSegment(const std::filesystem::path &path, JournalReadResult &result);
+    static bool readSegment(const std::filesystem::path &path, JournalReadResult &result,
+                            std::optional<std::uint32_t> expected_segment = std::nullopt);
 };
 
 }  // namespace spark

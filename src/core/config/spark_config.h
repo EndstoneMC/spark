@@ -16,6 +16,10 @@ public:
     // values and the method returns false.
     bool load();
 
+    // Loads an existing file, or creates the default template when absent.
+    // Existing invalid files are never rewritten.
+    bool loadOrCreate();
+
     // Writes the default config.toml template with explanatory comments.
     // Only for first-time creation; never called during normal operation.
     bool save() const;

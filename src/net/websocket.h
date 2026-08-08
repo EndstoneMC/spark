@@ -11,6 +11,8 @@
 
 namespace spark {
 
+struct WebSocketClientTestAccess;
+
 // WebSocket client on libcurl's WS API. Sends are enqueued to a background thread
 // to avoid concurrent curl handle access.
 class WebSocketClient {
@@ -37,6 +39,8 @@ public:
     void setCloseCallback(CloseCallback cb) { close_cb_ = std::move(cb); }
 
 private:
+    friend struct WebSocketClientTestAccess;
+
     void runReceiveLoop();
 
     std::string channel_id_;

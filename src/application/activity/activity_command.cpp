@@ -1,6 +1,7 @@
 #include "application/activity/activity_command.h"
 
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -61,27 +62,35 @@ void ActivityCommand::cmdActivity(CommandSender &sender, const Arguments &args)
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
             .count();
 
-    // Simple pagination: 4 entries per page.
-    constexpr int kPerPage = 4;
-    int page = 1;
-    auto page_flag = args.intFlag("page");
-    if (args.boolFlag("page") && page_flag && *page_flag >= 1) {
-        page = static_cast<int>(*page_flag);
+    constexpr std::size_t kPerPage = 4;
+    const std::size_t total = entries.size();
+    const std::size_t pages = 1 + (total - 1) / kPerPage;
+
+    std::size_t page = 1;
+    if (args.boolFlag("page")) {
+        const auto page_flag = args.intFlag("page");
+        if (!page_flag || *page_flag < 1) {
+            sender.sendErrorMessage("The page must be a positive whole number.");
+            return;
+        }
+        if (static_cast<std::uintmax_t>(*page_flag) > pages) {
+            sender.sendMessage("{}Unknown page selected. {} total pages.{}", kColorGold, pages, kColorGray);
+            return;
+        }
+        page = static_cast<std::size_t>(*page_flag);
     }
 
-    int total = static_cast<int>(entries.size());
-    int pages = (total + kPerPage - 1) / kPerPage;
     if (page > pages) {
         sender.sendMessage("{}Unknown page selected. {} total pages.{}", kColorGold, pages, kColorGray);
         return;
     }
 
-    int start = (page - 1) * kPerPage;
-    int end = std::min(start + kPerPage, total);
+    const std::size_t start = (page - 1) * kPerPage;
+    const std::size_t end = std::min(start + kPerPage, total);
 
     sender.sendMessage("{}Recent spark activity {}(page {}/{}){}:", kColorGold, kColorGray, page, pages, kColorReset);
 
-    for (int i = start; i < end; ++i) {
+    for (std::size_t i = start; i < end; ++i) {
         const Activity &a = entries[i];
         sender.sendMessage("{}> {}#{} {}- {} {}{}", kColorDarkGray, kColorWhite, i + 1, kColorDarkGray, kColorYellow,
                            a.type, kColorReset);

@@ -87,8 +87,14 @@ public:
     // Sets the directory for crash-safe recovery journals.
     void setRecoveryDirectory(std::filesystem::path dir) { profiler_.setRecoveryDirectory(std::move(dir)); }
 
-    // Returns the active recovery writer, or nullptr if no execution session is running.
-    RecoveryWriter *recoveryWriter() const { return profiler_.recoveryWriter(); }
+    void journalStallBegin(std::uint64_t detected_ns, std::uint64_t last_tick_ns)
+    {
+        profiler_.journalStallBegin(detected_ns, last_tick_ns);
+    }
+    void journalStallEnd(std::uint64_t detected_ns, std::uint64_t recovered_ns)
+    {
+        profiler_.journalStallEnd(detected_ns, recovered_ns);
+    }
 
     // Starts the background profiler if configured. Called on enable.
     void startBackgroundProfiler();
@@ -102,6 +108,7 @@ private:
         Foreground
     };
     bool background_started_ = false;
+    bool background_suppressed_ = false;
     void sendAllocationHookCoverage(CommandSender &sender);
     void finishProfiler(const std::string &sender_name, bool sender_is_player, bool save, const std::string &comment);
     void runExport();

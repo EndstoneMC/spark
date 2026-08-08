@@ -53,13 +53,8 @@ public:
             *this, getServer(), bds_executable_sha256_);
 
         spark::SparkConfig config(getDataFolder() / "config.toml");
-        if (!config.load()) {
-            if (!config.lastError().empty()) {
-                getLogger().warning("Failed to load spark config: {}", config.lastError());
-            }
-            if (!config.save()) {
-                getLogger().warning("Failed to write default spark config: {}", config.lastError());
-            }
+        if (!config.loadOrCreate()) {
+            getLogger().warning("Failed to initialize spark config: {}", config.lastError());
         }
 
         spark::TrustedViewersState trusted_viewers(getDataFolder() / "trusted-viewers.json");

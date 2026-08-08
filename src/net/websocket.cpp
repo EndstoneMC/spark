@@ -121,14 +121,12 @@ void WebSocketClient::send(const std::string &message)
 
 void WebSocketClient::close()
 {
-    if (!running_.exchange(false)) {
-        return;
-    }
+    const bool was_running = running_.exchange(false);
     send_cv_.notify_all();
-    if (thread_.joinable()) {
+    if (thread_.joinable() && thread_.get_id() != std::this_thread::get_id()) {
         thread_.join();
     }
-    if (close_cb_) {
+    if (was_running && close_cb_) {
         close_cb_();
     }
 }

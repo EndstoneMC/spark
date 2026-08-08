@@ -314,20 +314,21 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
             RecoveryWriter::Config wc;
             wc.directory = recovery_dir_;
             wc.session_id = static_cast<std::uint64_t>(session_start_ms);
-            recovery_writer_ = std::make_unique<RecoveryWriter>(std::move(wc));
-            if (recovery_writer_->start()) {
-                allocation_sampler_.setRecoverySink(recovery_writer_.get());
-                recovery_writer_->journalSessionConfig(
+            auto writer = std::make_unique<RecoveryWriter>(std::move(wc));
+            if (writer->start()) {
+                writer->journalSessionConfig(
                     static_cast<std::uint32_t>(interval_),
                     options.only_ticks_over_ms > 0 ? static_cast<std::int32_t>(options.only_ticks_over_ms) : 0,
                     config.all_threads, config.regex_threads, false, static_cast<std::uint8_t>(options.thread_grouper),
                     1, config.live_only, options.creator_name, options.creator_is_player, options.comment,
                     options.threads);
-                recovery_writer_->requestFlush();
+                writer->requestFlush();
+                std::lock_guard<std::mutex> lock(recovery_mutex_);
+                recovery_writer_ = std::move(writer);
+                allocation_sampler_.setRecoverySink(recovery_writer_.get());
             }
             else {
                 allocation_sampler_.setRecoverySink(nullptr);
-                recovery_writer_.reset();
             }
         }
         started = allocation_sampler_.start(config, error);
@@ -354,20 +355,21 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
             RecoveryWriter::Config wc;
             wc.directory = recovery_dir_;
             wc.session_id = static_cast<std::uint64_t>(session_start_ms);
-            recovery_writer_ = std::make_unique<RecoveryWriter>(std::move(wc));
-            if (recovery_writer_->start()) {
-                sampler_.setRecoverySink(recovery_writer_.get());
-                recovery_writer_->journalSessionConfig(
+            auto writer = std::make_unique<RecoveryWriter>(std::move(wc));
+            if (writer->start()) {
+                writer->journalSessionConfig(
                     static_cast<std::uint32_t>(interval_),
                     options.only_ticks_over_ms > 0 ? static_cast<std::int32_t>(options.only_ticks_over_ms) : 0,
                     config.all_threads, config.regex_threads, config.ignore_sleeping,
                     static_cast<std::uint8_t>(options.thread_grouper), 0, false, options.creator_name,
                     options.creator_is_player, options.comment, options.threads);
-                recovery_writer_->requestFlush();
+                writer->requestFlush();
+                std::lock_guard<std::mutex> lock(recovery_mutex_);
+                recovery_writer_ = std::move(writer);
+                sampler_.setRecoverySink(recovery_writer_.get());
             }
             else {
                 sampler_.setRecoverySink(nullptr);
-                recovery_writer_.reset();
             }
         }
         started = sampler_.start(config);
@@ -378,6 +380,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
     }
 
     if (!started) {
+        stopRecoveryWriter();
         return false;
     }
 
@@ -435,15 +438,37 @@ void Profiler::stopSampling()
 
 void Profiler::stopRecoveryWriter()
 {
-    if (!recovery_writer_) {
+    std::unique_ptr<RecoveryWriter> writer;
+    {
+        std::lock_guard<std::mutex> lock(recovery_mutex_);
+        sampler_.setRecoverySink(nullptr);
+        allocation_sampler_.setRecoverySink(nullptr);
+        writer = std::move(recovery_writer_);
+    }
+    if (!writer) {
         return;
     }
-    recovery_writer_->journalCleanEnd();
-    recovery_writer_->requestFlush();
-    recovery_writer_->stop();
-    sampler_.setRecoverySink(nullptr);
-    allocation_sampler_.setRecoverySink(nullptr);
-    recovery_writer_.reset();
+    writer->journalCleanEnd();
+    writer->requestFlush();
+    writer->stop();
+}
+
+void Profiler::journalStallBegin(std::uint64_t detected_ns, std::uint64_t last_tick_ns)
+{
+    std::lock_guard<std::mutex> lock(recovery_mutex_);
+    if (recovery_writer_) {
+        recovery_writer_->journalStallBegin(detected_ns, last_tick_ns);
+        recovery_writer_->requestFlush();
+    }
+}
+
+void Profiler::journalStallEnd(std::uint64_t detected_ns, std::uint64_t recovered_ns)
+{
+    std::lock_guard<std::mutex> lock(recovery_mutex_);
+    if (recovery_writer_) {
+        recovery_writer_->journalStallEnd(detected_ns, recovered_ns);
+        recovery_writer_->requestFlush();
+    }
 }
 
 const CallTree &Profiler::activeTree() const

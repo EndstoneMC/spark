@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <toml.hpp>
@@ -9,6 +10,8 @@
 namespace spark {
 
 namespace {
+
+constexpr std::int64_t kMaxBackgroundProfilerIntervalMs = 1000;
 
 std::string escapeString(std::string_view s)
 {
@@ -83,37 +86,68 @@ bool SparkConfig::load()
         return false;
     }
 
-    // Strings
-    if (auto v = result["viewerUrl"].value<std::string>()) {
-        viewer_url = *v;
+    auto viewer_url = result["viewerUrl"].value<std::string>().value_or(this->viewer_url);
+    auto bytebin_url = result["bytebinUrl"].value<std::string>().value_or(this->bytebin_url);
+    auto bytesocks_host = result["bytesocksHost"].value<std::string>().value_or(this->bytesocks_host);
+    auto background_enabled = result["backgroundProfiler"].value<bool>().value_or(background_profiler_enabled);
+    auto grouper =
+        result["backgroundProfilerThreadGrouper"].value<std::string>().value_or(background_profiler_thread_grouper);
+    auto dumper =
+        result["backgroundProfilerThreadDumper"].value<std::string>().value_or(background_profiler_thread_dumper);
+    auto broadcast = result["disableResponseBroadcast"].value<bool>().value_or(disable_response_broadcast);
+    auto interval = result["backgroundProfilerInterval"].value<std::int64_t>().value_or(background_profiler_interval);
+
+    const auto invalid_type = [&result](std::string_view key, auto tag) {
+        using Value = decltype(tag);
+        return result[key] && !result[key].value<Value>();
+    };
+    if (invalid_type("viewerUrl", std::string{}) || invalid_type("bytebinUrl", std::string{}) ||
+        invalid_type("bytesocksHost", std::string{}) || invalid_type("backgroundProfiler", bool{}) ||
+        invalid_type("backgroundProfilerThreadGrouper", std::string{}) ||
+        invalid_type("backgroundProfilerThreadDumper", std::string{}) ||
+        invalid_type("disableResponseBroadcast", bool{}) ||
+        invalid_type("backgroundProfilerInterval", std::int64_t{})) {
+        last_error_ = "Invalid type for a spark configuration value - using defaults";
+        return false;
     }
-    if (auto v = result["bytebinUrl"].value<std::string>()) {
-        bytebin_url = *v;
+    if (viewer_url.empty() || bytebin_url.empty() || bytesocks_host.empty()) {
+        last_error_ = "Spark endpoint values must not be empty - using defaults";
+        return false;
     }
-    if (auto v = result["bytesocksHost"].value<std::string>()) {
-        bytesocks_host = *v;
+    if (interval < 1 || interval > kMaxBackgroundProfilerIntervalMs || interval > (std::numeric_limits<int>::max)()) {
+        last_error_ = "backgroundProfilerInterval must be between 1 and 1000 milliseconds - using defaults";
+        return false;
     }
-    if (auto v = result["backgroundProfilerThreadGrouper"].value<std::string>()) {
-        background_profiler_thread_grouper = *v;
+    if (grouper != "by-pool" && grouper != "by-name" && grouper != "as-one") {
+        last_error_ = "Invalid backgroundProfilerThreadGrouper - using defaults";
+        return false;
     }
-    if (auto v = result["backgroundProfilerThreadDumper"].value<std::string>()) {
-        background_profiler_thread_dumper = *v;
+    if (dumper != "default" && dumper != "all") {
+        last_error_ = "Invalid backgroundProfilerThreadDumper - using defaults";
+        return false;
     }
 
-    // Booleans
-    if (auto v = result["backgroundProfiler"].value<bool>()) {
-        background_profiler_enabled = *v;
-    }
-    if (auto v = result["disableResponseBroadcast"].value<bool>()) {
-        disable_response_broadcast = *v;
-    }
-
-    // Integers
-    if (auto v = result["backgroundProfilerInterval"].value<int64_t>()) {
-        background_profiler_interval = static_cast<int>(*v);
-    }
+    this->viewer_url = std::move(viewer_url);
+    this->bytebin_url = std::move(bytebin_url);
+    this->bytesocks_host = std::move(bytesocks_host);
+    background_profiler_enabled = background_enabled;
+    background_profiler_interval = static_cast<int>(interval);
+    background_profiler_thread_grouper = std::move(grouper);
+    background_profiler_thread_dumper = std::move(dumper);
+    disable_response_broadcast = broadcast;
 
     return true;
+}
+
+bool SparkConfig::loadOrCreate()
+{
+    std::error_code error;
+    const bool exists = std::filesystem::exists(file_, error);
+    if (error) {
+        last_error_ = "Unable to inspect config file: " + error.message();
+        return false;
+    }
+    return exists ? load() : save();
 }
 
 void SparkConfig::writeTemplate(std::ostream &out) const
@@ -133,7 +167,7 @@ void SparkConfig::writeTemplate(std::ostream &out) const
     out << "# Whether the background profiler should run\n";
     out << "backgroundProfiler = " << (background_profiler_enabled ? "true" : "false") << "\n";
     out << "\n";
-    out << "# Interval (in seconds) between background profiles\n";
+    out << "# Background profiler sampling interval in milliseconds\n";
     out << "backgroundProfilerInterval = " << background_profiler_interval << "\n";
     out << "\n";
     out << "# Thread grouping strategy for the background profiler\n";

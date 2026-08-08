@@ -60,18 +60,6 @@ void ProfilerService::shutdown()
 
 void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
 {
-    if (profiler_.running()) {
-        if (session_type_ == SessionType::Background) {
-            sender.sendMessage("Stopping the background profiler before starting... please wait");
-            std::string cancel_error;
-            profiler_.cancel(cancel_error);
-            session_type_ = SessionType::None;
-        }
-        else {
-            cmdInfo(sender);
-            return;
-        }
-    }
     if (exporting_.load()) {
         sender.sendMessage("The profiler has stopped; results are still being finalized.");
         return;
@@ -182,6 +170,21 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
         return;
     }
 
+    if (profiler_.running()) {
+        if (session_type_ != SessionType::Background) {
+            cmdInfo(sender);
+            return;
+        }
+        sender.sendMessage("Stopping the background profiler before starting... please wait");
+        std::string cancel_error;
+        if (!profiler_.cancel(cancel_error)) {
+            sender.sendErrorMessage("Couldn't stop the background profiler safely: {}", cancel_error);
+            return;
+        }
+        session_type_ = SessionType::None;
+        background_started_ = false;
+    }
+
     std::string error;
     if (!profiler_.start(options, tid, error)) {
         sender.sendErrorMessage("Couldn't start the profiler: {}", error);
@@ -190,6 +193,7 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
     start_sender_name_ = sender.getName();
     start_sender_is_player_ = sender.isPlayer();
     session_type_ = SessionType::Foreground;
+    background_suppressed_ = background_enabled_;
 
     if (options.alloc) {
         if (options.alloc_live_only) {
@@ -267,10 +271,10 @@ void ProfilerService::cmdStop(CommandSender &sender, const Arguments &args)
     }
     sender.sendMessage("{}Stopping the profiler and finalizing results, please wait...", kColorGold);
     closeViewerSocket();
-    finishProfiler(sender.getName(), sender.isPlayer(), save, comment);
     if (background_enabled_) {
         restart_background_after_export_ = true;
     }
+    finishProfiler(sender.getName(), sender.isPlayer(), save, comment);
 }
 
 void ProfilerService::cmdInfo(CommandSender &sender)
@@ -407,6 +411,8 @@ void ProfilerService::cmdCancel(CommandSender &sender)
         return;
     }
     session_type_ = SessionType::None;
+    background_started_ = false;
+    background_suppressed_ = background_enabled_;
     closeViewerSocket();
     if (failed) {
         sender.sendMessage("{}Failed allocation profile data was discarded: {}", kColorRed, backend_error);
@@ -606,8 +612,13 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
         // The export thread will not run, so restore the background profiler
         // here instead of leaving it permanently stopped.
         background_started_ = false;
+        if (restart_background_after_export_) {
+            restart_background_after_export_ = false;
+            background_suppressed_ = false;
+        }
         return;
     }
+    session_type_ = SessionType::None;
 
     pending_ctx_ = ExportContext{};
     pending_ctx_.bds_executable_sha256 = bds_executable_sha256_;
@@ -678,7 +689,11 @@ void ProfilerService::announceResult()
 
     if (restart_background_after_export_) {
         restart_background_after_export_ = false;
-        if (!startBackgroundSession()) {
+        background_suppressed_ = false;
+        if (startBackgroundSession()) {
+            background_started_ = true;
+        }
+        else {
             // Allow the onTick() retry path to pick the background profiler up
             // again; startBackgroundSession() only clears the started flag.
             background_started_ = false;
@@ -688,7 +703,8 @@ void ProfilerService::announceResult()
 
 void ProfilerService::onTick(double mspt)
 {
-    if (!background_started_ && background_enabled_ && main_tid_ != 0 && !profiler_.running() && !exporting_.load()) {
+    if (!background_started_ && !background_suppressed_ && background_enabled_ && main_tid_ != 0 &&
+        !profiler_.running() && !exporting_.load()) {
         auto now = nowMs();
         if (now >= next_background_retry_ms_) {
             if (startBackgroundSession()) {
@@ -736,17 +752,14 @@ void ProfilerService::onTick(double mspt)
     std::int64_t auto_end = profiler_.autoEndTimeMs();
     if (auto_end > 0 && nowMs() >= auto_end) {
         bool save = profiler_.options().save_to_file;
-        const bool was_foreground = (session_type_ == SessionType::Foreground);
         closeViewerSocket();
         finishProfiler(start_sender_name_, start_sender_is_player_, save, std::string());
-        if (was_foreground && background_enabled_) {
-            restart_background_after_export_ = true;
-        }
     }
 }
 
 void ProfilerService::startBackgroundProfiler()
 {
+    background_suppressed_ = false;
     if (!background_enabled_) {
         return;
     }

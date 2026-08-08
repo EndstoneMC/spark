@@ -36,6 +36,12 @@ set_target_properties(spark_activity_log_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_activity_log_test COMMAND spark_activity_log_test)
 
+add_executable(spark_activity_command_test application/activity/activity_command_test.cpp)
+target_link_libraries(spark_activity_command_test PRIVATE spark_application)
+set_target_properties(spark_activity_command_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_activity_command_test COMMAND spark_activity_command_test)
+
 add_executable(spark_thread_grouper_test core/profiler/thread_grouper_test.cpp)
 target_link_libraries(spark_thread_grouper_test PRIVATE spark_core)
 set_target_properties(spark_thread_grouper_test PROPERTIES
@@ -60,6 +66,12 @@ set_target_properties(spark_crypto_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_crypto_test COMMAND spark_crypto_test)
 
+add_executable(spark_websocket_lifecycle_test net/websocket_lifecycle_test.cpp)
+target_link_libraries(spark_websocket_lifecycle_test PRIVATE spark_core)
+set_target_properties(spark_websocket_lifecycle_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_websocket_lifecycle_test COMMAND spark_websocket_lifecycle_test)
+
 add_executable(spark_stall_watchdog_test core/recovery/stall_watchdog_test.cpp)
 target_link_libraries(spark_stall_watchdog_test PRIVATE spark_core)
 set_target_properties(spark_stall_watchdog_test PROPERTIES
@@ -71,6 +83,12 @@ target_link_libraries(spark_journal_test PRIVATE spark_core)
 set_target_properties(spark_journal_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_journal_test COMMAND spark_journal_test)
+
+add_executable(spark_recovery_save_failure_test application/recovery/recovery_save_failure_test.cpp)
+target_link_libraries(spark_recovery_save_failure_test PRIVATE spark_application)
+set_target_properties(spark_recovery_save_failure_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_recovery_save_failure_test COMMAND spark_recovery_save_failure_test)
 
 add_executable(spark_world_region_test core/util/world_region_test.cpp)
 target_link_libraries(spark_world_region_test PRIVATE spark_core)

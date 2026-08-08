@@ -36,19 +36,13 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256, std::files
     watchdog_.setSamplerHeartbeat(&profiler_.samplerHeartbeat());
     watchdog_.setAggregatorHeartbeat(&profiler_.aggregatorHeartbeat());
     watchdog_.setStallCallback([this](bool stalled) {
-        RecoveryWriter *writer = profiler_.recoveryWriter();
-        if (!writer) {
-            return;
-        }
         const std::uint64_t now = Heartbeat::monotonicNowNs();
         if (stalled) {
             stall_begin_ns_ = now;
-            writer->journalStallBegin(now, server_heartbeat_.last_ns.load(std::memory_order_acquire));
-            writer->requestFlush();
+            profiler_.journalStallBegin(now, server_heartbeat_.last_ns.load(std::memory_order_acquire));
         }
         else {
-            writer->journalStallEnd(stall_begin_ns_, now);
-            writer->requestFlush();
+            profiler_.journalStallEnd(stall_begin_ns_, now);
         }
     });
 }
@@ -176,22 +170,32 @@ void SparkApplication::recoverPreviousSession()
         return;
     }
 
-    // Compress and save.
+    bool saved_profile = false;
     try {
         ProfileFileResult saved = saveProfileToDirectory(fs::path(recovery_dir_).parent_path(),
                                                          profile.serialized_proto, profile.session_start_ms);
         if (saved.ok) {
+            saved_profile = true;
             notifier_.notify("crash recovery", "Recovered profile saved to " + saved.path.string() + " - open it at " +
                                                    config_.viewer_url);
         }
+        else {
+            notifier_.notify("crash recovery",
+                             "Failed to save recovered profile; recovery journal retained: " + saved.error);
+        }
     }
-    catch (const std::exception &) {
-        // Best-effort: delete the journal regardless so we don't loop.
+    catch (const std::exception &error) {
+        notifier_.notify("crash recovery",
+                         "Failed to save recovered profile; recovery journal retained: " + std::string(error.what()));
     }
 
-    // Clear the recovery directory for the new session.
-    fs::remove_all(recovery_dir_, ec);
-    fs::create_directories(recovery_dir_, ec);
+    if (saved_profile) {
+        fs::remove_all(recovery_dir_, ec);
+        fs::create_directories(recovery_dir_, ec);
+    }
+    else {
+        profiler_.setRecoveryDirectory({});
+    }
 }
 
 }  // namespace spark

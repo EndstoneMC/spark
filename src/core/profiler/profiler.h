@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,8 @@
 #include "native/sampler/sampler.h"
 
 namespace spark {
+
+struct ProfilerTestAccess;
 
 inline constexpr int kMaxSamplingIntervalMs = 1000;
 
@@ -119,15 +122,16 @@ public:
     // RecoveryWriter that journals module/thread/sample/tick records.
     void setRecoveryDirectory(std::filesystem::path dir) { recovery_dir_ = std::move(dir); }
 
-    // Returns the active recovery writer, or nullptr if no session is running
-    // or the session is not execution mode.
-    RecoveryWriter *recoveryWriter() const { return recovery_writer_.get(); }
+    void journalStallBegin(std::uint64_t detected_ns, std::uint64_t last_tick_ns);
+    void journalStallEnd(std::uint64_t detected_ns, std::uint64_t recovered_ns);
 
     // Unconditionally closes the active backend and destroys native hook
     // trampolines. Must run before the plugin module is unloaded.
     bool shutdown(std::string &error);
 
 private:
+    friend struct ProfilerTestAccess;
+
     const CallTree &activeTree() const;
     const ModuleTable &activeModules() const;
     std::uint64_t activeNumberOfTicks() const;
@@ -143,6 +147,7 @@ private:
     std::int64_t auto_end_time_ms_ = -1;
     std::int32_t interval_ = 4000;  // execution: microseconds; allocation: bytes
     std::filesystem::path recovery_dir_;
+    mutable std::mutex recovery_mutex_;
     std::unique_ptr<RecoveryWriter> recovery_writer_;
 };
 

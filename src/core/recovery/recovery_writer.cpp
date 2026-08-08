@@ -1,6 +1,7 @@
 #include "core/recovery/recovery_writer.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <utility>
@@ -52,6 +53,32 @@ bool RecoveryWriter::start()
         enabled_.store(false);
         running_.store(false);
         return false;
+    }
+
+    for (const auto &entry : std::filesystem::directory_iterator(config_.directory, ec)) {
+        if (ec) {
+            enabled_.store(false);
+            running_.store(false);
+            return false;
+        }
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        const std::string name = entry.path().filename().string();
+        if (name.size() <= 12 || name.starts_with("segment-") == false || name.ends_with(".jnl") == false) {
+            continue;
+        }
+        const std::string_view number(name.data() + 8, name.size() - 12);
+        std::uint32_t parsed = 0;
+        const auto [end, error] = std::from_chars(number.data(), number.data() + number.size(), parsed);
+        if (error == std::errc{} && end == number.data() + number.size()) {
+            std::filesystem::remove(entry.path(), ec);
+            if (ec) {
+                enabled_.store(false);
+                running_.store(false);
+                return false;
+            }
+        }
     }
 
     if (!openSegment(0)) {

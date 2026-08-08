@@ -3,6 +3,7 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <set>
@@ -242,7 +243,8 @@ bool JournalRecord::asSessionConfig(SessionConfig &config) const
 
 // --- JournalReader ---
 
-bool JournalReader::readSegment(const std::filesystem::path &path, JournalReadResult &result)
+bool JournalReader::readSegment(const std::filesystem::path &path, JournalReadResult &result,
+                                std::optional<std::uint32_t> expected_segment)
 {
     std::FILE *f = std::fopen(path.string().c_str(), "rb");
     if (!f) {
@@ -299,10 +301,17 @@ bool JournalReader::readSegment(const std::filesystem::path &path, JournalReadRe
         return false;
     }
 
+    if (expected_segment && segment_number != *expected_segment) {
+        return false;
+    }
+
     if (!result.valid) {
         result.session_id = session_id;
         result.created_ns = created_ns;
         result.valid = true;
+    }
+    else if (result.session_id != session_id) {
+        return false;
     }
 
     // Records.
@@ -363,6 +372,11 @@ bool JournalReader::readSegment(const std::filesystem::path &path, JournalReadRe
         rec.sequence = seq;
         rec.payload.assign(payload_sv.data(), payload_sv.data() + payload_sv.size());
 
+        if (!result.records.empty() && rec.sequence != result.records.back().sequence + 1) {
+            result.corrupt_records++;
+            return false;
+        }
+
         if (rec.type == RecordType::CleanEnd) {
             result.has_clean_end = true;
         }
@@ -397,18 +411,23 @@ JournalReadResult JournalReader::readSession(const std::filesystem::path &direct
             continue;
         }
 
-        std::string num_str = name.substr(8, name.size() - 12);
-        try {
-            std::uint32_t num = static_cast<std::uint32_t>(std::stoul(num_str));
+        const std::string_view num_str(name.data() + 8, name.size() - 12);
+        std::uint32_t num = 0;
+        const auto [end, error] = std::from_chars(num_str.data(), num_str.data() + num_str.size(), num);
+        if (error == std::errc{} && end == num_str.data() + num_str.size()) {
             segments.emplace(num, entry.path());
-        }
-        catch (...) {
-            continue;
         }
     }
 
+    std::optional<std::uint32_t> expected_segment;
     for (const auto &[num, path] : segments) {
-        readSegment(path, result);
+        if (!expected_segment) {
+            expected_segment = num;
+        }
+        if (num != *expected_segment || !readSegment(path, result, num)) {
+            break;
+        }
+        ++*expected_segment;
     }
 
     return result;
