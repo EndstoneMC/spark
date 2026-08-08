@@ -217,12 +217,12 @@ void HealthCommand::cmdHealth(CommandSender &sender, const Arguments &args)
             if (!snap.rx_bytes_per_second.present || !snap.tx_bytes_per_second.present) {
                 continue;
             }
-            sender.sendMessage("  {}{}: {} {}{}/s{}  {}{}/s{}",
-                               kColorGray, name,
-                               kColorGreen, formatBytes(static_cast<std::uint64_t>(snap.rx_bytes_per_second.mean)),
-                               kColorGray, kColorGreen,
-                               formatBytes(static_cast<std::uint64_t>(snap.tx_bytes_per_second.mean)),
-                               kColorGray);
+            std::string net_msg = "  " + kColorGray + name + ": " +
+                               kColorGreen + formatBytes(static_cast<std::uint64_t>(snap.rx_bytes_per_second.mean)) +
+                               "/s" + kColorGray + "  " +
+                               kColorGreen + formatBytes(static_cast<std::uint64_t>(snap.tx_bytes_per_second.mean)) +
+                               "/s" + kColorGray;
+            sender.sendMessage(net_msg);
         }
     }
 

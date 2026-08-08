@@ -1,6 +1,7 @@
 #include "application/command/command_registry.h"
 
 #include <utility>
+#include <exception>
 
 #include "core/util/format.h"
 #include "spark_constants.h"
@@ -30,7 +31,13 @@ bool CommandRegistry::dispatch(CommandSender &sender,
                     return true;
                 }
                 std::vector<std::string> rest(tokens.begin() + 1, tokens.end());
-                cmd.handler(sender, Arguments(rest));
+                try {
+                    cmd.handler(sender, Arguments(rest));
+                } catch (const std::exception &e) {
+                    sender.sendErrorMessage("Internal error: {}", e.what());
+                } catch (...) {
+                    sender.sendErrorMessage("Internal error: unknown exception");
+                }
                 return true;
             }
         }
