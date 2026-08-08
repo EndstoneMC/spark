@@ -60,6 +60,7 @@ ProfilerService::ProfilerService(StatisticsService &statistics,
 
 ProfilerService::~ProfilerService()
 {
+    stopViewerWorker();
     if (export_thread_.joinable()) {
         export_thread_.join();
     }
@@ -67,6 +68,7 @@ ProfilerService::~ProfilerService()
 
 void ProfilerService::shutdown()
 {
+    stopViewerWorker();
     if (export_thread_.joinable()) {
         export_thread_.join();
     }
@@ -490,9 +492,52 @@ void ProfilerService::cmdOpen(CommandSender &sender)
     }
 
     last_viewer_upload_ms_ = nowMs();
+    startViewerWorker();
     sender.sendMessage("{}Live viewer opened!{}", kColorGold, kColorGray);
     sender.sendMessage("Open it at: {}", url);
     sender.sendMessage("The viewer updates every 10 seconds while the profiler is running.");
+}
+
+void ProfilerService::startViewerWorker()
+{
+    if (viewer_worker_running_.load()) return;
+    viewer_worker_running_.store(true);
+    viewer_update_requested_.store(false);
+    viewer_update_thread_ = std::thread([this]() { viewerUpdateLoop(); });
+}
+
+void ProfilerService::stopViewerWorker()
+{
+    if (!viewer_worker_running_.exchange(false)) return;
+    viewer_update_cv_.notify_all();
+    if (viewer_update_thread_.joinable()) {
+        viewer_update_thread_.join();
+    }
+}
+
+void ProfilerService::viewerUpdateLoop()
+{
+    while (viewer_worker_running_.load()) {
+        {
+            std::unique_lock<std::mutex> lock(viewer_update_mutex_);
+            viewer_update_cv_.wait_for(lock, std::chrono::seconds(1),
+                [this] {
+                    return !viewer_worker_running_.load() || viewer_update_requested_.load();
+                });
+        }
+        if (!viewer_worker_running_.load()) break;
+        if (!viewer_update_requested_.exchange(false)) continue;
+
+        // Snapshot the raw pointer; stopViewerWorker() guarantees the worker
+        // is joined before viewer_socket_ is reset, so this is safe.
+        ViewerSocket *vs = viewer_socket_.get();
+        if (!vs || !vs->isOpen()) continue;
+
+        std::string bytebin_key = uploadSamplerData(std::string());
+        if (!bytebin_key.empty() && viewer_worker_running_.load()) {
+            vs->sendUpdate(bytebin_key);
+        }
+    }
 }
 
 std::string ProfilerService::uploadSamplerData(const std::string &channel_info_proto)
@@ -523,6 +568,7 @@ std::string ProfilerService::uploadSamplerData(const std::string &channel_info_p
 
 void ProfilerService::closeViewerSocket()
 {
+    stopViewerWorker();
     if (viewer_socket_) {
         viewer_socket_->close();
         viewer_socket_.reset();
@@ -667,8 +713,20 @@ void ProfilerService::onTick(double mspt)
 {
     if (!background_started_ && background_enabled_ && main_tid_ != 0 &&
         !profiler_.running() && !exporting_.load()) {
-        if (startBackgroundSession()) {
-            background_started_ = true;
+        auto now = nowMs();
+        if (now >= next_background_retry_ms_) {
+            if (startBackgroundSession()) {
+                background_started_ = true;
+                background_retry_delay_s_ = 0;
+            } else {
+                // Exponential backoff: 5s -> 15s -> 30s -> 60s (cap).
+                if (background_retry_delay_s_ == 0) {
+                    background_retry_delay_s_ = 5;
+                } else if (background_retry_delay_s_ < 60) {
+                    background_retry_delay_s_ = std::min(60, background_retry_delay_s_ * 2);
+                }
+                next_background_retry_ms_ = now + background_retry_delay_s_ * 1000;
+            }
         }
     }
 
@@ -679,15 +737,14 @@ void ProfilerService::onTick(double mspt)
     // Live viewer socket lifecycle.
     if (viewer_socket_) {
         if (!viewer_socket_->tick()) {
+            stopViewerWorker();
             viewer_socket_.reset();
         }
         else if (viewer_socket_->isOpen()) {
             auto now = nowMs();
             if (now - last_viewer_upload_ms_ >= 10000) {
-                viewer_socket_->processWindowRotate(
-                    [this](const std::string &channel_info_proto) {
-                        return uploadSamplerData(channel_info_proto);
-                    });
+                viewer_update_requested_.store(true);
+                viewer_update_cv_.notify_one();
                 last_viewer_upload_ms_ = now;
             }
         }

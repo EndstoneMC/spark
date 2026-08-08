@@ -2,10 +2,12 @@
 #define SPARK_APPLICATION_PROFILER_PROFILER_SERVICE_H
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -100,6 +102,9 @@ private:
     void announceResult();
     bool startBackgroundSession();
     void closeViewerSocket();
+    void startViewerWorker();
+    void stopViewerWorker();
+    void viewerUpdateLoop();
     std::string uploadSamplerData(const std::string &channel_info_proto);
 
     StatisticsService &statistics_;
@@ -137,6 +142,19 @@ private:
 
     std::unique_ptr<ViewerSocket> viewer_socket_;
     std::int64_t last_viewer_upload_ms_ = 0;
+
+    // Viewer update worker: moves live-export + gzip + HTTP upload off the
+    // main thread so 10-second viewer rotations don't stall server ticks.
+    std::thread viewer_update_thread_;
+    std::mutex viewer_update_mutex_;
+    std::condition_variable viewer_update_cv_;
+    std::atomic<bool> viewer_worker_running_{false};
+    std::atomic<bool> viewer_update_requested_{false};
+
+    // Background profiler retry backoff.
+    std::int64_t next_background_retry_ms_ = 0;
+    int background_retry_delay_s_ = 0;
+
     std::string bytebin_url_;
     std::string viewer_url_;
     SparkConfig &config_;

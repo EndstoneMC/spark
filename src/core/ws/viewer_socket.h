@@ -41,7 +41,14 @@ public:
     std::string open(const UploadCallback &upload);
 
     // Called on window rotation: upload new data and send the payload ID.
+    // The upload callback runs on the caller's thread.  For the main-thread
+    // path, prefer enqueueUpdate() + sendUpdate() to move I/O off-thread.
     void processWindowRotate(const UploadCallback &upload);
+
+    // Send a pre-uploaded payload ID to all connected viewers.  Thread-safe
+    // against tick(); designed to be called from a worker thread after the
+    // upload completes.
+    void sendUpdate(const std::string &bytebin_key);
 
     // Close the socket and signal the viewer.
     void close();
@@ -76,6 +83,7 @@ private:
     const std::int64_t open_time_ms_;
     std::atomic<std::int64_t> last_ping_ms_{0};
     std::string last_payload_id_;
+    std::mutex payload_mutex_;  // protects last_payload_id_ across threads
     std::string channel_id_;
 
     IsKeyTrustedCallback is_key_trusted_;

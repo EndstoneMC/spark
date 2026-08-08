@@ -92,7 +92,18 @@ void ViewerSocket::processWindowRotate(const UploadCallback &upload)
         return;
     }
 
-    last_payload_id_ = bytebin_key;
+    sendUpdate(bytebin_key);
+}
+
+void ViewerSocket::sendUpdate(const std::string &bytebin_key)
+{
+    if (!open_.load() || !ws_ || !ws_->isOpen()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(payload_mutex_);
+        last_payload_id_ = bytebin_key;
+    }
     std::string msg = encodeServerUpdateSamplerData(bytebin_key, key_pair_.private_key_pkcs8);
     ws_->send(msg);
 }
@@ -140,10 +151,15 @@ bool ViewerSocket::tick()
                     pending_keys_[packet.connect.client_id] = packet.public_key;
                 }
                 int state = trusted ? 0 : 1;  // 0=ACCEPTED, 1=UNTRUSTED
+                std::string payload_id;
+                {
+                    std::lock_guard<std::mutex> lock(payload_mutex_);
+                    payload_id = last_payload_id_;
+                }
                 ws_->send(encodeServerConnectResponse(
                     packet.connect.client_id, state,
                     10, 10,  // sampler_interval, statistics_interval
-                    last_payload_id_,
+                    payload_id,
                     key_pair_.private_key_pkcs8));
                 break;
             }
@@ -182,10 +198,15 @@ void ViewerSocket::sendClientTrusted(const std::string &client_id)
     if (!open_.load() || !ws_ || !ws_->isOpen()) {
         return;
     }
+    std::string payload_id;
+    {
+        std::lock_guard<std::mutex> lock(payload_mutex_);
+        payload_id = last_payload_id_;
+    }
     ws_->send(encodeServerConnectResponse(
         client_id, 0,  // 0=ACCEPTED
         10, 10,
-        last_payload_id_,
+        payload_id,
         key_pair_.private_key_pkcs8));
 }
 
