@@ -87,17 +87,23 @@ Endstone uses **clang-format** and **clang-tidy** for code quality enforcement.
 
 - Based on Microsoft style with Stroustrup braces
 - Naming conventions:
-    - Classes/Structs/Enums: `CamelCase`
-    - Methods: `camelBack`
-    - Private/protected members: `lower_case_` (trailing underscore)
-    - Local variables/parameters: `lower_case`
-    - Macros: `UPPER_CASE`
+  - Classes/Structs/Enums: `CamelCase`
+  - Methods: `camelBack`
+  - Private/protected members: `lower_case_` (trailing underscore)
+  - Local variables/parameters: `lower_case`
+  - Macros: `UPPER_CASE`
 
 ### Python
 
 **Configuration:**
 
 - Line length: 120 characters
+
+### Comments (all languages)
+- Keep comments terse and human. Default to no comment; when one is warranted, one short line.
+- No multi-line explanations, rationale, design-decision narration, or parenthetical asides.
+- Do not leave "LLM notes" — comments that explain why a change was made, reference the development process, or restate what the code plainly does.
+- Match the comment density and verbosity of the surrounding or original code (e.g. a port stays as terse as its upstream).
 
 ## Submitting Changes
 
@@ -123,6 +129,7 @@ Append best-effort RTTI or string-based hints to unresolved frames
 Display guesses alongside the original module-relative address
 Leave successfully symbolicated frames and non-BDS modules untouched
 ```
+
 ### Platform safety
 
 - Sampling must stay off the BDS tick hot path except for the minimum bounded capture operation.
@@ -136,35 +143,38 @@ Leave successfully symbolicated frames and non-BDS modules untouched
 ### Source Structure
 
 - `src/plugin.cpp` - Endstone plugin lifecycle and command dispatch (thin bootstrap)
-- `src/application/` - platform-independent business orchestration: command registry, profiler service, profile exporter, health and tick-monitor commands, platform capability interfaces
-- `src/core/` - platform-independent services: profiler, stats, command parsing, util
-- `src/native/` - native backend: sampler, symbol guesser, allocation hooks
-- `src/platform/endstone/` - thin Endstone platform adapters: command sender, thread dispatcher, metadata provider, result notifier
+- `src/application/` - platform-independent business orchestration: command registry, profiler service, profile exporter, health, activity, and tick-monitor commands, platform capability interfaces
+- `src/core/` - platform-independent services: profiler, statistics, command parsing, config (TOML), recovery journal, activity log, WebSocket/crypto, server-properties metadata, utilities
+- `src/native/` - native backend: execution sampler, symbol guesser, allocation hooks
+- `src/platform/endstone/` - thin Endstone platform adapters: command sender, thread dispatcher, metadata provider (including world gauges and ping), result notifier
 - `src/proto/` - spark protobuf serialization
-- `src/net/` - gzip compression, bytebin upload, and local profile persistence
+- `src/net/` - gzip compression, bytebin upload, WebSocket transport, and local profile persistence
 - `proto/` - upstream spark protocol references
 - `tests/` - offline, synthetic, and platform-specific tests
-- `tools/` - release changelog tooling
+- `tools/` - release changelog tooling and profile evaluator
+- `docs/` - architecture and phase status documentation
 
 ### Key Components
 
 1. **Execution sampler:** Captures selected native thread stacks at a bounded interval. Linux uses `SIGPROF` with cpptrace's safe raw-trace path; Windows suspends a target thread and walks it with the native stack APIs.
-
 2. **Allocation profiler:** Samples allocation stacks by requested bytes. Windows uses funchook for supported UCRT and heap entry points; Linux redirects supported ELF allocator imports. Hook callbacks enqueue bounded records for later processing.
-
 3. **Profiler pipeline:** Aggregates samples into per-thread call trees, attaches statistics and platform metadata, serializes the spark protobuf, compresses it, then uploads or writes a `.sparkprofile` file.
-
 4. **Symbolization:** Normal platform symbols have priority. Unresolved frames in the BDS main executable may receive conservative runtime guesses from unwind metadata, RTTI, vtables, thunks, and decoded string references. Guesses retain the RVA and identify their evidence source.
-
-5. **Statistics service:** Maintains bounded rolling TPS, MSPT, CPU, and system-resource histories independently of an active profile.
-
-6. **Application layer:** Platform-independent business orchestration in `src/application/`. `SparkApplication` owns all services and dispatches ticks and commands. `ProfilerService` manages profiler sessions and exports. Three focused capability interfaces (`MainThreadDispatcher`, `ProfileMetadataProvider`, `ResultNotifier`) abstract platform dependencies without a god-Platform.
-
-7. **Platform adapters:** `src/platform/endstone/` provides thin Endstone implementations of the capability interfaces and `CommandSender`. `plugin.cpp` is a 143-line bootstrap that creates adapters and delegates to `SparkApplication`.
+5. **Statistics service:** Maintains bounded rolling TPS, MSPT, CPU, player-count, and world-gauge histories independently of an active profile.
+6. **Application layer:** Platform-independent business orchestration in `src/application/`. `SparkApplication` owns all services and dispatches ticks and commands. `ProfilerService` manages profiler sessions, background profiling, live viewer connections, and exports. Three focused capability interfaces (`MainThreadDispatcher`, `ProfileMetadataProvider`, `ResultNotifier`) abstract platform dependencies without a god-Platform.
+7. **Platform adapters:** `src/platform/endstone/` provides thin Endstone implementations of the capability interfaces and `CommandSender`. `plugin.cpp` remains a thin bootstrap responsible for registration and lifecycle wiring.
+8. **Crash recovery:** `RecoveryWriter` journals module, thread, sample, and tick records to segmented files via a bounded lock-free queue. On startup, `RecoveryPlayer` replays the journal to reconstruct and export a profile from a crashed or stalled session.
+9. **Stall watchdog:** `StallWatchdog` runs on an independent thread, monitoring the main-thread heartbeat. It fires stall-begin and stall-end callbacks to trigger recovery without calling Endstone APIs or stopping the profiler.
+10. **Live viewer:** `ViewerSocket` manages a WebSocket connection to the spark live viewer, uploading initial sampler data and pushing payload IDs on window rotation. A dedicated worker thread moves gzip and HTTP upload off the main thread.
+11. **Trusted viewer / crypto:** RSA2048-SHA256 signing and verification (`Crypto`) authenticates live viewer clients. `TrustedViewersState` persists approved public keys separately from the user-owned config file.
+12. **Activity log:** `ActivityLog` maintains a bounded circular log of profiler and health-report outputs, persisted as JSON.
+13. **Persistent configuration:** `SparkConfig` loads and writes a TOML config file with safe defaults. `TrustedViewersState` manages trusted viewer keys in a separate JSON file.
+14. **Network and ping statistics:** `NetworkMonitor` polls per-interface RX/TX counters with rolling averages. `PingStatistics` collects player ping on a fixed interval with a rolling median.
+15. **Server metadata:** `server_properties` parses `server.properties` with a strict allowlist, emitting only safe performance-relevant keys as JSON for the viewer's `server_configurations` field.
 
 ### Dependencies
 
-Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, and libcurl. CMake fetches Endstone's public plugin API and funchook `v1.1.3`; funchook's bundled distorm decoder is used by the x86-64 symbol guessers on both supported platforms, while the funchook hook library itself is linked only on Windows.
+Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, libcurl, and tomlplusplus. Linux additionally requires OpenSSL for crypto. CMake fetches Endstone's public plugin API and funchook `v1.1.3`; funchook's bundled distorm decoder is used by the x86-64 symbol guessers on both supported platforms, while the funchook hook library itself is linked only on Windows.
 
 ## Native Symbol Guessing
 
@@ -179,7 +189,7 @@ Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, and libcurl. CMak
 ## Profile Compatibility and Privacy
 
 - Preserve compatibility with the spark protobuf schema and viewer behavior documented in `README.md`.
-- Profile metadata may include the BDS executable hash and version, but must not include server-owner paths, configuration, world data, credentials, or executable contents.
+- Profile metadata may include the BDS executable hash and version, strict allowlisted `server.properties` fields, and aggregate world entity/chunk counts. It must not include the level seed, credentials, secrets, tokens, passwords, private keys, server-owner paths, arbitrary configuration, or executable contents.
 - Never commit generated `.sparkprofile` files, BDS binaries, PDBs, IDA databases, crash dumps, benchmark output, logs, or local deployment configuration.
 
 ## Release Workflow
