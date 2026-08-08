@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -446,6 +447,88 @@ bool verifyCaptureLifecycle()
     }
     return true;
 }
+
+#if defined(__linux__)
+bool verifyDelayedSignalLifecycle()
+{
+    using namespace std::chrono_literals;
+
+    auto start_blocked_target = [](std::atomic<std::uint64_t> &tid, std::atomic<bool> &unblock,
+                                   std::atomic<bool> &unblocked, std::atomic<bool> &run) {
+        return std::thread([&tid, &unblock, &unblocked, &run] {
+            sigset_t signals;
+            sigemptyset(&signals);
+            sigaddset(&signals, SIGPROF);
+            pthread_sigmask(SIG_BLOCK, &signals, nullptr);
+            tid.store(static_cast<std::uint64_t>(::syscall(SYS_gettid)), std::memory_order_release);
+            while (!unblock.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            pthread_sigmask(SIG_UNBLOCK, &signals, nullptr);
+            unblocked.store(true, std::memory_order_release);
+            while (run.load(std::memory_order_acquire)) {
+                hotOuter();
+            }
+        });
+    };
+
+    std::atomic<std::uint64_t> tid{0};
+    std::atomic<bool> unblock{false};
+    std::atomic<bool> unblocked{false};
+    std::atomic<bool> run{true};
+    std::thread target = start_blocked_target(tid, unblock, unblocked, run);
+    if (!waitForCondition([&] { return tid.load(std::memory_order_acquire) != 0; }, 1s) || !spark::Capture::arm()) {
+        unblock.store(true, std::memory_order_release);
+        run.store(false, std::memory_order_release);
+        target.join();
+        return false;
+    }
+    spark::CaptureBuffer first;
+    if (spark::Capture::captureThread(tid.load(std::memory_order_acquire), first)) {
+        std::fprintf(stderr, "delayed signal: blocked delivery unexpectedly completed\n");
+        spark::Capture::disarm();
+        unblock.store(true, std::memory_order_release);
+        run.store(false, std::memory_order_release);
+        target.join();
+        return false;
+    }
+    unblock.store(true, std::memory_order_release);
+    if (!waitForCondition([&] { return unblocked.load(std::memory_order_acquire); }, 1s)) {
+        spark::Capture::disarm();
+        run.store(false, std::memory_order_release);
+        target.join();
+        return false;
+    }
+    spark::CaptureBuffer second;
+    const bool recovered = spark::Capture::captureThread(tid.load(std::memory_order_acquire), second);
+    run.store(false, std::memory_order_release);
+    target.join();
+    spark::Capture::disarm();
+    if (!recovered || second.count == 0) {
+        std::fprintf(stderr, "delayed signal: stale delivery prevented the next capture\n");
+        return false;
+    }
+
+    tid.store(0, std::memory_order_release);
+    unblock.store(false, std::memory_order_release);
+    unblocked.store(false, std::memory_order_release);
+    run.store(true, std::memory_order_release);
+    target = start_blocked_target(tid, unblock, unblocked, run);
+    if (!waitForCondition([&] { return tid.load(std::memory_order_acquire) != 0; }, 1s) || !spark::Capture::arm()) {
+        unblock.store(true, std::memory_order_release);
+        run.store(false, std::memory_order_release);
+        target.join();
+        return false;
+    }
+    spark::CaptureBuffer pending;
+    const bool timed_out = !spark::Capture::captureThread(tid.load(std::memory_order_acquire), pending);
+    spark::Capture::disarm();
+    unblock.store(true, std::memory_order_release);
+    run.store(false, std::memory_order_release);
+    target.join();
+    return timed_out;
+}
+#endif
 
 #if defined(_WIN32)
 bool verifyWindowsThreadActivityDetection()
@@ -2770,6 +2853,9 @@ int main(int argc, char **argv)
         !verifyLiveProfilerWindowStatistics(g_worker_tid.load()) || !verifyAsyncNetworkCommands(g_worker_tid.load()) ||
         !verifyBackgroundCommandValidation(g_worker_tid.load()) || !verifyRecoveryWriterLifetime(g_worker_tid.load()) ||
         !verifyUploadFailure() || !verifyCaptureLifecycle() ||
+#if defined(__linux__)
+        !verifyDelayedSignalLifecycle() ||
+#endif
 #if defined(_WIN32)
         !verifyWindowsThreadActivityDetection() ||
 #endif

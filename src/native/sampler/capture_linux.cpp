@@ -20,21 +20,58 @@ namespace {
 
 constexpr int kSignal = SIGPROF;
 
-// Only one capture is ever in flight (the sampler thread serializes), so a single
-// target slot + semaphore is a sufficient, async-signal-safe handshake.
-std::atomic<CaptureBuffer *> g_target{nullptr};
+constexpr std::uint64_t kPhaseMask = 3;
+constexpr std::uint64_t kRequested = 1;
+constexpr std::uint64_t kCapturing = 2;
+constexpr std::uint64_t kComplete = 3;
+
+std::atomic<std::uint64_t> g_state{0};
+static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
+std::atomic<std::uint32_t> g_next_token{1};
+CaptureBuffer g_result;
 sem_t g_done;
 std::atomic<bool> g_armed{false};
 struct sigaction g_previous_action{};
 
-void handler(int, siginfo_t *, void *)
+std::uint64_t captureState(std::uint32_t token, std::uint64_t phase)
 {
-    CaptureBuffer *buf = g_target.load(std::memory_order_acquire);
-    if (buf != nullptr) {
-        // The only async-signal-safe work: walk the stack into a fixed buffer.
-        buf->count = cpptrace::safe_generate_raw_trace(buf->ips, CaptureBuffer::kMax, 0);
-        sem_post(&g_done);  // async-signal-safe
+    return (static_cast<std::uint64_t>(token) << 2) | phase;
+}
+
+void handler(int, siginfo_t *info, void *)
+{
+    if (info == nullptr || info->si_code != SI_QUEUE) {
+        return;
     }
+    const auto token = static_cast<std::uint32_t>(info->si_value.sival_int);
+    std::uint64_t expected = captureState(token, kRequested);
+    if (!g_state.compare_exchange_strong(expected, captureState(token, kCapturing), std::memory_order_acq_rel)) {
+        return;
+    }
+    g_result.count = cpptrace::safe_generate_raw_trace(g_result.ips, CaptureBuffer::kMax, 0);
+    g_state.store(captureState(token, kComplete), std::memory_order_release);
+    sem_post(&g_done);
+}
+
+timespec deadlineAfterOneSecond()
+{
+    timespec deadline{};
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    ++deadline.tv_sec;
+    return deadline;
+}
+
+bool waitForCompletion(const timespec &deadline, std::uint64_t complete_state)
+{
+    while (g_state.load(std::memory_order_acquire) != complete_state) {
+        if (sem_timedwait(&g_done, &deadline) == 0) {
+            continue;
+        }
+        if (errno != EINTR) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -78,8 +115,22 @@ void Capture::disarm()
     if (!g_armed.exchange(false)) {
         return;
     }
-    g_target.store(nullptr, std::memory_order_release);
+    std::uint64_t state = g_state.load(std::memory_order_acquire);
+    if ((state & kPhaseMask) == kRequested) {
+        g_state.compare_exchange_strong(state, 0, std::memory_order_acq_rel);
+    }
+    struct sigaction ignored{};
+    ignored.sa_handler = SIG_IGN;
+    sigemptyset(&ignored.sa_mask);
+    sigaction(kSignal, &ignored, nullptr);
+    while ((g_state.load(std::memory_order_acquire) & kPhaseMask) == kCapturing) {
+        const timespec deadline = deadlineAfterOneSecond();
+        if (sem_timedwait(&g_done, &deadline) != 0 && errno != EINTR) {
+            break;
+        }
+    }
     sigaction(kSignal, &g_previous_action, nullptr);
+    g_state.store(0, std::memory_order_release);
     sem_destroy(&g_done);
 }
 
@@ -88,26 +139,49 @@ bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
     if (!g_armed.load()) {
         return false;
     }
-    out.count = 0;
-    g_target.store(&out, std::memory_order_release);
+    if ((g_state.load(std::memory_order_acquire) & kPhaseMask) == kCapturing) {
+        return false;
+    }
+    while (sem_trywait(&g_done) == 0) {
+    }
+    std::uint32_t token = g_next_token.fetch_add(1, std::memory_order_relaxed);
+    if (token == 0) {
+        token = g_next_token.fetch_add(1, std::memory_order_relaxed);
+    }
+    const std::uint64_t requested_state = captureState(token, kRequested);
+    const std::uint64_t capturing_state = captureState(token, kCapturing);
+    const std::uint64_t complete_state = captureState(token, kComplete);
+    g_result.count = 0;
+    g_state.store(requested_state, std::memory_order_release);
 
-    if (syscall(SYS_tgkill, getpid(), static_cast<pid_t>(tid), kSignal) != 0) {
-        g_target.store(nullptr, std::memory_order_release);
+    siginfo_t info{};
+    info.si_signo = kSignal;
+    info.si_code = SI_QUEUE;
+    info.si_pid = getpid();
+    info.si_uid = getuid();
+    info.si_value.sival_int = static_cast<int>(token);
+    if (syscall(SYS_rt_tgsigqueueinfo, getpid(), static_cast<pid_t>(tid), kSignal, &info) != 0) {
+        g_state.store(0, std::memory_order_release);
         return false;
     }
 
-    struct timespec ts{};
-    clock_gettime(CLOCK_REALTIME, &ts);
-    ts.tv_sec += 1;  // generous timeout; a stuck target must not hang the sampler
-    while (sem_timedwait(&g_done, &ts) != 0) {
-        if (errno == EINTR) {
-            continue;
+    const timespec deadline = deadlineAfterOneSecond();
+    if (!waitForCompletion(deadline, complete_state)) {
+        std::uint64_t expected = requested_state;
+        if (g_state.compare_exchange_strong(expected, 0, std::memory_order_acq_rel)) {
+            return false;
         }
-        g_target.store(nullptr, std::memory_order_release);
+        if (expected == capturing_state) {
+            if (!waitForCompletion(deadlineAfterOneSecond(), complete_state)) {
+                return false;
+            }
+        }
+        g_state.store(0, std::memory_order_release);
         return false;
     }
 
-    g_target.store(nullptr, std::memory_order_release);
+    out = g_result;
+    g_state.store(0, std::memory_order_release);
     return out.count > 0;
 }
 
