@@ -18,8 +18,11 @@
 namespace spark {
 
 HealthCommand::HealthCommand(StatisticsService &statistics,
-                             ProfileMetadataProvider &metadata_provider)
-    : statistics_(statistics), metadata_provider_(metadata_provider)
+                             ProfileMetadataProvider &metadata_provider,
+                             std::string bytebin_url,
+                             std::string viewer_url)
+    : statistics_(statistics), metadata_provider_(metadata_provider),
+      bytebin_url_(std::move(bytebin_url)), viewer_url_(std::move(viewer_url))
 {
     // Lazily create PingStatistics if the platform provides a PlayerPingProvider.
     if (auto *ping_provider = metadata_provider_.playerPingProvider()) {
@@ -293,11 +296,11 @@ void HealthCommand::uploadHealthReport(CommandSender &sender)
     try {
         std::string body = buildHealthData(data);
         std::string compressed = gzipCompress(body);
-        UploadResult result = uploadToBytebin(compressed, kBytebinUrl,
+        UploadResult result = uploadToBytebin(compressed, bytebin_url_,
                                               kHealthContentType,
                                               std::string("endstone-spark/") + kVersion);
         if (result.ok) {
-            std::string url = std::string(kViewerUrl) + result.key;
+            std::string url = viewer_url_ + result.key;
             sender.sendMessage("{}Health report uploaded!{} {}",
                                kColorGold, kColorGray, url);
             if (activity_log_provider_) {

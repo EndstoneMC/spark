@@ -30,6 +30,8 @@ public:
     ProfilerService(StatisticsService &statistics,
                     std::string bds_executable_sha256,
                     std::filesystem::path profile_storage_dir,
+                    std::string bytebin_url,
+                    std::string viewer_url,
                     MainThreadDispatcher &dispatcher,
                     ProfileMetadataProvider &metadata_provider,
                     ResultNotifier &notifier);

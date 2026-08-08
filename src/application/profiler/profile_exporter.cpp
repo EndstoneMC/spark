@@ -23,8 +23,12 @@ std::int64_t nowMs()
 
 }  // namespace
 
-ProfileExporter::ProfileExporter(std::filesystem::path storage_dir)
-    : storage_dir_(std::move(storage_dir))
+ProfileExporter::ProfileExporter(std::filesystem::path storage_dir,
+                                 std::string bytebin_url,
+                                 std::string viewer_url)
+    : storage_dir_(std::move(storage_dir)),
+      bytebin_url_(std::move(bytebin_url)),
+      viewer_url_(std::move(viewer_url))
 {
 }
 
@@ -42,17 +46,17 @@ ProfileExporter::Result ProfileExporter::exportProfile(const Profiler &profiler,
             if (saved.ok) {
                 result.outcome = ExportOutcome::Saved;
                 result.message = "Saved to " + saved.path.string() +
-                                 " - open it at " + kViewerUrl;
+                                 " - open it at " + viewer_url_;
             } else {
                 result.message = "Failed to save the profile: " + saved.error;
             }
         } else {
             UploadResult upload_result =
-                uploadToBytebin(compressed, kBytebinUrl, kSamplerContentType,
+                uploadToBytebin(compressed, bytebin_url_, kSamplerContentType,
                                 std::string("endstone-spark/") + kVersion);
             if (upload_result.ok) {
                 result.outcome = ExportOutcome::Uploaded;
-                result.message = std::string(kViewerUrl) + upload_result.key;
+                result.message = viewer_url_ + upload_result.key;
             } else {
                 ProfileFileResult saved =
                     saveProfileToDirectory(storage_dir_, compressed, nowMs());
@@ -61,7 +65,7 @@ ProfileExporter::Result ProfileExporter::exportProfile(const Profiler &profiler,
                     result.message = "Upload failed (" + upload_result.error +
                                      "), so the profile was saved to " +
                                      saved.path.string() +
-                                     " - open it at " + kViewerUrl;
+                                     " - open it at " + viewer_url_;
                 } else {
                     result.message = "Upload failed (" + upload_result.error +
                                      ") and automatic local save failed (" +

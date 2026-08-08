@@ -17,6 +17,7 @@
 #include "application/command/command_sender.h"
 #include "application/spark_application.h"
 #include "core/command/arguments.h"
+#include "core/config/spark_config.h"
 #include "core/stats/executable_hash.h"
 #include "net/profile_file.h"
 #include "platform/endstone/adapters.h"
@@ -50,10 +51,21 @@ public:
             *this, getServer(), bds_executable_sha256_);
         notifier_ = std::make_unique<spark::endstone_adapter::EndstoneNotifier>(*this, getServer());
 
+        spark::SparkConfig config(getDataFolder() / "config.json");
+        if (!config.load()) {
+            if (!config.lastError().empty()) {
+                getLogger().warning("Failed to load spark config: {}", config.lastError());
+            }
+            if (!config.save()) {
+                getLogger().warning("Failed to write default spark config: {}", config.lastError());
+            }
+        }
+
         app_ = std::make_unique<spark::SparkApplication>(
             bds_executable_sha256_,
             spark::profileStorageDirectory(getDataFolder()),
             getDataFolder() / "activity.json",
+            std::move(config),
             *dispatcher_, *metadata_provider_, *notifier_);
 
         app_->statistics().start();

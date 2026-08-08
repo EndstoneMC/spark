@@ -249,6 +249,24 @@ covered entry point, `VirtualAlloc`/`VirtualFree`, and `mmap`/`munmap` are not
 sampled. A Linux module loaded and unloaded entirely between rescans can escape
 coverage.
 
+## Configuration
+
+Spark reads a `config.json` file from the plugin data directory on startup. If the
+file does not exist, spark writes one with default values. Missing or malformed
+fields fall back to defaults; unknown fields are silently ignored.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `viewerUrl` | string | `https://spark.lucko.me/` | Base URL for the spark viewer. |
+| `bytebinUrl` | string | `https://spark-usercontent.lucko.me/` | Bytebin upload endpoint for profiles and health reports. |
+| `bytesocksHost` | string | `spark-usersockets.lucko.me` | WebSocket host for the live viewer. |
+| `backgroundProfiler` | bool | `true` | Whether to auto-start a background execution profiler. |
+| `backgroundProfilerInterval` | int | `10` | Background profiler sampling interval in milliseconds. |
+| `backgroundProfilerThreadGrouper` | string | `by-pool` | Thread grouping mode: `by-pool`, `by-name`, or `as-one`. |
+| `backgroundProfilerThreadDumper` | string | `default` | Thread selection: `default` (server thread) or `all`. |
+| `disableResponseBroadcast` | bool | `false` | Disable broadcasting profiler responses to all operators. |
+| `trustedKeys` | string[] | `[]` | Base64-encoded trusted viewer public keys. |
+
 ## Building
 
 > CMake fetches upstream funchook `v1.1.3` because its bundled distorm decoder is

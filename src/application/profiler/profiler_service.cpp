@@ -26,6 +26,8 @@ std::int64_t nowMs()
 ProfilerService::ProfilerService(StatisticsService &statistics,
                                  std::string bds_executable_sha256,
                                  std::filesystem::path profile_storage_dir,
+                                 std::string bytebin_url,
+                                 std::string viewer_url,
                                  MainThreadDispatcher &dispatcher,
                                  ProfileMetadataProvider &metadata_provider,
                                  ResultNotifier &notifier)
@@ -34,7 +36,9 @@ ProfilerService::ProfilerService(StatisticsService &statistics,
       dispatcher_(dispatcher),
       metadata_provider_(metadata_provider),
       notifier_(notifier),
-      exporter_(std::move(profile_storage_dir))
+      exporter_(std::move(profile_storage_dir),
+                std::move(bytebin_url),
+                std::move(viewer_url))
 {
 }
 

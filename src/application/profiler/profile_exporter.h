@@ -24,7 +24,9 @@ public:
         std::string message;
     };
 
-    explicit ProfileExporter(std::filesystem::path storage_dir);
+    explicit ProfileExporter(std::filesystem::path storage_dir,
+                             std::string bytebin_url,
+                             std::string viewer_url);
 
     // Performs protobuf export, gzip compression, and upload-or-save.
     // If save_to_file is true, saves locally; otherwise uploads to bytebin
@@ -34,6 +36,8 @@ public:
 
 private:
     std::filesystem::path storage_dir_;
+    std::string bytebin_url_;
+    std::string viewer_url_;
 };
 
 }  // namespace spark

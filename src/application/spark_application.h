@@ -14,6 +14,7 @@
 #include "application/profiler/profiler_service.h"
 #include "application/tick_monitor/tick_monitor_command.h"
 #include "core/activity/activity_log.h"
+#include "core/config/spark_config.h"
 #include "core/stats/statistics_service.h"
 
 namespace spark {
@@ -26,6 +27,7 @@ public:
     SparkApplication(std::string bds_executable_sha256,
                      std::filesystem::path profile_storage_dir,
                      std::filesystem::path activity_log_file,
+                     SparkConfig config,
                      MainThreadDispatcher &dispatcher,
                      ProfileMetadataProvider &metadata_provider,
                      ResultNotifier &notifier);
@@ -47,11 +49,14 @@ public:
     CommandRegistry &registry() { return registry_; }
     HealthCommand &health() { return health_; }
     ActivityLog &activityLog() { return activity_log_; }
+    SparkConfig &config() { return config_; }
+    const SparkConfig &config() const { return config_; }
 
 private:
     void registerCommands();
 
     StatisticsService statistics_;
+    SparkConfig config_;
     MainThreadDispatcher &dispatcher_;
     ProfileMetadataProvider &metadata_provider_;
     ResultNotifier &notifier_;

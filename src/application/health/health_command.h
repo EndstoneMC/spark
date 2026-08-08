@@ -2,6 +2,7 @@
 #define SPARK_APPLICATION_HEALTH_HEALTH_COMMAND_H
 
 #include <memory>
+#include <string>
 
 #include "application/command/command_sender.h"
 #include "application/platform_capabilities.h"
@@ -17,7 +18,8 @@ namespace spark {
 // Platform-independent: uses CommandSender and ProfileMetadataProvider.
 class HealthCommand {
 public:
-    HealthCommand(StatisticsService &statistics, ProfileMetadataProvider &metadata_provider);
+    HealthCommand(StatisticsService &statistics, ProfileMetadataProvider &metadata_provider,
+                  std::string bytebin_url, std::string viewer_url);
 
     void cmdTps(CommandSender &sender);
     void cmdPing(CommandSender &sender, const Arguments &args);
@@ -51,6 +53,8 @@ private:
     std::unique_ptr<PingStatistics> ping_statistics_;
     NetworkMonitor network_monitor_;
     std::function<ActivityLog *()> activity_log_provider_;
+    std::string bytebin_url_;
+    std::string viewer_url_;
 };
 
 }  // namespace spark

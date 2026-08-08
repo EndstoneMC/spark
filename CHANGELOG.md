@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add persistent Spark configuration (`config.json` in the plugin data directory)
+  with configurable `viewerUrl`, `bytebinUrl`, `bytesocksHost`, background
+  profiler settings, response broadcast toggle, and trusted viewer key storage.
+  Missing or malformed config falls back to safe defaults.
 - Add `/spark ping` command with rolling 15-minute player ping RTT statistics
   (min/median/p95/max), `--player <name>` lookup, and profile metadata
   integration via `PlatformStatistics.Ping`.

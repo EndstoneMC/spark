@@ -94,6 +94,7 @@ endif ()
 
 # --- platform-independent core: profiler, stats, proto, net (no Endstone) ---
 add_library(spark_core STATIC
+        src/core/config/spark_config.cpp
         src/core/util/format.cpp
         src/core/activity/activity_log.cpp
         src/core/command/arguments.cpp
