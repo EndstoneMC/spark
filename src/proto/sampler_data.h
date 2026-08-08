@@ -8,12 +8,12 @@
 #include <unordered_map>
 #include <vector>
 
-#include "native/sampler/call_tree.h"
 #include "core/profiler/profile_mode.h"
-#include "native/symbol/symbolicate.h"
-#include "native/sampler/types.h"
 #include "core/stats/statistics_service.h"
 #include "core/stats/system_stats.h"
+#include "native/sampler/call_tree.h"
+#include "native/sampler/types.h"
+#include "native/symbol/symbolicate.h"
 
 namespace spark {
 
@@ -40,7 +40,7 @@ struct ProfileMetadata {
     bool regex_threads = false;
     std::vector<std::int64_t> thread_ids;
     std::vector<std::string> thread_patterns;
-    bool ticked = false;             // --only-ticks-over active
+    bool ticked = false;  // --only-ticks-over active
     std::int64_t tick_threshold_ms = 0;
     ThreadGrouperMode thread_grouper = ThreadGrouperMode::ByPool;
     PlatformStats platform_stats;

@@ -1,10 +1,10 @@
-#include "core/recovery/stall_watchdog.h"
-
 #include <atomic>
 #include <cassert>
 #include <chrono>
 #include <iostream>
 #include <thread>
+
+#include "core/recovery/stall_watchdog.h"
 
 using namespace spark;
 
@@ -29,10 +29,12 @@ public:
     void installCallback()
     {
         watchdog_.setStallCallback([this](bool stalled) {
-            if (stalled)
+            if (stalled) {
                 stall_begin_.fetch_add(1);
-            else
+            }
+            else {
                 stall_end_.fetch_add(1);
+            }
         });
     }
 

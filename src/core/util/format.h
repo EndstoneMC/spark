@@ -11,14 +11,22 @@ namespace spark {
 
 // Minecraft chat color codes (protocol-level, not platform-specific).
 // Equivalent to endstone::ColorFormat but without the Endstone dependency.
-inline const std::string kColorGold = "\xc2\xa7""6";     // §6
-inline const std::string kColorGray = "\xc2\xa7""7";     // §7
-inline const std::string kColorGreen = "\xc2\xa7""a";    // §a
-inline const std::string kColorYellow = "\xc2\xa7""e";   // §e
-inline const std::string kColorRed = "\xc2\xa7""c";      // §c
-inline const std::string kColorReset = "\xc2\xa7""r";    // §r
-inline const std::string kColorWhite = "\xc2\xa7""f";    // §f
-inline const std::string kColorDarkGray = "\xc2\xa7""8"; // §8
+inline const std::string kColorGold = "\xc2\xa7"
+                                      "6";  // §6
+inline const std::string kColorGray = "\xc2\xa7"
+                                      "7";  // §7
+inline const std::string kColorGreen = "\xc2\xa7"
+                                       "a";  // §a
+inline const std::string kColorYellow = "\xc2\xa7"
+                                        "e";  // §e
+inline const std::string kColorRed = "\xc2\xa7"
+                                     "c";  // §c
+inline const std::string kColorReset = "\xc2\xa7"
+                                       "r";  // §r
+inline const std::string kColorWhite = "\xc2\xa7"
+                                       "f";  // §f
+inline const std::string kColorDarkGray = "\xc2\xa7"
+                                          "8";  // §8
 
 std::string formatDuration(std::int64_t seconds);
 std::string formatBytes(std::uint64_t bytes);

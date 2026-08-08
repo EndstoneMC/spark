@@ -11,16 +11,8 @@
 
 namespace spark {
 
-// Independent-thread watchdog that monitors the main-thread heartbeat and
-// transitions between Healthy and Stalled when the server tick stops advancing.
-// The watchdog never calls Endstone APIs, never stops the profiler, and never
-// performs file I/O.  State transitions fire the stall callback exactly once
-// per edge (STALL_BEGIN / STALL_END).
-//
-// State machine:
-//   Healthy  --stall-->  Stalled   (callback(true))
-//   Stalled  --recover--> Healthy  (callback(false))
-//   *        --shutdown--> Stopping (no callback, terminal)
+// Watchdog monitoring the main-thread heartbeat. Never calls Endstone APIs or file I/O.
+// State: Healthy --stall--> Stalled (cb(true)) --recover--> Healthy (cb(false)) --shutdown--> Stopping.
 class StallWatchdog {
 public:
     // Production thresholds.
@@ -39,8 +31,7 @@ public:
 
     // Constructed with the server (main-thread) heartbeat.  Sampler and
     // aggregator heartbeats are optional diagnostic inputs.
-    explicit StallWatchdog(Heartbeat &server_hb,
-                           std::uint64_t stall_threshold_ns = kStallThresholdNs,
+    explicit StallWatchdog(Heartbeat &server_hb, std::uint64_t stall_threshold_ns = kStallThresholdNs,
                            int poll_interval_ms = kPollIntervalMs);
     ~StallWatchdog();
 

@@ -1,13 +1,13 @@
 #ifndef SPARK_CORE_RECOVERY_JOURNAL_FORMAT_H
 #define SPARK_CORE_RECOVERY_JOURNAL_FORMAT_H
 
+#include <zlib.h>
+
 #include <cstdint>
 #include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <zlib.h>
 
 #include "native/sampler/types.h"
 
@@ -26,11 +26,11 @@ inline constexpr std::size_t kRecordHeaderSize = 14;
 enum class RecordType : std::uint8_t {
     ModuleDef = 1,
     ThreadDef = 2,
-    Sample    = 3,
+    Sample = 3,
     TickEvent = 4,
     StallBegin = 5,
-    StallEnd   = 6,
-    CleanEnd   = 7,
+    StallEnd = 6,
+    CleanEnd = 7,
     SessionConfig = 8,
 };
 
@@ -53,7 +53,11 @@ public:
     void i32(std::int32_t v) { append(&v, 4); }
     void f64(double v) { append(&v, 8); }
     void bytes(const void *p, std::size_t n) { append(p, n); }
-    void str(std::string_view s) { u16(static_cast<std::uint16_t>(s.size())); append(s.data(), s.size()); }
+    void str(std::string_view s)
+    {
+        u16(static_cast<std::uint16_t>(s.size()));
+        append(s.data(), s.size());
+    }
 
 private:
     void append(const void *p, std::size_t n)
@@ -66,12 +70,10 @@ private:
 
 // Serialize a complete record (header + payload + CRC) into a buffer.
 // Returns the serialized bytes.
-inline std::vector<std::uint8_t> serializeRecord(RecordType type, std::uint32_t sequence,
-                                                  const JournalBuffer &payload)
+inline std::vector<std::uint8_t> serializeRecord(RecordType type, std::uint32_t sequence, const JournalBuffer &payload)
 {
     const std::uint32_t payload_len = static_cast<std::uint32_t>(payload.size());
-    const std::uint32_t crc = static_cast<std::uint32_t>(
-        crc32(0L, payload.data(), payload_len));
+    const std::uint32_t crc = static_cast<std::uint32_t>(crc32(0L, payload.data(), payload_len));
 
     JournalBuffer rec;
     rec.u8(static_cast<std::uint8_t>(type));
@@ -84,9 +86,8 @@ inline std::vector<std::uint8_t> serializeRecord(RecordType type, std::uint32_t 
 }
 
 // Serialize the file header.
-inline std::vector<std::uint8_t> serializeFileHeader(std::uint64_t session_id,
-                                                      std::uint64_t created_ns,
-                                                      std::uint32_t segment_number)
+inline std::vector<std::uint8_t> serializeFileHeader(std::uint64_t session_id, std::uint64_t created_ns,
+                                                     std::uint32_t segment_number)
 {
     JournalBuffer h;
     h.bytes(kJournalMagic, 8);
@@ -109,8 +110,7 @@ inline JournalBuffer buildModuleDefPayload(std::uint32_t module_id, std::string_
     return p;
 }
 
-inline JournalBuffer buildThreadDefPayload(std::uint64_t thread_id, std::uint64_t os_thread_id,
-                                           std::string_view name)
+inline JournalBuffer buildThreadDefPayload(std::uint64_t thread_id, std::uint64_t os_thread_id, std::string_view name)
 {
     JournalBuffer p;
     p.u64(thread_id);
@@ -166,13 +166,12 @@ inline JournalBuffer buildCleanEndPayload(std::uint64_t timestamp_ns)
     return p;
 }
 
-inline JournalBuffer buildSessionConfigPayload(
-    std::uint32_t interval_us, std::int32_t only_ticks_over_ms,
-    bool all_threads, bool regex_threads, bool ignore_sleeping,
-    std::uint8_t thread_grouper, std::uint8_t profile_type, bool live_only,
-    std::string_view creator_name,
-    bool creator_is_player, std::string_view comment,
-    const std::vector<std::string> &thread_patterns)
+inline JournalBuffer buildSessionConfigPayload(std::uint32_t interval_us, std::int32_t only_ticks_over_ms,
+                                               bool all_threads, bool regex_threads, bool ignore_sleeping,
+                                               std::uint8_t thread_grouper, std::uint8_t profile_type, bool live_only,
+                                               std::string_view creator_name, bool creator_is_player,
+                                               std::string_view comment,
+                                               const std::vector<std::string> &thread_patterns)
 {
     JournalBuffer p;
     p.u32(interval_us);

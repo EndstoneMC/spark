@@ -12,10 +12,10 @@
 #include <vector>
 
 #if defined(_WIN32)
-#  include <windows.h>
+#include <windows.h>
 #else
-#  include <dlfcn.h>
-#  include <link.h>
+#include <dlfcn.h>
+#include <link.h>
 #endif
 
 #include "core/profiler/profile_mode.h"
@@ -34,8 +34,7 @@ namespace {
 
 std::int64_t nowMs()
 {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::system_clock::now().time_since_epoch())
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
 
@@ -57,8 +56,7 @@ struct ModuleBaseFinder {
 int phdrCallback(struct dl_phdr_info *info, size_t /*size*/, void *data)
 {
     auto *finder = static_cast<ModuleBaseFinder *>(data);
-    if (info->dlpi_name && info->dlpi_name[0] != '\0' &&
-        std::string(info->dlpi_name) == finder->target) {
+    if (info->dlpi_name && info->dlpi_name[0] != '\0' && std::string(info->dlpi_name) == finder->target) {
         finder->base = static_cast<std::uint64_t>(info->dlpi_addr);
         return 1;
     }
@@ -101,7 +99,9 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     ModuleTable modules;
     std::unordered_map<ModuleId, std::uint64_t> module_bases;
     for (const auto &rec : journal.records) {
-        if (rec.type != RecordType::ModuleDef) continue;
+        if (rec.type != RecordType::ModuleDef) {
+            continue;
+        }
         std::uint32_t module_id;
         std::string path;
         if (rec.asModuleDef(module_id, path)) {
@@ -123,7 +123,10 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     // window map from Sample records (which do) and use it to assign each tick
     // to the correct per-window statistics bucket.
     std::map<std::uint64_t, std::int32_t> tick_to_window;
-    struct TickEventEntry { std::uint64_t tick_id; double mspt; };
+    struct TickEventEntry {
+        std::uint64_t tick_id;
+        double mspt;
+    };
     std::vector<TickEventEntry> tick_events;
 
     for (const auto &rec : journal.records) {
@@ -131,7 +134,9 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
             std::uint64_t thread_id, tick_id, weight;
             std::int32_t window;
             std::vector<FrameKey> frames;
-            if (!rec.asSample(thread_id, tick_id, window, weight, frames)) continue;
+            if (!rec.asSample(thread_id, tick_id, window, weight, frames)) {
+                continue;
+            }
 
             tick_to_window[tick_id] = window;
             for (auto &frame : frames) {
@@ -148,7 +153,9 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
             }
             it->second.tree.log(frames, window, weight);
             ++sample_count;
-            if (tick_id > max_tick_id) max_tick_id = tick_id;
+            if (tick_id > max_tick_id) {
+                max_tick_id = tick_id;
+            }
         }
         else if (rec.type == RecordType::ThreadDef) {
             std::uint64_t thread_id, os_thread_id;
@@ -165,7 +172,9 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
             std::uint64_t tick_id;
             double mspt;
             if (rec.asTickEvent(tick_id, mspt)) {
-                if (tick_id > max_tick_id) max_tick_id = tick_id;
+                if (tick_id > max_tick_id) {
+                    max_tick_id = tick_id;
+                }
                 tick_events.push_back({tick_id, mspt});
             }
         }
@@ -175,10 +184,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     result.thread_count = thread_trees.size();
     result.tick_count = max_tick_id > 0 ? max_tick_id + 1 : 0;
 
-    // Reconstruct per-window tick statistics from TickEvent records.
-    // The spark viewer's "Time per tick" label divides total time by the sum
-    // of per-window ticks (when more than one window exists), so every window
-    // that contains samples must also report its tick count.
+    // Reconstruct per-window tick statistics; the viewer divides total time by per-window ticks.
     struct WindowAccumulator {
         int ticks = 0;
         std::vector<double> mspts;
@@ -190,7 +196,8 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
         auto it = tick_to_window.find(te.tick_id);
         if (it != tick_to_window.end()) {
             window = it->second;
-        } else {
+        }
+        else {
             auto lower = tick_to_window.lower_bound(te.tick_id);
             if (lower != tick_to_window.begin()) {
                 --lower;
@@ -200,7 +207,9 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
         WindowAccumulator &acc = window_acc[window];
         acc.ticks += 1;
         acc.mspts.push_back(te.mspt);
-        if (te.mspt > acc.mspt_max) acc.mspt_max = te.mspt;
+        if (te.mspt > acc.mspt_max) {
+            acc.mspt_max = te.mspt;
+        }
     }
 
     std::map<std::int32_t, WindowStats> window_stats;
@@ -238,28 +247,21 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     meta.start_time_ms = result.session_start_ms;
     meta.end_time_ms = nowMs();
     meta.interval = sc.present ? static_cast<std::int32_t>(sc.interval_us) : 4000;
-    meta.mode = sc.present && sc.profile_type == 1
-                    ? ProfileMode::Allocation
-                    : ProfileMode::Execution;
+    meta.mode = sc.present && sc.profile_type == 1 ? ProfileMode::Allocation : ProfileMode::Execution;
     meta.number_of_ticks = static_cast<std::int32_t>(result.tick_count);
     meta.engine_version = std::string("endstone-spark ") + kVersion + " (crash recovery)";
     meta.creator_name = sc.present ? sc.creator_name : "crash recovery";
     meta.creator_is_player = sc.present && sc.creator_is_player;
-    meta.comment = sc.present && !sc.comment.empty()
-                       ? sc.comment + " [recovered from crash journal]"
-                       : "Recovered from crash journal";
+    meta.comment = sc.present && !sc.comment.empty() ? sc.comment + " [recovered from crash journal]"
+                                                     : "Recovered from crash journal";
     meta.all_threads = sc.present && sc.all_threads;
     meta.regex_threads = sc.present && sc.regex_threads;
-    meta.thread_grouper = sc.present
-                              ? static_cast<ThreadGrouperMode>(sc.thread_grouper)
-                              : ThreadGrouperMode::ByPool;
+    meta.thread_grouper = sc.present ? static_cast<ThreadGrouperMode>(sc.thread_grouper) : ThreadGrouperMode::ByPool;
     if (sc.present && sc.regex_threads) {
         meta.thread_patterns = sc.thread_patterns;
     }
     meta.ticked = sc.present && sc.only_ticks_over_ms > 0;
-    meta.tick_threshold_ms = sc.present && sc.only_ticks_over_ms > 0
-                                 ? sc.only_ticks_over_ms
-                                 : 0;
+    meta.tick_threshold_ms = sc.present && sc.only_ticks_over_ms > 0 ? sc.only_ticks_over_ms : 0;
     meta.window_stats = window_stats;
 
     // Collect thread views for serialization.
@@ -289,7 +291,8 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
         if (meta.thread_grouper == ThreadGrouperMode::ByName || trees.size() == 1) {
             owned_labels.push_back(grouper.label(g));
             views.push_back({owned_labels.back(), trees.front()});
-        } else {
+        }
+        else {
             auto merged = std::make_unique<CallTree>();
             for (const CallTree *tree : trees) {
                 mergeCallTree(*merged, *tree);

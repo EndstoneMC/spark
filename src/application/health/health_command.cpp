@@ -17,12 +17,10 @@
 
 namespace spark {
 
-HealthCommand::HealthCommand(StatisticsService &statistics,
-                             ProfileMetadataProvider &metadata_provider,
-                             std::string bytebin_url,
-                             std::string viewer_url)
-    : statistics_(statistics), metadata_provider_(metadata_provider),
-      bytebin_url_(std::move(bytebin_url)), viewer_url_(std::move(viewer_url))
+HealthCommand::HealthCommand(StatisticsService &statistics, ProfileMetadataProvider &metadata_provider,
+                             std::string bytebin_url, std::string viewer_url)
+    : statistics_(statistics), metadata_provider_(metadata_provider), bytebin_url_(std::move(bytebin_url)),
+      viewer_url_(std::move(viewer_url))
 {
     // Lazily create PingStatistics if the platform provides a PlayerPingProvider.
     if (auto *ping_provider = metadata_provider_.playerPingProvider()) {
@@ -75,9 +73,9 @@ void HealthCommand::cmdPing(CommandSender &sender, const Arguments &args)
             if (!ping.found()) {
                 sender.sendMessage("{}Ping data is not available for '{}'.{}", kColorGold, kColorGray, kColorReset);
                 sender.sendMessage("  {}", player_name);
-            } else {
-                sender.sendMessage("{}Player {}{} {}has {}{} ms ping.{}",
-                                   kColorGold, kColorReset, ping.name,
+            }
+            else {
+                sender.sendMessage("{}Player {}{} {}has {}{} ms ping.{}", kColorGold, kColorReset, ping.name,
                                    kColorGray, kColorGreen, ping.ping, kColorReset);
             }
         }
@@ -93,56 +91,34 @@ void HealthCommand::cmdPing(CommandSender &sender, const Arguments &args)
         return;
     }
 
-    sender.sendMessage("{}Average Pings {}(min/med/95%ile/max ms){} from now, last 15m:",
-                       kColorGold, kColorGray, kColorReset);
-    sender.sendMessage("  {} ;  {}",
-                       formatPingRtts(summary),
-                       formatPingRtts(average));
+    sender.sendMessage("{}Average Pings {}(min/med/95%ile/max ms){} from now, last 15m:", kColorGold, kColorGray,
+                       kColorReset);
+    sender.sendMessage("  {} ;  {}", formatPingRtts(summary), formatPingRtts(average));
 }
 
-void HealthCommand::sendPerformanceReport(CommandSender &sender,
-                                          const StatisticsSnapshot &stats)
+void HealthCommand::sendPerformanceReport(CommandSender &sender, const StatisticsSnapshot &stats)
 {
-    sender.sendMessage(
-        "{}TPS {}(5s/10s/1m/5m/15m){}: {} / {} / {} / {} / {}",
-        kColorGold, kColorGray, kColorReset,
-        formatTpsValue(stats.tps.last_5s),
-        formatTpsValue(stats.tps.last_10s),
-        formatTpsValue(stats.tps.last_1m),
-        formatTpsValue(stats.tps.last_5m),
-        formatTpsValue(stats.tps.last_15m));
-    sender.sendMessage(
-        "{}MSPT 10s {}(mean/min/median/p95/max){}: {}",
-        kColorGold, kColorGray, kColorReset,
-        formatMsptDistribution(stats.mspt.last_10s));
-    sender.sendMessage(
-        "{}MSPT 1m  {}(mean/min/median/p95/max){}: {}",
-        kColorGold, kColorGray, kColorReset,
-        formatMsptDistribution(stats.mspt.last_1m));
-    sender.sendMessage(
-        "{}MSPT 5m  {}(mean/min/median/p95/max){}: {}",
-        kColorGold, kColorGray, kColorReset,
-        formatMsptDistribution(stats.mspt.last_5m));
-    sender.sendMessage(
-        "{}Process CPU {}(10s/1m/15m){}: {} / {} / {}",
-        kColorGold, kColorGray, kColorReset,
-        formatCpuValue(stats.cpu.process_last_10s),
-        formatCpuValue(stats.cpu.process_last_1m),
-        formatCpuValue(stats.cpu.process_last_15m));
-    sender.sendMessage(
-        "{}System CPU {}(10s/1m/15m){}: {} / {} / {}",
-        kColorGold, kColorGray, kColorReset,
-        formatCpuValue(stats.cpu.system_last_10s),
-        formatCpuValue(stats.cpu.system_last_1m),
-        formatCpuValue(stats.cpu.system_last_15m));
+    sender.sendMessage("{}TPS {}(5s/10s/1m/5m/15m){}: {} / {} / {} / {} / {}", kColorGold, kColorGray, kColorReset,
+                       formatTpsValue(stats.tps.last_5s), formatTpsValue(stats.tps.last_10s),
+                       formatTpsValue(stats.tps.last_1m), formatTpsValue(stats.tps.last_5m),
+                       formatTpsValue(stats.tps.last_15m));
+    sender.sendMessage("{}MSPT 10s {}(mean/min/median/p95/max){}: {}", kColorGold, kColorGray, kColorReset,
+                       formatMsptDistribution(stats.mspt.last_10s));
+    sender.sendMessage("{}MSPT 1m  {}(mean/min/median/p95/max){}: {}", kColorGold, kColorGray, kColorReset,
+                       formatMsptDistribution(stats.mspt.last_1m));
+    sender.sendMessage("{}MSPT 5m  {}(mean/min/median/p95/max){}: {}", kColorGold, kColorGray, kColorReset,
+                       formatMsptDistribution(stats.mspt.last_5m));
+    sender.sendMessage("{}Process CPU {}(10s/1m/15m){}: {} / {} / {}", kColorGold, kColorGray, kColorReset,
+                       formatCpuValue(stats.cpu.process_last_10s), formatCpuValue(stats.cpu.process_last_1m),
+                       formatCpuValue(stats.cpu.process_last_15m));
+    sender.sendMessage("{}System CPU {}(10s/1m/15m){}: {} / {} / {}", kColorGold, kColorGray, kColorReset,
+                       formatCpuValue(stats.cpu.system_last_10s), formatCpuValue(stats.cpu.system_last_1m),
+                       formatCpuValue(stats.cpu.system_last_15m));
 
-    const std::int64_t history_seconds =
-        (stats.history_span_ms + 999) / 1000;
+    const std::int64_t history_seconds = (stats.history_span_ms + 999) / 1000;
     if (stats.history_span_ms < StatisticsService::kMaximumHistoryMs) {
-        sender.sendMessage(
-            "{}Statistics history: {}{} {}(longer windows currently use the available history)",
-            kColorGold, kColorGray,
-            formatDuration(history_seconds), kColorGray);
+        sender.sendMessage("{}Statistics history: {}{} {}(longer windows currently use the available history)",
+                           kColorGold, kColorGray, formatDuration(history_seconds), kColorGray);
     }
 }
 
@@ -154,60 +130,48 @@ void HealthCommand::cmdHealth(CommandSender &sender, const Arguments &args)
     const ProcessStats process = gatherProcessStats();
     const SystemStats system = gatherSystemStats(".");
     const std::int64_t uptime = metadata_provider_.serverUptimeSeconds();
-    sender.sendMessage("{}Uptime: {}{}", kColorGold,
-                       kColorGray, formatDuration(uptime));
-    sender.sendMessage("{}Players online: {}{}", kColorGold,
-                       kColorGray, metadata_provider_.playerCount());
+    sender.sendMessage("{}Uptime: {}{}", kColorGold, kColorGray, formatDuration(uptime));
+    sender.sendMessage("{}Players online: {}{}", kColorGold, kColorGray, metadata_provider_.playerCount());
 
     if (process.rss_present && process.virtual_present) {
-        sender.sendMessage(
-            "{}Process memory {}(RSS/virtual){}: {} / {}",
-            kColorGold, kColorGray, kColorReset,
-            formatBytes(static_cast<std::uint64_t>(process.rss_bytes)),
-            formatBytes(static_cast<std::uint64_t>(process.virtual_bytes)));
+        sender.sendMessage("{}Process memory {}(RSS/virtual){}: {} / {}", kColorGold, kColorGray, kColorReset,
+                           formatBytes(static_cast<std::uint64_t>(process.rss_bytes)),
+                           formatBytes(static_cast<std::uint64_t>(process.virtual_bytes)));
     }
     else if (process.rss_present) {
-        sender.sendMessage("{}Process RSS: {}{}", kColorGold,
-                           kColorGray,
+        sender.sendMessage("{}Process RSS: {}{}", kColorGold, kColorGray,
                            formatBytes(static_cast<std::uint64_t>(process.rss_bytes)));
     }
     else if (process.virtual_present) {
-        sender.sendMessage("{}Process virtual memory: {}{}",
-                           kColorGold, kColorGray,
+        sender.sendMessage("{}Process virtual memory: {}{}", kColorGold, kColorGray,
                            formatBytes(static_cast<std::uint64_t>(process.virtual_bytes)));
     }
     if (process.threads_present) {
-        sender.sendMessage("{}Process threads: {}{}", kColorGold,
-                           kColorGray, process.threads);
+        sender.sendMessage("{}Process threads: {}{}", kColorGold, kColorGray, process.threads);
     }
     if (system.memory_present) {
-        sender.sendMessage("{}System memory {}(used/total){}: {} / {}",
-                           kColorGold, kColorGray, kColorReset,
+        sender.sendMessage("{}System memory {}(used/total){}: {} / {}", kColorGold, kColorGray, kColorReset,
                            formatBytes(static_cast<std::uint64_t>(system.mem_used)),
                            formatBytes(static_cast<std::uint64_t>(system.mem_total)));
     }
     if (system.swap_present) {
-        sender.sendMessage("{}Swap/page file {}(used/total){}: {} / {}",
-                           kColorGold, kColorGray, kColorReset,
+        sender.sendMessage("{}Swap/page file {}(used/total){}: {} / {}", kColorGold, kColorGray, kColorReset,
                            formatBytes(static_cast<std::uint64_t>(system.swap_used)),
                            formatBytes(static_cast<std::uint64_t>(system.swap_total)));
     }
     if (system.disk_present) {
-        sender.sendMessage("{}Disk {}(used/total){}: {} / {}",
-                           kColorGold, kColorGray, kColorReset,
+        sender.sendMessage("{}Disk {}(used/total){}: {} / {}", kColorGold, kColorGray, kColorReset,
                            formatBytes(static_cast<std::uint64_t>(system.disk_used)),
                            formatBytes(static_cast<std::uint64_t>(system.disk_total)));
     }
     if (system.cpu_present) {
-        sender.sendMessage("{}CPU: {}{} {}({} logical processors)",
-                           kColorGold, kColorGray,
-                           system.cpu_model.empty() ? "unknown model" : system.cpu_model,
-                           kColorGray, system.cpu_threads);
+        sender.sendMessage("{}CPU: {}{} {}({} logical processors)", kColorGold, kColorGray,
+                           system.cpu_model.empty() ? "unknown model" : system.cpu_model, kColorGray,
+                           system.cpu_threads);
     }
     if (system.os_present) {
-        sender.sendMessage("{}OS: {}{} {} {}", kColorGold,
-                           kColorGray, system.os_name,
-                           system.os_version, system.os_arch);
+        sender.sendMessage("{}OS: {}{} {} {}", kColorGold, kColorGray, system.os_name, system.os_version,
+                           system.os_arch);
     }
 
     auto net_snapshots = network_monitor_.snapshot();
@@ -217,11 +181,11 @@ void HealthCommand::cmdHealth(CommandSender &sender, const Arguments &args)
             if (!snap.rx_bytes_per_second.present || !snap.tx_bytes_per_second.present) {
                 continue;
             }
-            std::string net_msg = "  " + kColorGray + name + ": " +
-                               kColorGreen + formatBytes(static_cast<std::uint64_t>(snap.rx_bytes_per_second.mean)) +
-                               "/s" + kColorGray + "  " +
-                               kColorGreen + formatBytes(static_cast<std::uint64_t>(snap.tx_bytes_per_second.mean)) +
-                               "/s" + kColorGray;
+            std::string net_msg = "  " + kColorGray + name + ": " + kColorGreen +
+                                  formatBytes(static_cast<std::uint64_t>(snap.rx_bytes_per_second.mean)) + "/s" +
+                                  kColorGray + "  " + kColorGreen +
+                                  formatBytes(static_cast<std::uint64_t>(snap.tx_bytes_per_second.mean)) + "/s" +
+                                  kColorGray;
             sender.sendMessage(net_msg);
         }
     }
@@ -233,9 +197,9 @@ void HealthCommand::cmdHealth(CommandSender &sender, const Arguments &args)
 
 void HealthCommand::uploadHealthReport(CommandSender &sender)
 {
-    const std::int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                   std::chrono::system_clock::now().time_since_epoch())
-                                   .count();
+    const std::int64_t now_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
 
     ExportContext ctx;
     metadata_provider_.gatherServerMetadata(ctx, now_ms);
@@ -290,27 +254,24 @@ void HealthCommand::uploadHealthReport(CommandSender &sender)
     if (!ctx.bds_executable_sha256.empty()) {
         data.extra_platform_metadata["BDS executable SHA-256"] = "\"" + ctx.bds_executable_sha256 + "\"";
     }
-    data.extra_platform_metadata["Statistics history available ms"] =
-        std::to_string(ctx.statistics.history_span_ms);
+    data.extra_platform_metadata["Statistics history available ms"] = std::to_string(ctx.statistics.history_span_ms);
 
     try {
         std::string body = buildHealthData(data);
         std::string compressed = gzipCompress(body);
-        UploadResult result = uploadToBytebin(compressed, bytebin_url_,
-                                              kHealthContentType,
-                                              std::string("endstone-spark/") + kVersion);
+        UploadResult result =
+            uploadToBytebin(compressed, bytebin_url_, kHealthContentType, std::string("endstone-spark/") + kVersion);
         if (result.ok) {
             std::string url = viewer_url_ + result.key;
-            sender.sendMessage("{}Health report uploaded!{} {}",
-                               kColorGold, kColorGray, url);
+            sender.sendMessage("{}Health report uploaded!{} {}", kColorGold, kColorGray, url);
             if (activity_log_provider_) {
                 ActivityLog *log = activity_log_provider_();
                 if (log) {
-                    log->add(Activity::url(sender.getName(), sender.isPlayer(),
-                                           now_ms, "Health report", url));
+                    log->add(Activity::url(sender.getName(), sender.isPlayer(), now_ms, "Health report", url));
                 }
             }
-        } else {
+        }
+        else {
             sender.sendErrorMessage("Health report upload failed: {}", result.error);
         }
     }

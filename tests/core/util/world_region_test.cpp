@@ -1,9 +1,9 @@
-#include "core/util/world_region.h"
-
 #include <cassert>
 #include <cstdio>
 #include <map>
 #include <utility>
+
+#include "core/util/world_region.h"
 
 using namespace spark;
 

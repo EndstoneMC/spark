@@ -15,19 +15,34 @@ std::string jsonEscape(std::string_view s)
     out.reserve(s.size() + 2);
     for (char ch : s) {
         switch (ch) {
-        case '"':  out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\b': out += "\\b"; break;
-        case '\f': out += "\\f"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
         default:
             if (static_cast<unsigned char>(ch) < 0x20) {
                 char buf[8];
                 std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
                 out += buf;
-            } else {
+            }
+            else {
                 out += ch;
             }
             break;
@@ -41,50 +56,86 @@ bool parseStringArray(const std::string &text, std::vector<std::string> &out)
 {
     std::size_t pos = 0;
     auto skipWs = [&]() {
-        while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
-               text[pos] == '\n' || text[pos] == '\r'))
+        while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' || text[pos] == '\n' || text[pos] == '\r')) {
             ++pos;
+        }
     };
     skipWs();
-    if (pos >= text.size() || text[pos] != '[') return false;
+    if (pos >= text.size() || text[pos] != '[') {
+        return false;
+    }
     ++pos;
     skipWs();
-    if (pos < text.size() && text[pos] == ']') return true;
+    if (pos < text.size() && text[pos] == ']') {
+        return true;
+    }
     while (pos < text.size()) {
         skipWs();
-        if (pos >= text.size() || text[pos] != '"') return false;
+        if (pos >= text.size() || text[pos] != '"') {
+            return false;
+        }
         ++pos;
         std::string str;
         while (pos < text.size()) {
             char ch = text[pos++];
-            if (ch == '"') break;
+            if (ch == '"') {
+                break;
+            }
             if (ch == '\\' && pos < text.size()) {
                 char esc = text[pos++];
                 switch (esc) {
-                case '"':  str += '"'; break;
-                case '\\': str += '\\'; break;
-                case '/':  str += '/'; break;
-                case 'b':  str += '\b'; break;
-                case 'f':  str += '\f'; break;
-                case 'n':  str += '\n'; break;
-                case 'r':  str += '\r'; break;
-                case 't':  str += '\t'; break;
+                case '"':
+                    str += '"';
+                    break;
+                case '\\':
+                    str += '\\';
+                    break;
+                case '/':
+                    str += '/';
+                    break;
+                case 'b':
+                    str += '\b';
+                    break;
+                case 'f':
+                    str += '\f';
+                    break;
+                case 'n':
+                    str += '\n';
+                    break;
+                case 'r':
+                    str += '\r';
+                    break;
+                case 't':
+                    str += '\t';
+                    break;
                 case 'u':
-                    if (pos + 4 > text.size()) return false;
+                    if (pos + 4 > text.size()) {
+                        return false;
+                    }
                     str += '?';
                     pos += 4;
                     break;
-                default: return false;
+                default:
+                    return false;
                 }
-            } else {
+            }
+            else {
                 str += ch;
             }
         }
         out.push_back(std::move(str));
         skipWs();
-        if (pos >= text.size()) return false;
-        if (text[pos] == ',') { ++pos; continue; }
-        if (text[pos] == ']') { ++pos; return true; }
+        if (pos >= text.size()) {
+            return false;
+        }
+        if (text[pos] == ',') {
+            ++pos;
+            continue;
+        }
+        if (text[pos] == ']') {
+            ++pos;
+            return true;
+        }
         return false;
     }
     return false;
@@ -92,18 +143,16 @@ bool parseStringArray(const std::string &text, std::vector<std::string> &out)
 
 }  // namespace
 
-TrustedViewersState::TrustedViewersState(std::filesystem::path file)
-    : file_(std::move(file))
-{
-}
+TrustedViewersState::TrustedViewersState(std::filesystem::path file) : file_(std::move(file)) {}
 
 bool TrustedViewersState::load()
 {
     last_error_.clear();
     keys_.clear();
 
-    if (!std::filesystem::exists(file_))
+    if (!std::filesystem::exists(file_)) {
         return false;
+    }
 
     std::ifstream in(file_);
     if (!in) {
@@ -131,7 +180,9 @@ bool TrustedViewersState::save() const
     ss << "[\n";
     for (std::size_t i = 0; i < keys_.size(); ++i) {
         ss << "  \"" << jsonEscape(keys_[i]) << "\"";
-        if (i + 1 < keys_.size()) ss << ",";
+        if (i + 1 < keys_.size()) {
+            ss << ",";
+        }
         ss << "\n";
     }
     ss << "]\n";
@@ -165,8 +216,9 @@ bool TrustedViewersState::contains(const std::string &b64_key) const
 
 void TrustedViewersState::add(const std::string &b64_key)
 {
-    if (!contains(b64_key))
+    if (!contains(b64_key)) {
         keys_.push_back(b64_key);
+    }
 }
 
 }  // namespace spark

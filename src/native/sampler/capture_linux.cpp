@@ -1,4 +1,6 @@
-#include "native/sampler/capture.h"
+#include <fcntl.h>
+#include <semaphore.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <cerrno>
@@ -6,12 +8,11 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
-#include <fcntl.h>
-#include <semaphore.h>
-#include <sys/syscall.h>
-#include <unistd.h>
 
 #include <cpptrace/cpptrace.hpp>
+#include <sys/syscall.h>
+
+#include "native/sampler/capture.h"
 
 namespace spark {
 

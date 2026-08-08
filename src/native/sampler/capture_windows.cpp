@@ -1,9 +1,6 @@
 #include "native/sampler/capture.h"
 
-// Windows stack capture: there are no POSIX signals, so we cannot run code on the
-// target thread at a sampling instant. Instead the sampler thread suspends the target,
-// reads its CONTEXT, and walks the stack with StackWalk64, then resumes it. The raw
-// addresses are converted to module-relative keys and resolved later through DbgHelp.
+// Windows stack capture: suspend target thread, walk with StackWalk64, resume.
 
 #include <mutex>
 #include <unordered_map>
@@ -55,9 +52,8 @@ bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
         return false;
     }
 
-    HANDLE thread =
-        OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE,
-                   static_cast<DWORD>(tid));
+    HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE,
+                               static_cast<DWORD>(tid));
     if (thread == nullptr) {
         return false;
     }

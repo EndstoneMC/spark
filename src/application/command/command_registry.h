@@ -17,8 +17,8 @@ class CommandRegistry {
 public:
     using Handler = std::function<void(CommandSender &, const Arguments &)>;
 
-    void registerCommand(std::vector<std::string> aliases, std::string description,
-                         std::string permission, Handler handler);
+    void registerCommand(std::vector<std::string> aliases, std::string description, std::string permission,
+                         Handler handler);
 
     // Returns true if a command matched and was executed.
     bool dispatch(CommandSender &sender, const std::vector<std::string> &tokens) const;

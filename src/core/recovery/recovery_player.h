@@ -21,10 +21,6 @@ struct RecoveredProfile {
 };
 
 // Reconstructs a spark profile from crash-recovery journal files.
-// Reads the journal, replays samples into per-thread call trees, resolves
-// symbols using the current process's symbol information, and serializes
-// the spark protobuf.  The result can be gzip-compressed and saved as a
-// .sparkprofile file.
 class RecoveryPlayer {
 public:
     static RecoveredProfile replay(const std::filesystem::path &directory);

@@ -1,10 +1,10 @@
-#include "core/config/spark_config.h"
-
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
+
+#include "core/config/spark_config.h"
 
 using namespace spark;
 
@@ -177,8 +177,7 @@ void test_save_creates_toml()
 
     // Verify the file contains comments.
     std::ifstream in(path);
-    std::string content((std::istreambuf_iterator<char>(in)),
-                         std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     assert(content.find("# spark configuration") != std::string::npos);
     assert(content.find("viewerUrl") != std::string::npos);
 

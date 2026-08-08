@@ -5,12 +5,16 @@
 #include <limits>
 
 #if defined(_WIN32)
+// clang-format off: psapi.h and tlhelp32.h require windows.h types
 #include <windows.h>
 #include <psapi.h>
 #include <tlhelp32.h>
+// clang-format on
 
 #include <string>
 #else
+#include <unistd.h>
+
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -19,7 +23,6 @@
 
 #include <sys/statvfs.h>
 #include <sys/utsname.h>
-#include <unistd.h>
 #endif
 
 namespace spark {
@@ -31,28 +34,19 @@ CpuUsage cpuUsageBetween(const CpuSnapshot &before, const CpuSnapshot &after)
         return usage;
     }
 
-    const double wall_seconds =
-        static_cast<double>(after.wall_ms - before.wall_ms) / 1000.0;
-    if (after.process_ticks >= before.process_ticks &&
-        after.process_ticks_per_second > 0.0 && after.cpu_threads > 0) {
+    const double wall_seconds = static_cast<double>(after.wall_ms - before.wall_ms) / 1000.0;
+    if (after.process_ticks >= before.process_ticks && after.process_ticks_per_second > 0.0 && after.cpu_threads > 0) {
         const double process_seconds =
-            static_cast<double>(after.process_ticks - before.process_ticks) /
-            after.process_ticks_per_second;
-        usage.process = std::clamp(
-            process_seconds /
-                (wall_seconds * static_cast<double>(after.cpu_threads)),
-            0.0, 1.0);
+            static_cast<double>(after.process_ticks - before.process_ticks) / after.process_ticks_per_second;
+        usage.process = std::clamp(process_seconds / (wall_seconds * static_cast<double>(after.cpu_threads)), 0.0, 1.0);
         usage.process_valid = true;
     }
-    if (after.system_total >= before.system_total &&
-        after.system_busy >= before.system_busy) {
-        const unsigned long long total_delta =
-            after.system_total - before.system_total;
+    if (after.system_total >= before.system_total && after.system_busy >= before.system_busy) {
+        const unsigned long long total_delta = after.system_total - before.system_total;
         if (total_delta > 0) {
-            usage.system = std::clamp(
-                static_cast<double>(after.system_busy - before.system_busy) /
-                    static_cast<double>(total_delta),
-                0.0, 1.0);
+            usage.system = std::clamp(static_cast<double>(after.system_busy - before.system_busy) /
+                                          static_cast<double>(total_delta),
+                                      0.0, 1.0);
             usage.system_valid = true;
         }
     }
@@ -78,10 +72,8 @@ ProcessStats gatherProcessStats()
     long pages_total = 0, pages_resident = 0;
     const long page_size = sysconf(_SC_PAGESIZE);
     if (page_size > 0 && f >> pages_total >> pages_resident) {
-        stats.virtual_bytes =
-            static_cast<std::int64_t>(pages_total) * page_size;
-        stats.rss_bytes =
-            static_cast<std::int64_t>(pages_resident) * page_size;
+        stats.virtual_bytes = static_cast<std::int64_t>(pages_total) * page_size;
+        stats.rss_bytes = static_cast<std::int64_t>(pages_resident) * page_size;
         stats.virtual_present = true;
         stats.rss_present = true;
     }
@@ -91,8 +83,7 @@ ProcessStats gatherProcessStats()
     while (status >> key) {
         if (key == "Threads:") {
             long threads = 0;
-            if (status >> threads && threads > 0 &&
-                threads <= (std::numeric_limits<int>::max)()) {
+            if (status >> threads && threads > 0 && threads <= (std::numeric_limits<int>::max)()) {
                 stats.threads = static_cast<int>(threads);
                 stats.threads_present = true;
             }
@@ -109,8 +100,7 @@ CpuSnapshot captureCpuSnapshot()
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
     long ticks_per_second = sysconf(_SC_CLK_TCK);
     s.cpu_threads = ncpu > 0 ? static_cast<int>(ncpu) : 1;
-    s.process_ticks_per_second =
-        ticks_per_second > 0 ? static_cast<double>(ticks_per_second) : 100.0;
+    s.process_ticks_per_second = ticks_per_second > 0 ? static_cast<double>(ticks_per_second) : 100.0;
     bool process_valid = false;
     bool system_valid = false;
 
@@ -238,8 +228,7 @@ SystemStats gatherSystemStats(const std::string &disk_path)
         struct statvfs st{};
         if (statvfs(disk_path.c_str(), &st) == 0) {
             s.disk_total = static_cast<std::int64_t>(st.f_blocks) * static_cast<std::int64_t>(st.f_frsize);
-            s.disk_used =
-                static_cast<std::int64_t>(st.f_blocks - st.f_bfree) * static_cast<std::int64_t>(st.f_frsize);
+            s.disk_used = static_cast<std::int64_t>(st.f_blocks - st.f_bfree) * static_cast<std::int64_t>(st.f_frsize);
             s.disk_present = true;
         }
     }
@@ -255,8 +244,7 @@ SystemStats gatherSystemStats(const std::string &disk_path)
         }
     }
 
-    s.present = s.cpu_present || s.memory_present || s.swap_present ||
-                s.disk_present || s.os_present;
+    s.present = s.cpu_present || s.memory_present || s.swap_present || s.disk_present || s.os_present;
     return s;
 }
 
@@ -301,10 +289,7 @@ CpuSnapshot captureCpuSnapshot()
     CpuSnapshot s;
     SYSTEM_INFO system_info{};
     GetSystemInfo(&system_info);
-    s.cpu_threads =
-        system_info.dwNumberOfProcessors > 0
-            ? static_cast<int>(system_info.dwNumberOfProcessors)
-            : 1;
+    s.cpu_threads = system_info.dwNumberOfProcessors > 0 ? static_cast<int>(system_info.dwNumberOfProcessors) : 1;
     s.process_ticks_per_second = kWindowsTicksPerSecond;
 
     FILETIME creation{}, exit{}, process_kernel{}, process_user{};
@@ -340,8 +325,8 @@ SystemStats gatherSystemStats(const std::string &disk_path)
         char model[256]{};
         DWORD type = 0;
         DWORD size = sizeof(model);
-        if (RegQueryValueExA(cpu_key, "ProcessorNameString", nullptr, &type,
-                            reinterpret_cast<BYTE *>(model), &size) == ERROR_SUCCESS &&
+        if (RegQueryValueExA(cpu_key, "ProcessorNameString", nullptr, &type, reinterpret_cast<BYTE *>(model), &size) ==
+                ERROR_SUCCESS &&
             (type == REG_SZ || type == REG_EXPAND_SZ)) {
             model[sizeof(model) - 1] = '\0';
             s.cpu_model = model;
@@ -367,9 +352,8 @@ SystemStats gatherSystemStats(const std::string &disk_path)
         // RAM, and usage as committed bytes beyond currently used physical RAM.
         unsigned long long swap_total =
             memory.ullTotalPageFile > memory.ullTotalPhys ? memory.ullTotalPageFile - memory.ullTotalPhys : 0;
-        unsigned long long commit_used = memory.ullTotalPageFile > memory.ullAvailPageFile
-                                             ? memory.ullTotalPageFile - memory.ullAvailPageFile
-                                             : 0;
+        unsigned long long commit_used =
+            memory.ullTotalPageFile > memory.ullAvailPageFile ? memory.ullTotalPageFile - memory.ullAvailPageFile : 0;
         unsigned long long swap_used = commit_used > physical_used ? commit_used - physical_used : 0;
         if (swap_used > swap_total) {
             swap_used = swap_total;
@@ -395,20 +379,18 @@ SystemStats gatherSystemStats(const std::string &disk_path)
 
     using RtlGetVersionFn = LONG(WINAPI *)(OSVERSIONINFOW *);
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-    auto rtl_get_version = ntdll == nullptr
-                               ? nullptr
-                               : reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion"));
+    auto rtl_get_version =
+        ntdll == nullptr ? nullptr : reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion"));
     if (rtl_get_version != nullptr) {
         OSVERSIONINFOW version{};
         version.dwOSVersionInfoSize = sizeof(version);
         if (rtl_get_version(&version) >= 0) {
-            s.os_version = std::to_string(version.dwMajorVersion) + "." +
-                           std::to_string(version.dwMinorVersion) + "." + std::to_string(version.dwBuildNumber);
+            s.os_version = std::to_string(version.dwMajorVersion) + "." + std::to_string(version.dwMinorVersion) + "." +
+                           std::to_string(version.dwBuildNumber);
         }
     }
 
-    s.present = s.cpu_present || s.memory_present || s.swap_present ||
-                s.disk_present || s.os_present;
+    s.present = s.cpu_present || s.memory_present || s.swap_present || s.disk_present || s.os_present;
     return s;
 }
 
@@ -423,27 +405,21 @@ ProcessStats gatherProcessStats()
 
     SYSTEM_INFO system_info{};
     GetNativeSystemInfo(&system_info);
-    std::uintptr_t address =
-        reinterpret_cast<std::uintptr_t>(system_info.lpMinimumApplicationAddress);
-    const std::uintptr_t maximum =
-        reinterpret_cast<std::uintptr_t>(system_info.lpMaximumApplicationAddress);
+    std::uintptr_t address = reinterpret_cast<std::uintptr_t>(system_info.lpMinimumApplicationAddress);
+    const std::uintptr_t maximum = reinterpret_cast<std::uintptr_t>(system_info.lpMaximumApplicationAddress);
     std::uint64_t virtual_bytes = 0;
     bool virtual_query_succeeded = false;
     while (address < maximum) {
         MEMORY_BASIC_INFORMATION region{};
-        if (VirtualQuery(reinterpret_cast<const void *>(address), &region,
-                         sizeof(region)) == 0) {
+        if (VirtualQuery(reinterpret_cast<const void *>(address), &region, sizeof(region)) == 0) {
             break;
         }
         virtual_query_succeeded = true;
         if (region.State != MEM_FREE) {
             virtual_bytes += static_cast<std::uint64_t>(region.RegionSize);
         }
-        const std::uintptr_t base =
-            reinterpret_cast<std::uintptr_t>(region.BaseAddress);
-        if (region.RegionSize == 0 ||
-            base > (std::numeric_limits<std::uintptr_t>::max)() -
-                       region.RegionSize) {
+        const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(region.BaseAddress);
+        if (region.RegionSize == 0 || base > (std::numeric_limits<std::uintptr_t>::max)() - region.RegionSize) {
             break;
         }
         const std::uintptr_t next = base + region.RegionSize;
@@ -453,8 +429,7 @@ ProcessStats gatherProcessStats()
         address = next;
     }
     if (virtual_query_succeeded &&
-        virtual_bytes <=
-            static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
+        virtual_bytes <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
         stats.virtual_bytes = static_cast<std::int64_t>(virtual_bytes);
         stats.virtual_present = true;
     }
@@ -467,8 +442,7 @@ ProcessStats gatherProcessStats()
         const DWORD process_id = GetCurrentProcessId();
         if (Thread32First(snapshot, &entry)) {
             do {
-                if (entry.th32OwnerProcessID == process_id &&
-                    count < (std::numeric_limits<int>::max)()) {
+                if (entry.th32OwnerProcessID == process_id && count < (std::numeric_limits<int>::max)()) {
                     ++count;
                 }
             } while (Thread32Next(snapshot, &entry));

@@ -10,8 +10,8 @@
 
 #include <endstone/endstone.hpp>
 
-#include "application/platform_capabilities.h"
 #include "application/command/command_sender.h"
+#include "application/platform_capabilities.h"
 
 namespace spark::endstone_adapter {
 
@@ -34,8 +34,7 @@ private:
 // Schedules tasks on the Endstone main thread.
 class EndstoneDispatcher : public MainThreadDispatcher {
 public:
-    EndstoneDispatcher(::endstone::Plugin &plugin, ::endstone::Server &server)
-        : plugin_(plugin), server_(server) {}
+    EndstoneDispatcher(::endstone::Plugin &plugin, ::endstone::Server &server) : plugin_(plugin), server_(server) {}
 
     void runOnMainThread(std::function<void()> task) override;
 
@@ -58,9 +57,10 @@ private:
 // Notifies a player by name and logs to the plugin logger.
 class EndstoneNotifier : public ResultNotifier {
 public:
-    EndstoneNotifier(::endstone::Plugin &plugin, ::endstone::Server &server,
-                     bool disable_broadcast)
-        : plugin_(plugin), server_(server), disable_broadcast_(disable_broadcast) {}
+    EndstoneNotifier(::endstone::Plugin &plugin, ::endstone::Server &server, bool disable_broadcast)
+        : plugin_(plugin), server_(server), disable_broadcast_(disable_broadcast)
+    {
+    }
 
     void notify(const std::string &sender_name, const std::string &text) override;
 
@@ -75,7 +75,9 @@ private:
 class EndstoneWorldGaugeProvider {
 public:
     EndstoneWorldGaugeProvider(::endstone::Plugin &plugin, ::endstone::Server &server)
-        : plugin_(plugin), server_(server) {}
+        : plugin_(plugin), server_(server)
+    {
+    }
 
     void init();
     std::pair<int, int> worldGauges();
@@ -94,10 +96,10 @@ private:
 // Gathers server/world metadata from the Endstone API.
 class EndstoneMetadataProvider : public ProfileMetadataProvider {
 public:
-    EndstoneMetadataProvider(::endstone::Plugin &plugin, ::endstone::Server &server,
-                             std::string bds_executable_sha256)
-        : plugin_(plugin), server_(server),
-          bds_executable_sha256_(std::move(bds_executable_sha256)) {}
+    EndstoneMetadataProvider(::endstone::Plugin &plugin, ::endstone::Server &server, std::string bds_executable_sha256)
+        : plugin_(plugin), server_(server), bds_executable_sha256_(std::move(bds_executable_sha256))
+    {
+    }
 
     void gatherServerMetadata(ExportContext &ctx, std::int64_t now_ms) override;
     void gatherWorldMetadata(ExportContext &ctx) override;

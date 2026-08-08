@@ -52,7 +52,7 @@ struct PlatformStats {
     int online_mode = 0;  // 0 unknown, 1 offline, 2 online
     std::int64_t uptime_ms = 0;
     bool process_mem_present = false;
-    std::int64_t process_mem_bytes = 0;      // resident working set / VmRSS
+    std::int64_t process_mem_bytes = 0;  // resident working set / VmRSS
     bool process_virtual_present = false;
     std::int64_t process_virtual_bytes = 0;  // reserved or committed virtual address space / VmSize
     // Ping rolling average (PlatformStatistics.Ping field 6).

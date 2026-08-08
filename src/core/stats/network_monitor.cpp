@@ -5,15 +5,17 @@
 #include <utility>
 
 #if defined(_WIN32)
+// clang-format off: iphlpapi.h requires windows.h types
 #include <windows.h>
 #include <iphlpapi.h>
-#include <string>
+// clang-format on
 #else
 #include <fstream>
 #include <iterator>
 #include <sstream>
-#include <string>
 #endif
+
+#include <string>
 
 namespace spark {
 
@@ -21,8 +23,7 @@ namespace spark {
 
 bool NetworkInterfaceInfo::isZero() const
 {
-    return rx_bytes == 0 && rx_packets == 0 && rx_errors == 0 &&
-           tx_bytes == 0 && tx_packets == 0 && tx_errors == 0;
+    return rx_bytes == 0 && rx_packets == 0 && rx_errors == 0 && tx_bytes == 0 && tx_packets == 0 && tx_errors == 0;
 }
 
 NetworkInterfaceInfo NetworkInterfaceInfo::subtract(const NetworkInterfaceInfo &other) const
@@ -43,8 +44,7 @@ NetworkInterfaceInfo NetworkInterfaceInfo::subtract(const NetworkInterfaceInfo &
 
 // ---- DoubleRollingAverage ----
 
-DoubleRollingAverage::DoubleRollingAverage(std::size_t window_size)
-    : capacity_(window_size)
+DoubleRollingAverage::DoubleRollingAverage(std::size_t window_size) : capacity_(window_size)
 {
     samples_.reserve(window_size);
 }
@@ -54,7 +54,8 @@ void DoubleRollingAverage::add(double value)
     if (count_ < capacity_) {
         samples_.push_back(value);
         ++count_;
-    } else {
+    }
+    else {
         total_ -= samples_[head_];
         samples_[head_] = value;
         head_ = (head_ + 1) % capacity_;
@@ -116,9 +117,7 @@ double DoubleRollingAverage::percentile95() const
 // ---- NetworkInterfaceAverages ----
 
 NetworkInterfaceAverages::NetworkInterfaceAverages(std::size_t window_size)
-    : rx_bytes_per_second(window_size),
-      tx_bytes_per_second(window_size),
-      rx_packets_per_second(window_size),
+    : rx_bytes_per_second(window_size), tx_bytes_per_second(window_size), rx_packets_per_second(window_size),
       tx_packets_per_second(window_size)
 {
 }
@@ -137,15 +136,9 @@ void NetworkInterfaceAverages::accept(const NetworkInterfaceInfo &info, double p
 
 // ---- NetworkMonitor ----
 
-NetworkMonitor::NetworkMonitor()
-    : poll_fn_(pollNetworkInterfaces)
-{
-}
+NetworkMonitor::NetworkMonitor() : poll_fn_(pollNetworkInterfaces) {}
 
-NetworkMonitor::NetworkMonitor(PollFn poll_fn)
-    : poll_fn_(std::move(poll_fn))
-{
-}
+NetworkMonitor::NetworkMonitor(PollFn poll_fn) : poll_fn_(std::move(poll_fn)) {}
 
 bool NetworkMonitor::shouldIgnore(const std::string &name)
 {
@@ -183,9 +176,7 @@ bool NetworkMonitor::poll()
             it = averages_.emplace(name, NetworkInterfaceAverages(kWindowSize)).first;
         }
         auto prev_it = previous_.find(name);
-        NetworkInterfaceInfo diff = prev_it != previous_.end()
-                                        ? info.subtract(prev_it->second)
-                                        : info;
+        NetworkInterfaceInfo diff = prev_it != previous_.end() ? info.subtract(prev_it->second) : info;
         it->second.accept(diff, static_cast<double>(kPollIntervalSeconds));
     }
 
@@ -297,8 +288,8 @@ std::map<std::string, NetworkInterfaceInfo> readProcNetDev(const std::vector<std
     int f_tx_packets = rx_count + indexOf(tx_fields, "packets");
     int f_tx_errors = rx_count + indexOf(tx_fields, "errs");
 
-    if (f_rx_bytes < 0 || f_rx_packets < 0 || f_rx_errors < 0 ||
-        f_tx_bytes < 0 || f_tx_packets < 0 || f_tx_errors < 0) {
+    if (f_rx_bytes < 0 || f_rx_packets < 0 || f_rx_errors < 0 || f_tx_bytes < 0 || f_tx_packets < 0 ||
+        f_tx_errors < 0) {
         return {};
     }
 
@@ -364,8 +355,7 @@ std::map<std::string, NetworkInterfaceInfo> pollNetworkInterfaces()
 std::map<std::string, NetworkInterfaceInfo> pollNetworkInterfaces()
 {
     ULONG table_size = 0;
-    if (GetIfTable(nullptr, &table_size, FALSE) != ERROR_INSUFFICIENT_BUFFER ||
-        table_size == 0) {
+    if (GetIfTable(nullptr, &table_size, FALSE) != ERROR_INSUFFICIENT_BUFFER || table_size == 0) {
         return {};
     }
 

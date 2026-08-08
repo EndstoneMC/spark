@@ -9,14 +9,14 @@
 #include <string>
 #include <vector>
 
-#include "native/alloc/allocation_sampler.h"
-#include "native/sampler/heartbeat.h"
 #include "core/profiler/profile_mode.h"
 #include "core/recovery/recovery_writer.h"
 #include "core/stats/ping_statistics.h"
-#include "native/sampler/sampler.h"
 #include "core/stats/statistics_service.h"
 #include "core/stats/system_stats.h"
+#include "native/alloc/allocation_sampler.h"
+#include "native/sampler/heartbeat.h"
+#include "native/sampler/sampler.h"
 
 namespace spark {
 
@@ -70,30 +70,12 @@ struct ExportContext {
 // its call tree into a spark SamplerData payload.
 class Profiler {
 public:
-    bool running() const
-    {
-        return running_.load();
-    }
-    std::int64_t startTimeMs() const
-    {
-        return start_time_ms_;
-    }
-    std::int64_t autoEndTimeMs() const
-    {
-        return auto_end_time_ms_;
-    }
-    std::int64_t endTimeMs() const
-    {
-        return end_time_ms_;
-    }
-    const ProfilerOptions &options() const
-    {
-        return options_;
-    }
-    ProfileMode mode() const
-    {
-        return mode_;
-    }
+    bool running() const { return running_.load(); }
+    std::int64_t startTimeMs() const { return start_time_ms_; }
+    std::int64_t autoEndTimeMs() const { return auto_end_time_ms_; }
+    std::int64_t endTimeMs() const { return end_time_ms_; }
+    const ProfilerOptions &options() const { return options_; }
+    ProfileMode mode() const { return mode_; }
     std::uint64_t sampleCount() const;
     std::uint64_t sampledAllocationBytes() const;
     std::uint64_t observedAllocationBytes() const;

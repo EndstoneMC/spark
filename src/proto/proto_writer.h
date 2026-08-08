@@ -14,7 +14,11 @@ namespace spark {
 // dependency. Validated against the real .proto with `protoc --decode`.
 class ProtoWriter {
 public:
-    enum WireType : std::uint8_t { Varint = 0, Fixed64 = 1, LengthDelimited = 2 };
+    enum WireType : std::uint8_t {
+        Varint = 0,
+        Fixed64 = 1,
+        LengthDelimited = 2
+    };
 
     explicit ProtoWriter(std::string &out) : out_(out) {}
 

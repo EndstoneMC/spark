@@ -21,8 +21,7 @@ std::uint64_t packCoord(int x, int z)
 
 }  // namespace
 
-std::vector<WorldRegion> groupChunksIntoRegions(
-    const std::map<std::pair<int, int>, WorldChunk> &chunks)
+std::vector<WorldRegion> groupChunksIntoRegions(const std::map<std::pair<int, int>, WorldChunk> &chunks)
 {
     // Build a hash map of chunks with entities > 0, keyed by packed coordinate.
     std::unordered_map<std::uint64_t, const WorldChunk *> chunkMap;

@@ -53,8 +53,7 @@ bool decodeRawPacket(std::string_view base64_data, WsIncomingPacket &out);
 
 // Encode outgoing packets as base64-encoded RawPacket strings (signed).
 // These produce the final text to send over the WebSocket.
-std::string encodeServerPong(bool ok, std::int32_t data,
-                             const std::vector<std::uint8_t> &private_key_pkcs8);
+std::string encodeServerPong(bool ok, std::int32_t data, const std::vector<std::uint8_t> &private_key_pkcs8);
 
 std::string encodeServerConnectResponse(const std::string &client_id,
                                         int state,  // 0=ACCEPTED, 1=UNTRUSTED, 2=REJECTED

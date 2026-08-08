@@ -15,10 +15,7 @@
 
 namespace spark {
 
-// Manages a live viewer WebSocket connection.
-// Created by ProfilerService when the user runs `profiler open`.
-// Uploads initial sampler data to bytebin with SocketChannelInfo embedded,
-// then pushes payload IDs on window rotation so the viewer can fetch updates.
+// Manages a live viewer WebSocket connection and pushes payload IDs on window rotation.
 class ViewerSocket {
 public:
     // Called to produce sampler data and upload it to bytebin.
@@ -62,7 +59,7 @@ public:
     // Returns false if the socket should be closed due to timeout.
     bool tick();
 
-    // Set the trusted-keys check callback (for P1-D).
+    // Sets the trusted-keys check callback for live viewer authentication.
     using IsKeyTrustedCallback = std::function<bool(const std::vector<std::uint8_t> &)>;
     void setIsKeyTrustedCallback(IsKeyTrustedCallback cb) { is_key_trusted_ = std::move(cb); }
 
@@ -95,8 +92,8 @@ private:
     std::mutex queue_mutex_;
     std::vector<std::string> incoming_queue_;
 
-    static constexpr std::int64_t kInitialTimeoutMs = 60000;   // 60s
-    static constexpr std::int64_t kEstablishedTimeoutMs = 30000; // 30s
+    static constexpr std::int64_t kInitialTimeoutMs = 60000;      // 60s
+    static constexpr std::int64_t kEstablishedTimeoutMs = 30000;  // 30s
 };
 
 }  // namespace spark

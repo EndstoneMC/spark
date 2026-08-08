@@ -22,12 +22,10 @@ constexpr int kRawPublicKey = 2;
 constexpr int kRawSignature = 3;
 constexpr int kRawMessage = 4;
 
-std::string buildRawPacket(std::string_view message,
-                           const std::vector<std::uint8_t> &private_key_pkcs8)
+std::string buildRawPacket(std::string_view message, const std::vector<std::uint8_t> &private_key_pkcs8)
 {
-    auto signature = Crypto::sign(private_key_pkcs8,
-                                  reinterpret_cast<const std::uint8_t *>(message.data()),
-                                  message.size());
+    auto signature =
+        Crypto::sign(private_key_pkcs8, reinterpret_cast<const std::uint8_t *>(message.data()), message.size());
 
     std::string raw;
     ProtoWriter w(raw);
@@ -35,15 +33,13 @@ std::string buildRawPacket(std::string_view message,
     // public_key is omitted for outgoing (server-signed) packets;
     // the viewer identifies the server by the channel's pre-announced key.
     if (!signature.empty()) {
-        w.string(kRawSignature, std::string_view(
-            reinterpret_cast<const char *>(signature.data()), signature.size()));
+        w.string(kRawSignature, std::string_view(reinterpret_cast<const char *>(signature.data()), signature.size()));
     }
     w.string(kRawMessage, message);
     return raw;
 }
 
-std::string wrapAndEncode(std::string_view packet_wrapper,
-                          const std::vector<std::uint8_t> &private_key_pkcs8)
+std::string wrapAndEncode(std::string_view packet_wrapper, const std::vector<std::uint8_t> &private_key_pkcs8)
 {
     std::string raw = buildRawPacket(packet_wrapper, private_key_pkcs8);
     return base64Encode(raw);
@@ -57,8 +53,7 @@ std::string encodeSocketChannelInfo(const SocketChannelInfo &info)
     ProtoWriter w(bytes);
     w.string(1, info.channel_id);
     if (!info.public_key.empty()) {
-        w.string(2, std::string_view(
-            reinterpret_cast<const char *>(info.public_key.data()), info.public_key.size()));
+        w.string(2, std::string_view(reinterpret_cast<const char *>(info.public_key.data()), info.public_key.size()));
     }
     return bytes;
 }
@@ -66,7 +61,9 @@ std::string encodeSocketChannelInfo(const SocketChannelInfo &info)
 bool decodeRawPacket(std::string_view base64_data, WsIncomingPacket &out)
 {
     auto raw_bytes = base64Decode(base64_data);
-    if (raw_bytes.empty()) return false;
+    if (raw_bytes.empty()) {
+        return false;
+    }
 
     ProtoReader raw(std::string_view(reinterpret_cast<const char *>(raw_bytes.data()), raw_bytes.size()));
     int version = 0;
@@ -77,58 +74,84 @@ bool decodeRawPacket(std::string_view base64_data, WsIncomingPacket &out)
     int field = 0;
     int wire = 0;
     while (raw.nextField(field, wire)) {
-        if (wire != 2 && wire != 0) { raw.skip(wire); continue; }
+        if (wire != 2 && wire != 0) {
+            raw.skip(wire);
+            continue;
+        }
         if (field == kRawVersion && wire == 0) {
             version = raw.readInt32();
-        } else if (field == kRawPublicKey && wire == 2) {
+        }
+        else if (field == kRawPublicKey && wire == 2) {
             auto sv = raw.readString();
             public_key.assign(reinterpret_cast<const std::uint8_t *>(sv.data()),
                               reinterpret_cast<const std::uint8_t *>(sv.data()) + sv.size());
-        } else if (field == kRawSignature && wire == 2) {
+        }
+        else if (field == kRawSignature && wire == 2) {
             auto sv = raw.readString();
             signature.assign(reinterpret_cast<const std::uint8_t *>(sv.data()),
                              reinterpret_cast<const std::uint8_t *>(sv.data()) + sv.size());
-        } else if (field == kRawMessage && wire == 2) {
+        }
+        else if (field == kRawMessage && wire == 2) {
             message = std::string(raw.readString());
-        } else {
+        }
+        else {
             raw.skip(wire);
         }
     }
 
-    if (version != Crypto::kVersion) return false;
-    if (message.empty()) return false;
+    if (version != Crypto::kVersion) {
+        return false;
+    }
+    if (message.empty()) {
+        return false;
+    }
 
     // Verify signature if both public_key and signature are present.
     out.verified = false;
     if (!public_key.empty() && !signature.empty()) {
-        out.verified = Crypto::verify(public_key,
-                                      reinterpret_cast<const std::uint8_t *>(message.data()),
-                                      message.size(),
-                                      signature.data(), signature.size());
+        out.verified = Crypto::verify(public_key, reinterpret_cast<const std::uint8_t *>(message.data()),
+                                      message.size(), signature.data(), signature.size());
     }
     out.public_key = std::move(public_key);
 
     // Decode the PacketWrapper inside message.
     ProtoReader wrapper(std::string_view(message.data(), message.size()));
     while (wrapper.nextField(field, wire)) {
-        if (wire != 2) { wrapper.skip(wire); continue; }
+        if (wire != 2) {
+            wrapper.skip(wire);
+            continue;
+        }
         if (field == kFieldClientPing) {
             out.type = WsPacketType::ClientPing;
             auto sub = wrapper.readMessage();
             while (sub.nextField(field, wire)) {
-                if (field == 1 && wire == 0) out.ping.ok = sub.readBool();
-                else if (field == 2 && wire == 0) out.ping.data = sub.readInt32();
-                else sub.skip(wire);
+                if (field == 1 && wire == 0) {
+                    out.ping.ok = sub.readBool();
+                }
+                else if (field == 2 && wire == 0) {
+                    out.ping.data = sub.readInt32();
+                }
+                else {
+                    sub.skip(wire);
+                }
             }
-        } else if (field == kFieldClientConnect) {
+        }
+        else if (field == kFieldClientConnect) {
             out.type = WsPacketType::ClientConnect;
             auto sub = wrapper.readMessage();
             while (sub.nextField(field, wire)) {
-                if (field == 1 && wire == 2) out.connect.client_id = std::string(sub.readString());
-                else if (field == 2 && wire == 2) out.connect.description = std::string(sub.readString());
-                else sub.skip(wire);
+                if (field == 1 && wire == 2) {
+                    out.connect.client_id = std::string(sub.readString());
+                }
+                else if (field == 2 && wire == 2) {
+                    out.connect.description = std::string(sub.readString());
+                }
+                else {
+                    sub.skip(wire);
+                }
             }
-        } else {
+        }
+        else {
             wrapper.skip(wire);
         }
     }
@@ -136,8 +159,7 @@ bool decodeRawPacket(std::string_view base64_data, WsIncomingPacket &out)
     return out.type != WsPacketType::Unknown;
 }
 
-std::string encodeServerPong(bool ok, std::int32_t data,
-                             const std::vector<std::uint8_t> &private_key_pkcs8)
+std::string encodeServerPong(bool ok, std::int32_t data, const std::vector<std::uint8_t> &private_key_pkcs8)
 {
     // ServerPong { bool ok = 1; int32 data = 2; }
     std::string pong;
@@ -153,10 +175,8 @@ std::string encodeServerPong(bool ok, std::int32_t data,
     return wrapAndEncode(wrapper, private_key_pkcs8);
 }
 
-std::string encodeServerConnectResponse(const std::string &client_id,
-                                        int state, int sampler_interval,
-                                        int statistics_interval,
-                                        const std::string &last_payload_id,
+std::string encodeServerConnectResponse(const std::string &client_id, int state, int sampler_interval,
+                                        int statistics_interval, const std::string &last_payload_id,
                                         const std::vector<std::uint8_t> &private_key_pkcs8)
 {
     // ServerConnectResponse.Settings { int32 statistics_interval = 1; int32 sampler_interval = 2; }
@@ -165,7 +185,8 @@ std::string encodeServerConnectResponse(const std::string &client_id,
     ws.int32(1, statistics_interval);
     ws.int32(2, sampler_interval);
 
-    // ServerConnectResponse { string client_id = 1; State state = 2; Settings settings = 3; string last_payload_id = 4; }
+    // ServerConnectResponse { string client_id = 1; State state = 2; Settings settings = 3; string last_payload_id = 4;
+    // }
     std::string resp;
     ProtoWriter wr(resp);
     wr.string(1, client_id);

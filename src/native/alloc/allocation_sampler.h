@@ -61,10 +61,8 @@ struct AllocationHookCapability {
     std::string detail;
 };
 
-// Native allocation sampler. Tree weights are estimated allocation bytes, not
-// elapsed time. Each process thread is sampled independently. Thread names are
-// matched by the aggregator, while lifecycle tracking continues across every
-// covered thread so realloc/free may occur on a different thread.
+// Native allocation sampler. Tree weights are allocation bytes; lifecycle tracking
+// spans all covered threads so realloc/free may occur on a different thread.
 class AllocationSampler {
 public:
     AllocationSampler();

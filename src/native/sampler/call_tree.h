@@ -1,8 +1,8 @@
 #ifndef ENDSTONE_SPARK_CALL_TREE_H
 #define ENDSTONE_SPARK_CALL_TREE_H
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <unordered_map>
@@ -24,22 +24,13 @@ public:
 
     // Log one sample (frames ordered leaf..root) with the given weight into a window.
     void log(const std::vector<FrameKey> &frames, std::int32_t window, std::uint64_t weight = 1);
-    bool logBounded(const std::vector<FrameKey> &frames, std::int32_t window,
-                    std::uint64_t weight, std::size_t &remaining_nodes);
+    bool logBounded(const std::vector<FrameKey> &frames, std::int32_t window, std::uint64_t weight,
+                    std::size_t &remaining_nodes);
 
-    const Node &root() const
-    {
-        return root_;
-    }
-    Node &root()
-    {
-        return root_;
-    }
+    const Node &root() const { return root_; }
+    Node &root() { return root_; }
 
-    bool empty() const
-    {
-        return root_.times.empty();
-    }
+    bool empty() const { return root_.times.empty(); }
 
     // Total profile weight logged (execution microseconds or allocation bytes).
     std::uint64_t sampleCount() const;

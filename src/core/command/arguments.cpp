@@ -96,8 +96,7 @@ std::optional<double> Arguments::doubleFlag(const std::string &name) const
     }
     const std::string &text = it->second;
     double value = 0.0;
-    auto [end, error] =
-        std::from_chars(text.data(), text.data() + text.size(), value, std::chars_format::general);
+    auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, std::chars_format::general);
     if (error != std::errc{} || end != text.data() + text.size() || !std::isfinite(value)) {
         return std::nullopt;
     }

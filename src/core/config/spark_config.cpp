@@ -4,7 +4,6 @@
 #include <fstream>
 #include <sstream>
 #include <string>
-
 #include <toml.hpp>
 
 namespace spark {
@@ -17,19 +16,34 @@ std::string escapeString(std::string_view s)
     out.reserve(s.size() + 2);
     for (char ch : s) {
         switch (ch) {
-        case '"':  out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\b': out += "\\b"; break;
-        case '\f': out += "\\f"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
         default:
             if (static_cast<unsigned char>(ch) < 0x20) {
                 char buf[8];
                 std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
                 out += buf;
-            } else {
+            }
+            else {
                 out += ch;
             }
             break;
@@ -40,17 +54,15 @@ std::string escapeString(std::string_view s)
 
 }  // namespace
 
-SparkConfig::SparkConfig(std::filesystem::path file)
-    : file_(std::move(file))
-{
-}
+SparkConfig::SparkConfig(std::filesystem::path file) : file_(std::move(file)) {}
 
 bool SparkConfig::load()
 {
     last_error_.clear();
 
-    if (!std::filesystem::exists(file_))
+    if (!std::filesystem::exists(file_)) {
         return false;
+    }
 
     std::ifstream in(file_);
     if (!in) {
@@ -65,32 +77,41 @@ bool SparkConfig::load()
     toml::parse_result result;
     try {
         result = toml::parse(text);
-    } catch (const toml::parse_error &) {
+    }
+    catch (const toml::parse_error &) {
         last_error_ = "Malformed TOML in config file - using defaults";
         return false;
     }
 
     // Strings
-    if (auto v = result["viewerUrl"].value<std::string>())
+    if (auto v = result["viewerUrl"].value<std::string>()) {
         viewer_url = *v;
-    if (auto v = result["bytebinUrl"].value<std::string>())
+    }
+    if (auto v = result["bytebinUrl"].value<std::string>()) {
         bytebin_url = *v;
-    if (auto v = result["bytesocksHost"].value<std::string>())
+    }
+    if (auto v = result["bytesocksHost"].value<std::string>()) {
         bytesocks_host = *v;
-    if (auto v = result["backgroundProfilerThreadGrouper"].value<std::string>())
+    }
+    if (auto v = result["backgroundProfilerThreadGrouper"].value<std::string>()) {
         background_profiler_thread_grouper = *v;
-    if (auto v = result["backgroundProfilerThreadDumper"].value<std::string>())
+    }
+    if (auto v = result["backgroundProfilerThreadDumper"].value<std::string>()) {
         background_profiler_thread_dumper = *v;
+    }
 
     // Booleans
-    if (auto v = result["backgroundProfiler"].value<bool>())
+    if (auto v = result["backgroundProfiler"].value<bool>()) {
         background_profiler_enabled = *v;
-    if (auto v = result["disableResponseBroadcast"].value<bool>())
+    }
+    if (auto v = result["disableResponseBroadcast"].value<bool>()) {
         disable_response_broadcast = *v;
+    }
 
     // Integers
-    if (auto v = result["backgroundProfilerInterval"].value<int64_t>())
+    if (auto v = result["backgroundProfilerInterval"].value<int64_t>()) {
         background_profiler_interval = static_cast<int>(*v);
+    }
 
     return true;
 }

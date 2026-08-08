@@ -11,7 +11,7 @@ namespace spark {
 class Crypto {
 public:
     struct KeyPair {
-        std::vector<std::uint8_t> public_key_x509;   // X.509 SubjectPublicKeyInfo DER
+        std::vector<std::uint8_t> public_key_x509;  // X.509 SubjectPublicKeyInfo DER
         // Private key is stored as PKCS#8 DER. Opaque to callers.
         std::vector<std::uint8_t> private_key_pkcs8;
     };
@@ -26,9 +26,8 @@ public:
                                           const std::uint8_t *message, std::size_t length);
 
     // Verify a signature. Returns false on failure or mismatch.
-    static bool verify(const std::vector<std::uint8_t> &public_key_x509,
-                       const std::uint8_t *message, std::size_t length,
-                       const std::uint8_t *signature, std::size_t sig_length);
+    static bool verify(const std::vector<std::uint8_t> &public_key_x509, const std::uint8_t *message,
+                       std::size_t length, const std::uint8_t *signature, std::size_t sig_length);
 
     // Decode a raw X.509 SubjectPublicKeyInfo DER blob into a usable public key.
     // Returns empty vector on failure.

@@ -1,9 +1,9 @@
-#include "core/stats/ping_statistics.h"
-
 #include <cassert>
 #include <map>
 #include <string>
 #include <vector>
+
+#include "core/stats/ping_statistics.h"
 
 using namespace spark;
 
@@ -12,8 +12,7 @@ namespace {
 // A simple mock ping provider for deterministic testing.
 class MockPingProvider : public PlayerPingProvider {
 public:
-    explicit MockPingProvider(std::map<std::string, int> pings)
-        : pings_(std::move(pings)) {}
+    explicit MockPingProvider(std::map<std::string, int> pings) : pings_(std::move(pings)) {}
 
     std::map<std::string, int> poll() override { return pings_; }
 

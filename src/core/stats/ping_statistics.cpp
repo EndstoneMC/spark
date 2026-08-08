@@ -8,8 +8,7 @@ namespace spark {
 
 // --- PingSummary ---
 
-PingSummary::PingSummary(std::vector<int> values)
-    : sorted_(std::move(values))
+PingSummary::PingSummary(std::vector<int> values) : sorted_(std::move(values))
 {
     std::sort(sorted_.begin(), sorted_.end());
 }
@@ -61,7 +60,8 @@ void PingRollingAverage::add(int value)
     if (count_ < capacity_) {
         samples_.push_back(value);
         ++count_;
-    } else {
+    }
+    else {
         samples_[head_] = value;
         head_ = (head_ + 1) % capacity_;
     }
@@ -132,10 +132,7 @@ int PingRollingAverage::max() const
 
 // --- PingStatistics ---
 
-PingStatistics::PingStatistics(PlayerPingProvider &provider)
-    : provider_(provider), rolling_average_(kWindowSize)
-{
-}
+PingStatistics::PingStatistics(PlayerPingProvider &provider) : provider_(provider), rolling_average_(kWindowSize) {}
 
 bool PingStatistics::poll()
 {
@@ -178,8 +175,12 @@ PlayerPing PingStatistics::query(const std::string &player_name) const
             for (std::size_t i = 0; i < name.size(); ++i) {
                 char a = name[i];
                 char b = player_name[i];
-                if (a >= 'A' && a <= 'Z') a = static_cast<char>(a + 32);
-                if (b >= 'A' && b <= 'Z') b = static_cast<char>(b + 32);
+                if (a >= 'A' && a <= 'Z') {
+                    a = static_cast<char>(a + 32);
+                }
+                if (b >= 'A' && b <= 'Z') {
+                    b = static_cast<char>(b + 32);
+                }
                 if (a != b) {
                     match = false;
                     break;

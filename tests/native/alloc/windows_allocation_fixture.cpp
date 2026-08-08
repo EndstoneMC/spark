@@ -1,9 +1,8 @@
-#include <cstdlib>
-
 #include <windows.h>
 
-extern "C" __declspec(dllexport) void
-sparkAllocationFixtureRun(volatile LONG *running)
+#include <cstdlib>
+
+extern "C" __declspec(dllexport) void sparkAllocationFixtureRun(volatile LONG *running)
 {
     while (::InterlockedCompareExchange(running, 1, 1) == 1) {
         void *pointer = std::malloc(256);

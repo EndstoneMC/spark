@@ -15,17 +15,14 @@ namespace {
 
 std::int64_t nowMs()
 {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::system_clock::now().time_since_epoch())
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
 
 }  // namespace
 
 ViewerSocket::ViewerSocket(Config config, Crypto::KeyPair key_pair)
-    : config_(std::move(config)),
-      key_pair_(std::move(key_pair)),
-      open_time_ms_(nowMs())
+    : config_(std::move(config)), key_pair_(std::move(key_pair)), open_time_ms_(nowMs())
 {
 }
 
@@ -110,7 +107,9 @@ void ViewerSocket::sendUpdate(const std::string &bytebin_key)
 
 void ViewerSocket::close()
 {
-    if (!open_.exchange(false)) return;
+    if (!open_.exchange(false)) {
+        return;
+    }
     if (ws_) {
         if (ws_->isOpen()) {
             std::string msg = encodeServerClose(key_pair_.private_key_pkcs8);
@@ -122,7 +121,9 @@ void ViewerSocket::close()
 
 bool ViewerSocket::tick()
 {
-    if (!open_.load()) return false;
+    if (!open_.load()) {
+        return false;
+    }
 
     // Process queued incoming messages.
     std::vector<std::string> messages;
@@ -132,39 +133,37 @@ bool ViewerSocket::tick()
     }
     for (const auto &msg : messages) {
         WsIncomingPacket packet;
-        if (!decodeRawPacket(msg, packet)) continue;
+        if (!decodeRawPacket(msg, packet)) {
+            continue;
+        }
 
         switch (packet.type) {
-            case WsPacketType::ClientPing:
-                last_ping_ms_.store(nowMs());
-                ws_->send(encodeServerPong(!open_.load() ? false : true,
-                                           packet.ping.data,
-                                           key_pair_.private_key_pkcs8));
-                break;
-            case WsPacketType::ClientConnect: {
-                last_ping_ms_.store(nowMs());
-                bool trusted = false;
-                if (is_key_trusted_ && !packet.public_key.empty()) {
-                    trusted = is_key_trusted_(packet.public_key);
-                }
-                if (!packet.public_key.empty()) {
-                    pending_keys_[packet.connect.client_id] = packet.public_key;
-                }
-                int state = trusted ? 0 : 1;  // 0=ACCEPTED, 1=UNTRUSTED
-                std::string payload_id;
-                {
-                    std::lock_guard<std::mutex> lock(payload_mutex_);
-                    payload_id = last_payload_id_;
-                }
-                ws_->send(encodeServerConnectResponse(
-                    packet.connect.client_id, state,
-                    10, 10,  // sampler_interval, statistics_interval
-                    payload_id,
-                    key_pair_.private_key_pkcs8));
-                break;
+        case WsPacketType::ClientPing:
+            last_ping_ms_.store(nowMs());
+            ws_->send(encodeServerPong(!open_.load() ? false : true, packet.ping.data, key_pair_.private_key_pkcs8));
+            break;
+        case WsPacketType::ClientConnect: {
+            last_ping_ms_.store(nowMs());
+            bool trusted = false;
+            if (is_key_trusted_ && !packet.public_key.empty()) {
+                trusted = is_key_trusted_(packet.public_key);
             }
-            default:
-                break;
+            if (!packet.public_key.empty()) {
+                pending_keys_[packet.connect.client_id] = packet.public_key;
+            }
+            int state = trusted ? 0 : 1;  // 0=ACCEPTED, 1=UNTRUSTED
+            std::string payload_id;
+            {
+                std::lock_guard<std::mutex> lock(payload_mutex_);
+                payload_id = last_payload_id_;
+            }
+            ws_->send(encodeServerConnectResponse(packet.connect.client_id, state, 10,
+                                                  10,  // sampler_interval, statistics_interval
+                                                  payload_id, key_pair_.private_key_pkcs8));
+            break;
+        }
+        default:
+            break;
         }
     }
 
@@ -203,11 +202,8 @@ void ViewerSocket::sendClientTrusted(const std::string &client_id)
         std::lock_guard<std::mutex> lock(payload_mutex_);
         payload_id = last_payload_id_;
     }
-    ws_->send(encodeServerConnectResponse(
-        client_id, 0,  // 0=ACCEPTED
-        10, 10,
-        payload_id,
-        key_pair_.private_key_pkcs8));
+    ws_->send(encodeServerConnectResponse(client_id, 0,  // 0=ACCEPTED
+                                          10, 10, payload_id, key_pair_.private_key_pkcs8));
 }
 
 }  // namespace spark

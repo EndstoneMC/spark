@@ -15,8 +15,7 @@ constexpr std::int64_t kUrlExpiryMs = 60LL * 24 * 3600 * 1000;  // 60 days
 
 std::int64_t nowMs()
 {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::system_clock::now().time_since_epoch())
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
 
@@ -26,19 +25,34 @@ std::string jsonEscape(std::string_view s)
     out.reserve(s.size() + 2);
     for (char ch : s) {
         switch (ch) {
-        case '"':  out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\b': out += "\\b"; break;
-        case '\f': out += "\\f"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
         default:
             if (static_cast<unsigned char>(ch) < 0x20) {
                 char buf[8];
                 std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
                 out += buf;
-            } else {
+            }
+            else {
                 out += ch;
             }
             break;
@@ -49,7 +63,14 @@ std::string jsonEscape(std::string_view s)
 
 // Minimal recursive-descent JSON parser for the known activity-log structure.
 struct JsonValue {
-    enum class Type { Null, Bool, Number, String, Array, Object };
+    enum class Type {
+        Null,
+        Bool,
+        Number,
+        String,
+        Array,
+        Object
+    };
     Type type = Type::Null;
     bool bool_val = false;
     double num_val = 0.0;
@@ -60,7 +81,9 @@ struct JsonValue {
     const JsonValue *find(std::string_view key) const
     {
         for (const auto &[k, v] : obj_val) {
-            if (k == key) return &v;
+            if (k == key) {
+                return &v;
+            }
         }
         return nullptr;
     }
@@ -83,7 +106,8 @@ private:
             char ch = text_[pos_];
             if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
                 ++pos_;
-            } else {
+            }
+            else {
                 break;
             }
         }
@@ -92,13 +116,25 @@ private:
     bool parseValue(JsonValue &out)
     {
         skipWs();
-        if (pos_ >= text_.size()) return false;
+        if (pos_ >= text_.size()) {
+            return false;
+        }
         char ch = text_[pos_];
-        if (ch == '{') return parseObject(out);
-        if (ch == '[') return parseArray(out);
-        if (ch == '"') return parseString(out);
-        if (ch == 't' || ch == 'f') return parseBool(out);
-        if (ch == 'n') return parseNull(out);
+        if (ch == '{') {
+            return parseObject(out);
+        }
+        if (ch == '[') {
+            return parseArray(out);
+        }
+        if (ch == '"') {
+            return parseString(out);
+        }
+        if (ch == 't' || ch == 'f') {
+            return parseBool(out);
+        }
+        if (ch == 'n') {
+            return parseNull(out);
+        }
         return parseNumber(out);
     }
 
@@ -113,19 +149,35 @@ private:
         }
         while (pos_ < text_.size()) {
             skipWs();
-            if (pos_ >= text_.size() || text_[pos_] != '"') return false;
+            if (pos_ >= text_.size() || text_[pos_] != '"') {
+                return false;
+            }
             JsonValue key;
-            if (!parseString(key)) return false;
+            if (!parseString(key)) {
+                return false;
+            }
             skipWs();
-            if (pos_ >= text_.size() || text_[pos_] != ':') return false;
+            if (pos_ >= text_.size() || text_[pos_] != ':') {
+                return false;
+            }
             ++pos_;
             JsonValue val;
-            if (!parseValue(val)) return false;
+            if (!parseValue(val)) {
+                return false;
+            }
             out.obj_val.emplace_back(key.str_val, std::move(val));
             skipWs();
-            if (pos_ >= text_.size()) return false;
-            if (text_[pos_] == ',') { ++pos_; continue; }
-            if (text_[pos_] == '}') { ++pos_; return true; }
+            if (pos_ >= text_.size()) {
+                return false;
+            }
+            if (text_[pos_] == ',') {
+                ++pos_;
+                continue;
+            }
+            if (text_[pos_] == '}') {
+                ++pos_;
+                return true;
+            }
             return false;
         }
         return false;
@@ -142,12 +194,22 @@ private:
         }
         while (pos_ < text_.size()) {
             JsonValue val;
-            if (!parseValue(val)) return false;
+            if (!parseValue(val)) {
+                return false;
+            }
             out.arr_val.push_back(std::move(val));
             skipWs();
-            if (pos_ >= text_.size()) return false;
-            if (text_[pos_] == ',') { ++pos_; continue; }
-            if (text_[pos_] == ']') { ++pos_; return true; }
+            if (pos_ >= text_.size()) {
+                return false;
+            }
+            if (text_[pos_] == ',') {
+                ++pos_;
+                continue;
+            }
+            if (text_[pos_] == ']') {
+                ++pos_;
+                return true;
+            }
             return false;
         }
         return false;
@@ -160,27 +222,51 @@ private:
         out.str_val.clear();
         while (pos_ < text_.size()) {
             char ch = text_[pos_++];
-            if (ch == '"') return true;
+            if (ch == '"') {
+                return true;
+            }
             if (ch == '\\') {
-                if (pos_ >= text_.size()) return false;
+                if (pos_ >= text_.size()) {
+                    return false;
+                }
                 char esc = text_[pos_++];
                 switch (esc) {
-                case '"':  out.str_val += '"'; break;
-                case '\\': out.str_val += '\\'; break;
-                case '/':  out.str_val += '/'; break;
-                case 'b':  out.str_val += '\b'; break;
-                case 'f':  out.str_val += '\f'; break;
-                case 'n':  out.str_val += '\n'; break;
-                case 'r':  out.str_val += '\r'; break;
-                case 't':  out.str_val += '\t'; break;
+                case '"':
+                    out.str_val += '"';
+                    break;
+                case '\\':
+                    out.str_val += '\\';
+                    break;
+                case '/':
+                    out.str_val += '/';
+                    break;
+                case 'b':
+                    out.str_val += '\b';
+                    break;
+                case 'f':
+                    out.str_val += '\f';
+                    break;
+                case 'n':
+                    out.str_val += '\n';
+                    break;
+                case 'r':
+                    out.str_val += '\r';
+                    break;
+                case 't':
+                    out.str_val += '\t';
+                    break;
                 case 'u':
-                    if (pos_ + 4 > text_.size()) return false;
+                    if (pos_ + 4 > text_.size()) {
+                        return false;
+                    }
                     out.str_val += '?';
                     pos_ += 4;
                     break;
-                default: return false;
+                default:
+                    return false;
                 }
-            } else {
+            }
+            else {
                 out.str_val += ch;
             }
         }
@@ -217,23 +303,27 @@ private:
     {
         out.type = JsonValue::Type::Number;
         std::size_t start = pos_;
-        if (pos_ < text_.size() && (text_[pos_] == '-' || text_[pos_] == '+'))
+        if (pos_ < text_.size() && (text_[pos_] == '-' || text_[pos_] == '+')) {
             ++pos_;
+        }
         bool has_digit = false;
         while (pos_ < text_.size()) {
             char ch = text_[pos_];
-            if ((ch >= '0' && ch <= '9') || ch == '.' || ch == 'e' || ch == 'E' ||
-                ch == '+' || ch == '-') {
+            if ((ch >= '0' && ch <= '9') || ch == '.' || ch == 'e' || ch == 'E' || ch == '+' || ch == '-') {
                 ++pos_;
                 has_digit = true;
-            } else {
+            }
+            else {
                 break;
             }
         }
-        if (!has_digit) return false;
+        if (!has_digit) {
+            return false;
+        }
         try {
             out.num_val = std::stod(text_.substr(start, pos_ - start));
-        } catch (...) {
+        }
+        catch (...) {
             return false;
         }
         return true;
@@ -245,42 +335,60 @@ private:
 
 bool parseActivity(const JsonValue &elem, Activity &out)
 {
-    if (elem.type != JsonValue::Type::Object) return false;
+    if (elem.type != JsonValue::Type::Object) {
+        return false;
+    }
     const JsonValue *user = elem.find("user");
     const JsonValue *time = elem.find("time");
     const JsonValue *type = elem.find("type");
     const JsonValue *data = elem.find("data");
-    if (!user || !time || !type || !data) return false;
-    if (user->type != JsonValue::Type::Object) return false;
-    if (time->type != JsonValue::Type::Number) return false;
-    if (type->type != JsonValue::Type::String) return false;
-    if (data->type != JsonValue::Type::Object) return false;
+    if (!user || !time || !type || !data) {
+        return false;
+    }
+    if (user->type != JsonValue::Type::Object) {
+        return false;
+    }
+    if (time->type != JsonValue::Type::Number) {
+        return false;
+    }
+    if (type->type != JsonValue::Type::String) {
+        return false;
+    }
+    if (data->type != JsonValue::Type::Object) {
+        return false;
+    }
 
     const JsonValue *name = user->find("name");
     const JsonValue *is_player = user->find("isPlayer");
-    if (!name || name->type != JsonValue::Type::String) return false;
-    if (!is_player || is_player->type != JsonValue::Type::Bool) return false;
+    if (!name || name->type != JsonValue::Type::String) {
+        return false;
+    }
+    if (!is_player || is_player->type != JsonValue::Type::Bool) {
+        return false;
+    }
 
     const JsonValue *data_type = data->find("type");
     const JsonValue *data_value = data->find("value");
-    if (!data_type || data_type->type != JsonValue::Type::String) return false;
-    if (!data_value || data_value->type != JsonValue::Type::String) return false;
+    if (!data_type || data_type->type != JsonValue::Type::String) {
+        return false;
+    }
+    if (!data_value || data_value->type != JsonValue::Type::String) {
+        return false;
+    }
 
     out.user_name = name->str_val;
     out.user_is_player = is_player->bool_val;
     out.time_ms = static_cast<std::int64_t>(time->num_val);
     out.type = type->str_val;
-    out.data_type = (data_type->str_val == "url")
-                        ? Activity::DataType::Url
-                        : Activity::DataType::File;
+    out.data_type = (data_type->str_val == "url") ? Activity::DataType::Url : Activity::DataType::File;
     out.data_value = data_value->str_val;
     return true;
 }
 
 }  // namespace
 
-Activity Activity::url(std::string user_name, bool user_is_player,
-                       std::int64_t time_ms, std::string type, std::string url)
+Activity Activity::url(std::string user_name, bool user_is_player, std::int64_t time_ms, std::string type,
+                       std::string url)
 {
     Activity a;
     a.user_name = std::move(user_name);
@@ -292,8 +400,8 @@ Activity Activity::url(std::string user_name, bool user_is_player,
     return a;
 }
 
-Activity Activity::file(std::string user_name, bool user_is_player,
-                        std::int64_t time_ms, std::string type, std::string path)
+Activity Activity::file(std::string user_name, bool user_is_player, std::int64_t time_ms, std::string type,
+                        std::string path)
 {
     Activity a;
     a.user_name = std::move(user_name);
@@ -316,13 +424,10 @@ bool Activity::shouldExpire(std::int64_t now_ms) const
 std::string Activity::serialize() const
 {
     std::ostringstream ss;
-    ss << "{\"user\":{\"name\":\"" << jsonEscape(user_name)
-       << "\",\"isPlayer\":" << (user_is_player ? "true" : "false")
-       << "},\"time\":" << time_ms
-       << ",\"type\":\"" << jsonEscape(type) << "\""
-       << ",\"data\":{\"type\":\""
-       << (data_type == DataType::Url ? "url" : "file")
-       << "\",\"value\":\"" << jsonEscape(data_value) << "\"}}";
+    ss << "{\"user\":{\"name\":\"" << jsonEscape(user_name) << "\",\"isPlayer\":" << (user_is_player ? "true" : "false")
+       << "},\"time\":" << time_ms << ",\"type\":\"" << jsonEscape(type) << "\""
+       << ",\"data\":{\"type\":\"" << (data_type == DataType::Url ? "url" : "file") << "\",\"value\":\""
+       << jsonEscape(data_value) << "\"}}";
     return ss.str();
 }
 
@@ -330,14 +435,13 @@ bool Activity::deserialize(const std::string &json, Activity &out)
 {
     JsonParser parser(json);
     JsonValue root;
-    if (!parser.parse(root)) return false;
+    if (!parser.parse(root)) {
+        return false;
+    }
     return parseActivity(root, out);
 }
 
-ActivityLog::ActivityLog(std::filesystem::path file)
-    : file_(std::move(file))
-{
-}
+ActivityLog::ActivityLog(std::filesystem::path file) : file_(std::move(file)) {}
 
 void ActivityLog::add(const Activity &activity)
 {
@@ -360,7 +464,9 @@ void ActivityLog::load()
         return;
     }
     std::ifstream in(file_);
-    if (!in) return;
+    if (!in) {
+        return;
+    }
     std::ostringstream ss;
     ss << in.rdbuf();
     std::string text = ss.str();
@@ -374,7 +480,9 @@ void ActivityLog::load()
     bool need_save = false;
     for (const JsonValue &elem : root.arr_val) {
         Activity activity;
-        if (!parseActivity(elem, activity)) continue;
+        if (!parseActivity(elem, activity)) {
+            continue;
+        }
         if (activity.shouldExpire(nowMs())) {
             need_save = true;
             continue;
@@ -392,7 +500,8 @@ void ActivityLog::save() const
     std::ostringstream ss;
     if (entries_.empty()) {
         ss << "[]\n";
-    } else {
+    }
+    else {
         ss << "[\n";
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             const Activity &a = entries_[i];
@@ -404,12 +513,13 @@ void ActivityLog::save() const
             ss << "    \"time\": " << a.time_ms << ",\n";
             ss << "    \"type\": \"" << jsonEscape(a.type) << "\",\n";
             ss << "    \"data\": {\n";
-            ss << "      \"type\": \""
-               << (a.data_type == Activity::DataType::Url ? "url" : "file") << "\",\n";
+            ss << "      \"type\": \"" << (a.data_type == Activity::DataType::Url ? "url" : "file") << "\",\n";
             ss << "      \"value\": \"" << jsonEscape(a.data_value) << "\"\n";
             ss << "    }\n";
             ss << "  }";
-            if (i + 1 < entries_.size()) ss << ",";
+            if (i + 1 < entries_.size()) {
+                ss << ",";
+            }
             ss << "\n";
         }
         ss << "]\n";
@@ -422,7 +532,9 @@ void ActivityLog::save() const
     tmp += ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary);
-        if (!out) return;
+        if (!out) {
+            return;
+        }
         out << ss.str();
         out.close();
     }

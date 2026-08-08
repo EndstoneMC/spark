@@ -1,13 +1,12 @@
-#include "core/stats/network_monitor.h"
-
+#include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <map>
 #include <string>
 #include <vector>
 
-#include <cassert>
-#include <cstdio>
+#include "core/stats/network_monitor.h"
 
 using namespace spark;
 
@@ -16,10 +15,7 @@ namespace {
 // Mock poll function that returns a sequence of predefined readings.
 class MockPoller {
 public:
-    void addReading(const std::map<std::string, NetworkInterfaceInfo> &reading)
-    {
-        readings_.push_back(reading);
-    }
+    void addReading(const std::map<std::string, NetworkInterfaceInfo> &reading) { readings_.push_back(reading); }
 
     std::map<std::string, NetworkInterfaceInfo> operator()()
     {
@@ -34,8 +30,7 @@ private:
     std::size_t index_ = 0;
 };
 
-NetworkInterfaceInfo makeInfo(const std::string &name,
-                              std::int64_t rx_bytes, std::int64_t rx_packets,
+NetworkInterfaceInfo makeInfo(const std::string &name, std::int64_t rx_bytes, std::int64_t rx_packets,
                               std::int64_t tx_bytes, std::int64_t tx_packets)
 {
     NetworkInterfaceInfo info;

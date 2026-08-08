@@ -3,12 +3,12 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cctype>
+#include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -27,30 +27,31 @@
 #else
 #include <dlfcn.h>
 #include <pthread.h>
-#include <sys/syscall.h>
 #include <unistd.h>
+
+#include <sys/syscall.h>
 #endif
 
 #include "core/command/arguments.h"
+#include "native/alloc/allocation_sampler.h"
 #include "native/alloc/allocation_thread_filter.h"
 #include "native/alloc/byte_sampler.h"
-#include "native/alloc/allocation_sampler.h"
 #if defined(__linux__)
 #include "native/alloc/elf_import_hooks.h"
 #endif
+#include "core/profiler/profiler.h"
+#include "core/stats/executable_hash.h"
+#include "core/stats/statistics_service.h"
+#include "core/stats/tick_monitor.h"
+#include "native/sampler/capture.h"
+#include "native/sampler/thread_info.h"
+#include "native/sampler/types.h"
+#include "native/symbol/symbolicate.h"
 #include "net/bytebin.h"
 #include "net/gzip.h"
 #include "net/profile_file.h"
 #include "proto/sampler_data.h"
-#include "native/sampler/capture.h"
-#include "core/profiler/profiler.h"
-#include "native/symbol/symbolicate.h"
-#include "native/sampler/thread_info.h"
-#include "native/sampler/types.h"
 #include "spark_constants.h"
-#include "core/stats/executable_hash.h"
-#include "core/stats/statistics_service.h"
-#include "core/stats/tick_monitor.h"
 
 namespace {
 
@@ -64,13 +65,11 @@ struct ProtoField {
     std::string_view bytes;
 };
 
-bool readProtoVarint(std::string_view bytes, std::size_t &offset,
-                     std::uint64_t &value)
+bool readProtoVarint(std::string_view bytes, std::size_t &offset, std::uint64_t &value)
 {
     value = 0;
     for (int shift = 0; shift < 64 && offset < bytes.size(); shift += 7) {
-        const unsigned char byte =
-            static_cast<unsigned char>(bytes[offset++]);
+        const unsigned char byte = static_cast<unsigned char>(bytes[offset++]);
         value |= static_cast<std::uint64_t>(byte & 0x7f) << shift;
         if ((byte & 0x80) == 0) {
             return true;
@@ -79,8 +78,7 @@ bool readProtoVarint(std::string_view bytes, std::size_t &offset,
     return false;
 }
 
-bool nextProtoField(std::string_view bytes, std::size_t &offset,
-                    ProtoField &field)
+bool nextProtoField(std::string_view bytes, std::size_t &offset, ProtoField &field)
 {
     std::uint64_t tag = 0;
     if (!readProtoVarint(bytes, offset, tag) || tag == 0) {
@@ -104,8 +102,7 @@ bool nextProtoField(std::string_view bytes, std::size_t &offset,
     }
     if (field.wire_type == 2) {
         std::uint64_t size = 0;
-        if (!readProtoVarint(bytes, offset, size) ||
-            size > bytes.size() - offset) {
+        if (!readProtoVarint(bytes, offset, size) || size > bytes.size() - offset) {
             return false;
         }
         field.bytes = bytes.substr(offset, static_cast<std::size_t>(size));
@@ -122,8 +119,7 @@ bool nextProtoField(std::string_view bytes, std::size_t &offset,
     return false;
 }
 
-bool findProtoField(std::string_view bytes, int number, ProtoField &result,
-                    std::size_t occurrence = 0)
+bool findProtoField(std::string_view bytes, int number, ProtoField &result, std::size_t occurrence = 0)
 {
     std::size_t offset = 0;
     std::size_t matched = 0;
@@ -145,8 +141,7 @@ bool nearlyEqual(double actual, double expected)
     return std::abs(actual - expected) < 0.000001;
 }
 
-bool findProtoPath(std::string_view bytes,
-                   std::initializer_list<int> path, ProtoField &result)
+bool findProtoPath(std::string_view bytes, std::initializer_list<int> path, ProtoField &result)
 {
     std::size_t index = 0;
     for (int number : path) {
@@ -163,29 +158,20 @@ bool findProtoPath(std::string_view bytes,
     return true;
 }
 
-bool protoRealEquals(std::string_view bytes,
-                     std::initializer_list<int> path, double expected)
+bool protoRealEquals(std::string_view bytes, std::initializer_list<int> path, double expected)
 {
     ProtoField field;
-    return findProtoPath(bytes, path, field) && field.wire_type == 1 &&
-           nearlyEqual(field.real, expected);
+    return findProtoPath(bytes, path, field) && field.wire_type == 1 && nearlyEqual(field.real, expected);
 }
 
-bool protoVarintEquals(std::string_view bytes,
-                       std::initializer_list<int> path,
-                       std::uint64_t expected)
+bool protoVarintEquals(std::string_view bytes, std::initializer_list<int> path, std::uint64_t expected)
 {
     ProtoField field;
-    return findProtoPath(bytes, path, field) && field.wire_type == 0 &&
-           field.varint == expected;
+    return findProtoPath(bytes, path, field) && field.wire_type == 0 && field.varint == expected;
 }
 
 #if defined(_WIN32)
-void __cdecl ignoreInvalidParameter(const wchar_t *, const wchar_t *,
-                                    const wchar_t *, unsigned int,
-                                    std::uintptr_t)
-{
-}
+void __cdecl ignoreInvalidParameter(const wchar_t *, const wchar_t *, const wchar_t *, unsigned int, std::uintptr_t) {}
 #endif
 
 double hotInner(int n)
@@ -212,11 +198,7 @@ void hotOuter()
 std::atomic<std::uint64_t> g_worker_tid{0};
 std::atomic<bool> g_run{true};
 
-// Poll a condition with a bounded deadline instead of relying on a fixed sleep.
-// The sampler's capture timing is non-deterministic (thread startup latency,
-// StackWalk64 cost, OS scheduling), so a fixed sleep may observe zero samples
-// even when the sampler is functioning correctly.  This helper waits until the
-// predicate is satisfied or the deadline expires, whichever comes first.
+// Poll a condition with a bounded deadline; capture timing is non-deterministic.
 template <typename Predicate, typename Rep, typename Period>
 bool waitForCondition(Predicate pred, std::chrono::duration<Rep, Period> timeout)
 {
@@ -257,10 +239,7 @@ bool verifySessionIsolation(std::uint64_t worker_tid)
         std::fprintf(stderr, "session isolation: sampler start failed\n");
         return false;
     }
-    // Wait for the sampler to capture at least one sample before driving the
-    // 50-tick observation loop.  The sampler's first capture depends on thread
-    // startup latency and StackWalk64 cost, so poll instead of assuming 50 ms
-    // of ticks is always sufficient.
+    // Wait for at least one sample before the observation loop; first capture is non-deterministic.
     waitForCondition([&] { return sampler.sampleCount() > 0; }, 2s);
     std::uint64_t observed_samples = 0;
     for (int i = 0; i < 50; ++i) {
@@ -275,8 +254,8 @@ bool verifySessionIsolation(std::uint64_t worker_tid)
         observed_samples = current_samples;
     }
     sampler.stop();
-    if (sampler.sampleCount() == 0 || sampler.tree().sampleCount() == 0 ||
-        sampler.modules().size() == 0 || sampler.numberOfTicks() != 50 || sampler.windowTicks().empty()) {
+    if (sampler.sampleCount() == 0 || sampler.tree().sampleCount() == 0 || sampler.modules().size() == 0 ||
+        sampler.numberOfTicks() != 50 || sampler.windowTicks().empty()) {
         std::fprintf(stderr, "session isolation: first sampler session did not collect expected state\n");
         return false;
     }
@@ -520,25 +499,21 @@ bool verifyThreadSelectorSemantics()
 {
     std::string error;
     spark::ThreadSelector selector;
-    if (!selector.configure(false, false, {"alpha", "BETA"}, error) ||
-        !selector.matches("ALPHA") || !selector.matches("beta") ||
-        selector.matches("alphabet")) {
+    if (!selector.configure(false, false, {"alpha", "BETA"}, error) || !selector.matches("ALPHA") ||
+        !selector.matches("beta") || selector.matches("alphabet")) {
         std::fprintf(stderr, "thread selector: exact-name semantics failed\n");
         return false;
     }
-    if (!selector.configure(false, true, {R"(worker-\d+)", "server"}, error) ||
-        !selector.matches("WORKER-42") || !selector.matches("Server") ||
-        selector.matches("worker-42-extra")) {
+    if (!selector.configure(false, true, {R"(worker-\d+)", "server"}, error) || !selector.matches("WORKER-42") ||
+        !selector.matches("Server") || selector.matches("worker-42-extra")) {
         std::fprintf(stderr, "thread selector: regex/full-match semantics failed\n");
         return false;
     }
-    if (selector.configure(false, true, {"["}, error) ||
-        error.find("invalid thread name regex") == std::string::npos) {
+    if (selector.configure(false, true, {"["}, error) || error.find("invalid thread name regex") == std::string::npos) {
         std::fprintf(stderr, "thread selector: invalid regex was accepted\n");
         return false;
     }
-    if (!selector.configure(true, false, {}, error) ||
-        !selector.matches("anything")) {
+    if (!selector.configure(true, false, {}, error) || !selector.matches("anything")) {
         std::fprintf(stderr, "thread selector: all-thread semantics failed\n");
         return false;
     }
@@ -558,32 +533,24 @@ bool verifyThreadSelectorSemantics()
     }
     const spark::AllocationThreadSelection second = identities.resolve(2, tid);
     const spark::AllocationThreadSelection replay = identities.resolve(1, tid);
-    if (!first.selected || second.selected || !replay.selected ||
-        replay.display_name != first.display_name) {
-        std::fprintf(stderr,
-                     "thread selector: session identity/TID reuse isolation failed\n");
+    if (!first.selected || second.selected || !replay.selected || replay.display_name != first.display_name) {
+        std::fprintf(stderr, "thread selector: session identity/TID reuse isolation failed\n");
         return false;
     }
 
     spark::AllocationThreadFilter unavailable(256, 16);
-    if (!unavailable.configure(false, false, {"Thread 18446744073709551615"},
-                               error)) {
+    if (!unavailable.configure(false, false, {"Thread 18446744073709551615"}, error)) {
         return false;
     }
-    const auto missing = unavailable.resolve(
-        1, (std::numeric_limits<std::uint64_t>::max)());
-    if (missing.selected || missing.name_available ||
-        unavailable.nameFailures() != 1) {
-        std::fprintf(stderr,
-                     "thread selector: unavailable names did not fail closed\n");
+    const auto missing = unavailable.resolve(1, (std::numeric_limits<std::uint64_t>::max)());
+    if (missing.selected || missing.name_available || unavailable.nameFailures() != 1) {
+        std::fprintf(stderr, "thread selector: unavailable names did not fail closed\n");
         return false;
     }
     spark::AllocationThreadFilter bounded(256, 1);
-    if (!bounded.configure(false, false, {"spark-id-b"}, error) ||
-        !bounded.resolve(1, tid).selected ||
+    if (!bounded.configure(false, false, {"spark-id-b"}, error) || !bounded.resolve(1, tid).selected ||
         bounded.resolve(2, tid).selected || bounded.cacheDrops() != 1) {
-        std::fprintf(stderr,
-                     "thread selector: identity cache did not fail bounded\n");
+        std::fprintf(stderr, "thread selector: identity cache did not fail bounded\n");
         return false;
     }
     return true;
@@ -675,8 +642,7 @@ bool verifyByteSampling()
     spark::resetByteSamplingState(replay, 2, seed, 64);
     for (int i = 0; i < 1000; ++i) {
         const std::uint64_t bytes = static_cast<std::uint64_t>((i * 7919) % 4096 + 1);
-        if (spark::consumeSampledBytes(first, bytes, 64) !=
-            spark::consumeSampledBytes(replay, bytes, 64)) {
+        if (spark::consumeSampledBytes(first, bytes, 64) != spark::consumeSampledBytes(replay, bytes, 64)) {
             std::fprintf(stderr, "byte sampling: identical session seed did not replay\n");
             return false;
         }
@@ -688,15 +654,13 @@ bool verifyByteSampling()
         constexpr std::uint64_t observed = 4'000'000;
         std::uint64_t points = 0;
         for (std::uint64_t consumed = 0; consumed < observed; consumed += 4096) {
-            const std::uint64_t chunk =
-                (std::min)(std::uint64_t{4096}, observed - consumed);
+            const std::uint64_t chunk = (std::min)(std::uint64_t{4096}, observed - consumed);
             points += spark::consumeSampledBytes(state, chunk, interval);
         }
-        const double ratio = static_cast<double>(points) * static_cast<double>(interval) /
-                             static_cast<double>(observed);
+        const double ratio =
+            static_cast<double>(points) * static_cast<double>(interval) / static_cast<double>(observed);
         if (ratio < 0.94 || ratio > 1.06 || state.bytes_until_sample == 0) {
-            std::fprintf(stderr,
-                         "byte sampling: interval=%llu produced implausible ratio %.6f\n",
+            std::fprintf(stderr, "byte sampling: interval=%llu produced implausible ratio %.6f\n",
                          static_cast<unsigned long long>(interval), ratio);
             return false;
         }
@@ -718,8 +682,7 @@ SPARK_NOINLINE bool exerciseNativeAllocations()
         if (allocation == nullptr) {
             return false;
         }
-        static_cast<volatile unsigned char *>(allocation)[0] =
-            static_cast<unsigned char>(i);
+        static_cast<volatile unsigned char *>(allocation)[0] = static_cast<unsigned char>(i);
         std::free(allocation);
     }
     void *resized = std::malloc(1024);
@@ -777,11 +740,9 @@ SPARK_NOINLINE bool exerciseNativeAllocations()
         _aligned_free(offset);
         return false;
     }
-    void *offset_recalloced =
-        _aligned_offset_recalloc(offset_replacement, 128, 64, 64, 16);
+    void *offset_recalloced = _aligned_offset_recalloc(offset_replacement, 128, 64, 64, 16);
     if (offset_recalloced == nullptr) {
-        std::fprintf(stderr,
-                     "native allocations: _aligned_offset_recalloc failed\n");
+        std::fprintf(stderr, "native allocations: _aligned_offset_recalloc failed\n");
         _aligned_free(offset_replacement);
         return false;
     }
@@ -904,15 +865,11 @@ bool verifyMultiThreadSerialization()
     std::unordered_map<spark::FrameKey, spark::ResolvedFrame, spark::FrameKeyHash> resolved;
     resolved[first] = {"selftest", "firstFrame"};
     resolved[second] = {"selftest", "secondFrame"};
-    std::vector<spark::ThreadTreeView> threads{{"worker-one", &first_tree},
-                                               {"worker-two", &second_tree}};
+    std::vector<spark::ThreadTreeView> threads{{"worker-one", &first_tree}, {"worker-two", &second_tree}};
     std::string profile = spark::buildSamplerData(metadata, threads, resolved);
-    if (profile.find("worker-one") == std::string::npos ||
-        profile.find("worker-two") == std::string::npos ||
-        profile.find("worker-.*") == std::string::npos ||
-        profile.find("firstFrame") == std::string::npos ||
-        profile.find("secondFrame") == std::string::npos ||
-        spark::collectFrameKeys(threads).size() != 2) {
+    if (profile.find("worker-one") == std::string::npos || profile.find("worker-two") == std::string::npos ||
+        profile.find("worker-.*") == std::string::npos || profile.find("firstFrame") == std::string::npos ||
+        profile.find("secondFrame") == std::string::npos || spark::collectFrameKeys(threads).size() != 2) {
         std::fprintf(stderr, "multi-thread serialization: thread trees were not preserved\n");
         return false;
     }
@@ -937,18 +894,12 @@ bool verifyStatisticsSerialization()
     metadata.statistics.tps.last_1m = {true, 19.0, 60'000, 1140};
     metadata.statistics.tps.last_5m = {true, 18.0, 300'000, 5400};
     metadata.statistics.tps.last_15m = {true, 17.0, 900'000, 15300};
-    metadata.statistics.mspt.last_1m =
-        {true, 10.0, 1.0, 9.0, 20.0, 30.0, 60'000, 1140};
-    metadata.statistics.mspt.last_5m =
-        {true, 11.0, 2.0, 10.0, 22.0, 35.0, 300'000, 5400};
-    metadata.statistics.cpu.process_last_1m =
-        {true, 0.25, 60'000, 60};
-    metadata.statistics.cpu.process_last_15m =
-        {true, 0.20, 900'000, 900};
-    metadata.statistics.cpu.system_last_1m =
-        {true, 0.50, 60'000, 60};
-    metadata.statistics.cpu.system_last_15m =
-        {true, 0.40, 900'000, 900};
+    metadata.statistics.mspt.last_1m = {true, 10.0, 1.0, 9.0, 20.0, 30.0, 60'000, 1140};
+    metadata.statistics.mspt.last_5m = {true, 11.0, 2.0, 10.0, 22.0, 35.0, 300'000, 5400};
+    metadata.statistics.cpu.process_last_1m = {true, 0.25, 60'000, 60};
+    metadata.statistics.cpu.process_last_15m = {true, 0.20, 900'000, 900};
+    metadata.statistics.cpu.system_last_1m = {true, 0.50, 60'000, 60};
+    metadata.statistics.cpu.system_last_15m = {true, 0.40, 900'000, 900};
 
     spark::WindowStats window;
     window.ticks_present = true;
@@ -969,59 +920,40 @@ bool verifyStatisticsSerialization()
     window.duration_ms = 800;
     metadata.window_stats[0] = window;
 
-    std::unordered_map<spark::FrameKey, spark::ResolvedFrame,
-                       spark::FrameKeyHash>
-        resolved;
+    std::unordered_map<spark::FrameKey, spark::ResolvedFrame, spark::FrameKeyHash> resolved;
     resolved[frame] = {"statistics", "sample"};
-    const std::string profile =
-        spark::buildSamplerData(metadata, tree, resolved);
+    const std::string profile = spark::buildSamplerData(metadata, tree, resolved);
 
-    if (!protoRealEquals(profile, {1, 8, 4, 1}, 19.0) ||
-        !protoRealEquals(profile, {1, 8, 4, 2}, 18.0) ||
-        !protoRealEquals(profile, {1, 8, 4, 3}, 17.0) ||
-        !protoRealEquals(profile, {1, 8, 5, 1, 1}, 10.0) ||
-        !protoRealEquals(profile, {1, 8, 5, 1, 3}, 1.0) ||
-        !protoRealEquals(profile, {1, 8, 5, 1, 4}, 9.0) ||
-        !protoRealEquals(profile, {1, 8, 5, 1, 5}, 20.0) ||
-        !protoRealEquals(profile, {1, 9, 1, 2, 1}, 0.25) ||
+    if (!protoRealEquals(profile, {1, 8, 4, 1}, 19.0) || !protoRealEquals(profile, {1, 8, 4, 2}, 18.0) ||
+        !protoRealEquals(profile, {1, 8, 4, 3}, 17.0) || !protoRealEquals(profile, {1, 8, 5, 1, 1}, 10.0) ||
+        !protoRealEquals(profile, {1, 8, 5, 1, 3}, 1.0) || !protoRealEquals(profile, {1, 8, 5, 1, 4}, 9.0) ||
+        !protoRealEquals(profile, {1, 8, 5, 1, 5}, 20.0) || !protoRealEquals(profile, {1, 9, 1, 2, 1}, 0.25) ||
         !protoRealEquals(profile, {1, 9, 1, 2, 2}, 0.20)) {
-        std::fprintf(stderr,
-                     "statistics serialization: rolling metadata did not "
-                     "round-trip through the current protocol\n");
+        std::fprintf(stderr, "statistics serialization: rolling metadata did not "
+                             "round-trip through the current protocol\n");
         return false;
     }
 
     ProtoField statistics;
     ProtoField omitted;
-    if (!protoVarintEquals(profile, {7, 1}, 0) ||
-        !protoVarintEquals(profile, {7, 2, 1}, 17) ||
-        !protoRealEquals(profile, {7, 2, 4}, 17.0) ||
-        !protoRealEquals(profile, {7, 2, 5}, 9.0) ||
-        !protoRealEquals(profile, {7, 2, 6}, 30.0) ||
-        !protoVarintEquals(profile, {7, 2, 7}, 4) ||
-        !protoVarintEquals(profile, {7, 2, 11}, 1'000) ||
-        !protoVarintEquals(profile, {7, 2, 12}, 1'800) ||
-        !protoVarintEquals(profile, {7, 2, 13}, 800) ||
-        !findProtoPath(profile, {7, 2}, statistics) ||
-        findProtoField(statistics.bytes, 8, omitted) ||
-        findProtoField(statistics.bytes, 10, omitted)) {
-        std::fprintf(stderr,
-                     "statistics serialization: per-second fields or omitted "
-                     "gauges were incorrect\n");
+    if (!protoVarintEquals(profile, {7, 1}, 0) || !protoVarintEquals(profile, {7, 2, 1}, 17) ||
+        !protoRealEquals(profile, {7, 2, 4}, 17.0) || !protoRealEquals(profile, {7, 2, 5}, 9.0) ||
+        !protoRealEquals(profile, {7, 2, 6}, 30.0) || !protoVarintEquals(profile, {7, 2, 7}, 4) ||
+        !protoVarintEquals(profile, {7, 2, 11}, 1'000) || !protoVarintEquals(profile, {7, 2, 12}, 1'800) ||
+        !protoVarintEquals(profile, {7, 2, 13}, 800) || !findProtoPath(profile, {7, 2}, statistics) ||
+        findProtoField(statistics.bytes, 8, omitted) || findProtoField(statistics.bytes, 10, omitted)) {
+        std::fprintf(stderr, "statistics serialization: per-second fields or omitted "
+                             "gauges were incorrect\n");
         return false;
     }
 
     ProtoField platform;
     ProtoField system;
-    if (!findProtoPath(profile, {1, 8}, platform) ||
-        findProtoField(platform.bytes, 1, omitted) ||
-        !findProtoPath(profile, {1, 9}, system) ||
-        findProtoField(system.bytes, 2, omitted) ||
-        findProtoField(system.bytes, 4, omitted) ||
-        findProtoField(system.bytes, 5, omitted)) {
-        std::fprintf(stderr,
-                     "statistics serialization: unavailable resource fields "
-                     "were serialized as real observations\n");
+    if (!findProtoPath(profile, {1, 8}, platform) || findProtoField(platform.bytes, 1, omitted) ||
+        !findProtoPath(profile, {1, 9}, system) || findProtoField(system.bytes, 2, omitted) ||
+        findProtoField(system.bytes, 4, omitted) || findProtoField(system.bytes, 5, omitted)) {
+        std::fprintf(stderr, "statistics serialization: unavailable resource fields "
+                             "were serialized as real observations\n");
         return false;
     }
     return true;
@@ -1030,32 +962,24 @@ bool verifyStatisticsSerialization()
 bool verifySystemResourceStats()
 {
     const spark::ProcessStats process = spark::gatherProcessStats();
-    if (!process.rss_present || process.rss_bytes <= 0 ||
-        !process.virtual_present ||
-        process.virtual_bytes < process.rss_bytes ||
-        !process.threads_present || process.threads < 1) {
-        std::fprintf(
-            stderr,
-            "system resources: process RSS/virtual memory/thread query failed "
-            "(rss=%lld virtual=%lld threads=%d)\n",
-            static_cast<long long>(process.rss_bytes),
-            static_cast<long long>(process.virtual_bytes), process.threads);
+    if (!process.rss_present || process.rss_bytes <= 0 || !process.virtual_present ||
+        process.virtual_bytes < process.rss_bytes || !process.threads_present || process.threads < 1) {
+        std::fprintf(stderr,
+                     "system resources: process RSS/virtual memory/thread query failed "
+                     "(rss=%lld virtual=%lld threads=%d)\n",
+                     static_cast<long long>(process.rss_bytes), static_cast<long long>(process.virtual_bytes),
+                     process.threads);
         return false;
     }
 
     const spark::SystemStats system = spark::gatherSystemStats(".");
-    if (!system.present || !system.cpu_present || system.cpu_threads < 1 ||
-        !system.memory_present || system.mem_total <= 0 ||
-        system.mem_used < 0 || system.mem_used > system.mem_total ||
-        !system.swap_present || system.swap_total < 0 ||
-        system.swap_used < 0 || system.swap_used > system.swap_total ||
-        !system.disk_present || system.disk_total <= 0 ||
-        system.disk_used < 0 || system.disk_used > system.disk_total ||
-        !system.os_present || system.os_name.empty() ||
-        system.os_arch.empty()) {
-        std::fprintf(stderr,
-                     "system resources: host availability/value validation "
-                     "failed\n");
+    if (!system.present || !system.cpu_present || system.cpu_threads < 1 || !system.memory_present ||
+        system.mem_total <= 0 || system.mem_used < 0 || system.mem_used > system.mem_total || !system.swap_present ||
+        system.swap_total < 0 || system.swap_used < 0 || system.swap_used > system.swap_total || !system.disk_present ||
+        system.disk_total <= 0 || system.disk_used < 0 || system.disk_used > system.disk_total || !system.os_present ||
+        system.os_name.empty() || system.os_arch.empty()) {
+        std::fprintf(stderr, "system resources: host availability/value validation "
+                             "failed\n");
         return false;
     }
     return true;
@@ -1147,50 +1071,35 @@ bool verifyStatisticsService()
     auto tps_service = std::make_unique<spark::StatisticsService>();
     tps_service->startAt(0, 1'000'000, initialCpu());
     for (int second = 0; second < 900; ++second) {
-        const int rate = second < 600 ? 20
-                         : second < 840 ? 18
-                         : second < 890 ? 15
-                         : second < 895 ? 10
-                                        : 5;
+        const int rate = second < 600 ? 20 : second < 840 ? 18 : second < 890 ? 15 : second < 895 ? 10 : 5;
         for (int tick = 1; tick <= rate; ++tick) {
             const std::int64_t timestamp =
-                static_cast<std::int64_t>(second) * 1000 +
-                static_cast<std::int64_t>(tick) * 1000 / rate;
+                static_cast<std::int64_t>(second) * 1000 + static_cast<std::int64_t>(tick) * 1000 / rate;
             tps_service->recordTickAt(2.0, timestamp);
         }
     }
     const spark::StatisticsSnapshot tps = tps_service->snapshotAt(900'000);
-    if (!close(tps.tps.last_5s.value, 5.0) ||
-        !close(tps.tps.last_10s.value, 7.5) ||
-        !close(tps.tps.last_1m.value, 13.75) ||
-        !close(tps.tps.last_5m.value, 17.15) ||
-        !close(tps.tps.last_15m.value, 19.05) ||
-        tps.tps.last_5s.samples != 25 ||
+    if (!close(tps.tps.last_5s.value, 5.0) || !close(tps.tps.last_10s.value, 7.5) ||
+        !close(tps.tps.last_1m.value, 13.75) || !close(tps.tps.last_5m.value, 17.15) ||
+        !close(tps.tps.last_15m.value, 19.05) || tps.tps.last_5s.samples != 25 ||
         tps.history_span_ms != spark::StatisticsService::kMaximumHistoryMs) {
-        std::fprintf(stderr,
-                     "statistics service: TPS windows were not independently "
-                     "time-weighted\n");
+        std::fprintf(stderr, "statistics service: TPS windows were not independently "
+                             "time-weighted\n");
         return false;
     }
 
     auto mspt_service = std::make_unique<spark::StatisticsService>();
     mspt_service->startAt(0, 2'000'000, initialCpu());
     for (int tick = 1; tick <= 1000; ++tick) {
-        mspt_service->recordTickAt(
-            static_cast<double>((tick - 1) % 100 + 1),
-            static_cast<std::int64_t>(tick) * 10);
+        mspt_service->recordTickAt(static_cast<double>((tick - 1) % 100 + 1), static_cast<std::int64_t>(tick) * 10);
     }
     const spark::StatisticsSnapshot mspt = mspt_service->snapshotAt(10'000);
     const spark::DistributionValues &distribution = mspt.mspt.last_10s;
-    if (!distribution.present || distribution.samples != 1000 ||
-        !close(distribution.mean, 50.5) || !close(distribution.min, 1.0) ||
-        !close(distribution.median, 50.5) ||
-        !close(distribution.percentile95, 95.0) ||
-        !close(distribution.max, 100.0) ||
-        mspt.mspt.last_1m.span_ms != 10'000) {
-        std::fprintf(stderr,
-                     "statistics service: MSPT distribution or partial-window "
-                     "span was incorrect\n");
+    if (!distribution.present || distribution.samples != 1000 || !close(distribution.mean, 50.5) ||
+        !close(distribution.min, 1.0) || !close(distribution.median, 50.5) || !close(distribution.percentile95, 95.0) ||
+        !close(distribution.max, 100.0) || mspt.mspt.last_1m.span_ms != 10'000) {
+        std::fprintf(stderr, "statistics service: MSPT distribution or partial-window "
+                             "span was incorrect\n");
         return false;
     }
 
@@ -1198,27 +1107,21 @@ bool verifyStatisticsService()
     spark::CpuSnapshot cpu = initialCpu();
     cpu_service->startAt(0, 3'000'000, cpu);
     for (int second = 1; second <= 900; ++second) {
-        const unsigned long long process_delta =
-            second <= 840 ? 20 : (second <= 890 ? 40 : 80);
-        const unsigned long long busy_delta =
-            second <= 840 ? 20 : (second <= 890 ? 40 : 80);
+        const unsigned long long process_delta = second <= 840 ? 20 : (second <= 890 ? 40 : 80);
+        const unsigned long long busy_delta = second <= 840 ? 20 : (second <= 890 ? 40 : 80);
         cpu.process_ticks += process_delta;
         cpu.system_busy += busy_delta;
         cpu.system_total += 100;
         cpu.wall_ms = static_cast<std::int64_t>(second) * 1000;
         cpu_service->recordCpuSnapshot(cpu);
     }
-    const spark::StatisticsSnapshot cpu_stats =
-        cpu_service->snapshotAt(900'000);
-    if (!close(cpu_stats.cpu.process_last_10s.value, 0.4) ||
-        !close(cpu_stats.cpu.process_last_1m.value, 14.0 / 60.0) ||
+    const spark::StatisticsSnapshot cpu_stats = cpu_service->snapshotAt(900'000);
+    if (!close(cpu_stats.cpu.process_last_10s.value, 0.4) || !close(cpu_stats.cpu.process_last_1m.value, 14.0 / 60.0) ||
         !close(cpu_stats.cpu.process_last_15m.value, 98.0 / 900.0) ||
-        !close(cpu_stats.cpu.system_last_10s.value, 0.8) ||
-        !close(cpu_stats.cpu.system_last_1m.value, 28.0 / 60.0) ||
+        !close(cpu_stats.cpu.system_last_10s.value, 0.8) || !close(cpu_stats.cpu.system_last_1m.value, 28.0 / 60.0) ||
         !close(cpu_stats.cpu.system_last_15m.value, 196.0 / 900.0)) {
-        std::fprintf(stderr,
-                     "statistics service: CPU windows were not independently "
-                     "time-weighted\n");
+        std::fprintf(stderr, "statistics service: CPU windows were not independently "
+                             "time-weighted\n");
         return false;
     }
 
@@ -1241,24 +1144,16 @@ bool verifyStatisticsService()
     window_cpu.system_total += 100;
     window_cpu.wall_ms = 2'000;
     window_service->recordCpuSnapshot(window_cpu);
-    const auto windows =
-        window_service->profileWindows(4'000'000, 4'002'000);
+    const auto windows = window_service->profileWindows(4'000'000, 4'002'000);
     auto first_window = windows.find(0);
     auto second_window = windows.find(1);
-    if (windows.size() != 2 || first_window == windows.end() ||
-        second_window == windows.end() ||
-        first_window->second.ticks != 2 ||
-        !close(first_window->second.tps, 2.0) ||
-        !close(first_window->second.mspt_median, 5.0) ||
-        !close(first_window->second.mspt_max, 9.0) ||
-        !close(first_window->second.cpu_process, 0.1) ||
-        !close(first_window->second.cpu_system, 0.2) ||
-        first_window->second.players != 3 ||
-        first_window->second.start_time_ms != 4'000'000 ||
-        first_window->second.end_time_ms != 4'001'000 ||
-        first_window->second.duration_ms != 1'000 ||
-        second_window->second.players != 3 ||
-        second_window->second.entities_present ||
+    if (windows.size() != 2 || first_window == windows.end() || second_window == windows.end() ||
+        first_window->second.ticks != 2 || !close(first_window->second.tps, 2.0) ||
+        !close(first_window->second.mspt_median, 5.0) || !close(first_window->second.mspt_max, 9.0) ||
+        !close(first_window->second.cpu_process, 0.1) || !close(first_window->second.cpu_system, 0.2) ||
+        first_window->second.players != 3 || first_window->second.start_time_ms != 4'000'000 ||
+        first_window->second.end_time_ms != 4'001'000 || first_window->second.duration_ms != 1'000 ||
+        second_window->second.players != 3 || second_window->second.entities_present ||
         second_window->second.chunks_present) {
         std::fprintf(stderr,
                      "statistics service: per-second profile windows were "
@@ -1266,40 +1161,17 @@ bool verifyStatisticsService()
                      "median=%.3f max=%.3f process=%.3f system=%.3f "
                      "players=%d start=%lld end=%lld duration=%d; "
                      "second players=%d)\n",
-                     windows.size(),
-                     first_window == windows.end() ? -1
-                                                   : first_window->second.ticks,
-                     first_window == windows.end() ? -1.0
-                                                   : first_window->second.tps,
-                     first_window == windows.end()
-                         ? -1.0
-                         : first_window->second.mspt_median,
-                     first_window == windows.end()
-                         ? -1.0
-                         : first_window->second.mspt_max,
-                     first_window == windows.end()
-                         ? -1.0
-                         : first_window->second.cpu_process,
-                     first_window == windows.end()
-                         ? -1.0
-                         : first_window->second.cpu_system,
-                     first_window == windows.end()
-                         ? -1
-                         : first_window->second.players,
-                     static_cast<long long>(
-                         first_window == windows.end()
-                             ? -1
-                             : first_window->second.start_time_ms),
-                     static_cast<long long>(
-                         first_window == windows.end()
-                             ? -1
-                             : first_window->second.end_time_ms),
-                     first_window == windows.end()
-                         ? -1
-                         : first_window->second.duration_ms,
-                     second_window == windows.end()
-                         ? -1
-                         : second_window->second.players);
+                     windows.size(), first_window == windows.end() ? -1 : first_window->second.ticks,
+                     first_window == windows.end() ? -1.0 : first_window->second.tps,
+                     first_window == windows.end() ? -1.0 : first_window->second.mspt_median,
+                     first_window == windows.end() ? -1.0 : first_window->second.mspt_max,
+                     first_window == windows.end() ? -1.0 : first_window->second.cpu_process,
+                     first_window == windows.end() ? -1.0 : first_window->second.cpu_system,
+                     first_window == windows.end() ? -1 : first_window->second.players,
+                     static_cast<long long>(first_window == windows.end() ? -1 : first_window->second.start_time_ms),
+                     static_cast<long long>(first_window == windows.end() ? -1 : first_window->second.end_time_ms),
+                     first_window == windows.end() ? -1 : first_window->second.duration_ms,
+                     second_window == windows.end() ? -1 : second_window->second.players);
         return false;
     }
     return true;
@@ -1341,11 +1213,10 @@ bool verifyWorldGaugeStatistics()
     auto second = windows.find(1);
     // The gauge loop picks the last sample within each window's end time,
     // matching the existing players behavior.
-    if (windows.size() != 2 || first == windows.end() || second == windows.end() ||
-        !first->second.entities_present || first->second.entities != 15 ||
-        !first->second.chunks_present || first->second.chunks != 25 ||
-        !second->second.entities_present || second->second.entities != 20 ||
-        !second->second.chunks_present || second->second.chunks != 30) {
+    if (windows.size() != 2 || first == windows.end() || second == windows.end() || !first->second.entities_present ||
+        first->second.entities != 15 || !first->second.chunks_present || first->second.chunks != 25 ||
+        !second->second.entities_present || second->second.entities != 20 || !second->second.chunks_present ||
+        second->second.chunks != 30) {
         std::fprintf(stderr,
                      "world gauge statistics: entities/chunks not correct "
                      "(first ents=%d chunks=%d; second ents=%d chunks=%d)\n",
@@ -1379,8 +1250,8 @@ bool verifyWorldGaugeAbsentWhenNotRecorded()
 
     const auto windows = svc->profileWindows(6'000'000, 6'001'000);
     auto first = windows.find(0);
-    if (windows.size() != 1 || first == windows.end() ||
-        first->second.entities_present || first->second.chunks_present) {
+    if (windows.size() != 1 || first == windows.end() || first->second.entities_present ||
+        first->second.chunks_present) {
         std::fprintf(stderr,
                      "world gauge absent: entities_present=%d chunks_present=%d "
                      "(expected both false)\n",
@@ -1408,9 +1279,8 @@ bool verifySelectedThreadSampling(std::uint64_t worker_tid)
     using namespace std::chrono_literals;
 
     const std::vector<spark::ThreadInfo> discovered = spark::enumerateProcessThreads();
-    auto worker = std::find_if(discovered.begin(), discovered.end(), [worker_tid](const spark::ThreadInfo &thread) {
-        return thread.id == worker_tid;
-    });
+    auto worker = std::find_if(discovered.begin(), discovered.end(),
+                               [worker_tid](const spark::ThreadInfo &thread) { return thread.id == worker_tid; });
     if (worker == discovered.end()) {
         std::fprintf(stderr, "selected-thread sampling: worker thread was not discovered\n");
         return false;
@@ -1431,12 +1301,10 @@ bool verifySelectedThreadSampling(std::uint64_t worker_tid)
     exact.ignore_sleeping = false;
     exact.thread_patterns = {worker->name};
     std::transform(exact.thread_patterns.front().begin(), exact.thread_patterns.front().end(),
-                   exact.thread_patterns.front().begin(), [](unsigned char ch) {
-                       return static_cast<char>(std::toupper(ch));
-                   });
+                   exact.thread_patterns.front().begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
     if (!sampler.start(exact)) {
-        std::fprintf(stderr, "selected-thread sampling: exact-name start failed: %s\n",
-                     sampler.lastError().c_str());
+        std::fprintf(stderr, "selected-thread sampling: exact-name start failed: %s\n", sampler.lastError().c_str());
         return false;
     }
     // The sampler thread needs time to start, enumerate process threads, and
@@ -1459,8 +1327,7 @@ bool verifySelectedThreadSampling(std::uint64_t worker_tid)
     regex.regex_threads = true;
     regex.thread_patterns = {escapeRegex(worker->name)};
     if (!sampler.start(regex)) {
-        std::fprintf(stderr, "selected-thread sampling: regex start failed: %s\n",
-                     sampler.lastError().c_str());
+        std::fprintf(stderr, "selected-thread sampling: regex start failed: %s\n", sampler.lastError().c_str());
         return false;
     }
     waitForCondition([&] { return sampler.sampleCount() > 0; }, 2s);
@@ -1474,10 +1341,8 @@ bool verifySelectedThreadSampling(std::uint64_t worker_tid)
 
 bool verifyExecutableHash()
 {
-    if (spark::sha256Hex("") !=
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ||
-        spark::sha256Hex("abc") !=
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
+    if (spark::sha256Hex("") != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ||
+        spark::sha256Hex("abc") != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
         std::fprintf(stderr, "executable hash: SHA-256 vector mismatch\n");
         return false;
     }
@@ -1485,12 +1350,10 @@ bool verifyExecutableHash()
     std::string error;
     const std::string first = spark::currentExecutableSha256(error);
     const std::string second = spark::currentExecutableSha256(error);
-    if (first.size() != 64 || first != second ||
-        !std::all_of(first.begin(), first.end(), [](unsigned char ch) {
+    if (first.size() != 64 || first != second || !std::all_of(first.begin(), first.end(), [](unsigned char ch) {
             return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
         })) {
-        std::fprintf(stderr, "executable hash: current executable hashing failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "executable hash: current executable hashing failed: %s\n", error.c_str());
         return false;
     }
     return true;
@@ -1501,23 +1364,20 @@ void allocationBurst(int count = 96)
     for (int i = 0; i < count; ++i) {
         void *pointer = std::malloc(static_cast<std::size_t>(512 + i));
         if (pointer != nullptr) {
-            static_cast<volatile unsigned char *>(pointer)[0] =
-                static_cast<unsigned char>(i);
+            static_cast<volatile unsigned char *>(pointer)[0] = static_cast<unsigned char>(i);
             std::free(pointer);
         }
     }
 }
 
-bool allocationTreesHaveOnly(
-    const spark::AllocationSampler &sampler,
-    const std::vector<std::string_view> &expected_names)
+bool allocationTreesHaveOnly(const spark::AllocationSampler &sampler,
+                             const std::vector<std::string_view> &expected_names)
 {
     std::vector<bool> found(expected_names.size(), false);
     for (const auto &[id, thread] : sampler.threadTrees()) {
         bool allowed = false;
         for (std::size_t i = 0; i < expected_names.size(); ++i) {
-            if (thread.thread_name.rfind(
-                    std::string(expected_names[i]) + " (#", 0) == 0) {
+            if (thread.thread_name.rfind(std::string(expected_names[i]) + " (#", 0) == 0) {
                 found[i] = true;
                 allowed = true;
                 break;
@@ -1527,15 +1387,11 @@ bool allocationTreesHaveOnly(
             return false;
         }
     }
-    return std::all_of(found.begin(), found.end(), [](bool value) {
-        return value;
-    });
+    return std::all_of(found.begin(), found.end(), [](bool value) { return value; });
 }
 
-bool runNamedAllocationWorkers(spark::AllocationSampler &sampler,
-                               const spark::AllocationSamplerConfig &config,
-                               const std::vector<const char *> &names,
-                               std::string &error)
+bool runNamedAllocationWorkers(spark::AllocationSampler &sampler, const spark::AllocationSamplerConfig &config,
+                               const std::vector<const char *> &names, std::string &error)
 {
     using namespace std::chrono_literals;
     if (!sampler.start(config, error)) {
@@ -1558,8 +1414,7 @@ bool runNamedAllocationWorkers(spark::AllocationSampler &sampler,
             }
         });
     }
-    while (ready.load(std::memory_order_acquire) <
-           static_cast<int>(names.size())) {
+    while (ready.load(std::memory_order_acquire) < static_cast<int>(names.size())) {
         std::this_thread::yield();
     }
     const bool named = ready.load(std::memory_order_acquire) < 1000;
@@ -1583,58 +1438,43 @@ bool verifyAllocationThreadSelection()
     exact.session_seed = spark::currentNativeThreadId();
     exact.all_threads = false;
     exact.thread_patterns = {"SPARK-ALLOC-A", "spark-alloc-b"};
-    if (!runNamedAllocationWorkers(
-            sampler, exact,
-            {"spark-alloc-a", "spark-alloc-b", "spark-alloc-x"}, error) ||
-        sampler.sampleCount() == 0 ||
-        !allocationTreesHaveOnly(sampler, {"spark-alloc-a", "spark-alloc-b"}) ||
+    if (!runNamedAllocationWorkers(sampler, exact, {"spark-alloc-a", "spark-alloc-b", "spark-alloc-x"}, error) ||
+        sampler.sampleCount() == 0 || !allocationTreesHaveOnly(sampler, {"spark-alloc-a", "spark-alloc-b"}) ||
         sampler.filteredSamples() == 0) {
-        std::fprintf(
-            stderr,
-            "allocation thread selection: exact/multiple selection failed "
-            "(samples=%llu filtered=%llu error=%s)\n",
-            static_cast<unsigned long long>(sampler.sampleCount()),
-            static_cast<unsigned long long>(sampler.filteredSamples()),
-            error.c_str());
+        std::fprintf(stderr,
+                     "allocation thread selection: exact/multiple selection failed "
+                     "(samples=%llu filtered=%llu error=%s)\n",
+                     static_cast<unsigned long long>(sampler.sampleCount()),
+                     static_cast<unsigned long long>(sampler.filteredSamples()), error.c_str());
         return false;
     }
 
     spark::AllocationSamplerConfig regex = exact;
     regex.regex_threads = true;
     regex.thread_patterns = {R"(spark-dyn-\d+)"};
-    if (!runNamedAllocationWorkers(
-            sampler, regex, {"spark-dyn-42", "spark-other"}, error) ||
+    if (!runNamedAllocationWorkers(sampler, regex, {"spark-dyn-42", "spark-other"}, error) ||
         !allocationTreesHaveOnly(sampler, {"spark-dyn-42"})) {
-        std::fprintf(stderr,
-                     "allocation thread selection: regex/dynamic selection failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation thread selection: regex/dynamic selection failed: %s\n", error.c_str());
         return false;
     }
 
     spark::AllocationSamplerConfig no_match = exact;
     no_match.thread_patterns = {"spark-never"};
-    if (!runNamedAllocationWorkers(
-            sampler, no_match, {"spark-no-match"}, error) ||
-        sampler.sampleCount() != 0 || !sampler.threadTrees().empty() ||
-        sampler.filteredSamples() == 0) {
-        std::fprintf(
-            stderr,
-            "allocation thread selection: no-match profile was not empty "
-            "(samples=%llu roots=%zu filtered=%llu error=%s)\n",
-            static_cast<unsigned long long>(sampler.sampleCount()),
-            sampler.threadTrees().size(),
-            static_cast<unsigned long long>(sampler.filteredSamples()),
-            error.c_str());
+    if (!runNamedAllocationWorkers(sampler, no_match, {"spark-no-match"}, error) || sampler.sampleCount() != 0 ||
+        !sampler.threadTrees().empty() || sampler.filteredSamples() == 0) {
+        std::fprintf(stderr,
+                     "allocation thread selection: no-match profile was not empty "
+                     "(samples=%llu roots=%zu filtered=%llu error=%s)\n",
+                     static_cast<unsigned long long>(sampler.sampleCount()), sampler.threadTrees().size(),
+                     static_cast<unsigned long long>(sampler.filteredSamples()), error.c_str());
         return false;
     }
 
     spark::AllocationSamplerConfig invalid = exact;
     invalid.regex_threads = true;
     invalid.thread_patterns = {"["};
-    if (sampler.start(invalid, error) ||
-        error.find("invalid thread name regex") == std::string::npos) {
-        std::fprintf(stderr,
-                     "allocation thread selection: invalid regex was accepted\n");
+    if (sampler.start(invalid, error) || error.find("invalid thread name regex") == std::string::npos) {
+        std::fprintf(stderr, "allocation thread selection: invalid regex was accepted\n");
         sampler.stop(error);
         return false;
     }
@@ -1643,9 +1483,7 @@ bool verifyAllocationThreadSelection()
     retained.live_only = true;
     retained.thread_patterns = {"spark-live-src"};
     if (!sampler.start(retained, error)) {
-        std::fprintf(stderr,
-                     "allocation thread selection: live-only start failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation thread selection: live-only start failed: %s\n", error.c_str());
         return false;
     }
     std::atomic<void *> retained_pointer{nullptr};
@@ -1672,20 +1510,17 @@ bool verifyAllocationThreadSelection()
     unselected.join();
     sampler.onTick(50.0);
     const bool live_stopped = sampler.stop(error);
-    const bool live_valid =
-        live_stopped && sampler.sampleCount() != 0 &&
-        sampler.freedSamples() != 0 &&
-        allocationTreesHaveOnly(sampler, {"spark-live-src"});
+    const bool live_valid = live_stopped && sampler.sampleCount() != 0 && sampler.freedSamples() != 0 &&
+                            allocationTreesHaveOnly(sampler, {"spark-live-src"});
     std::free(retained_pointer.load(std::memory_order_acquire));
     std::free(unselected_retained.load(std::memory_order_acquire));
     if (!live_valid) {
-        std::fprintf(
-            stderr,
-            "allocation thread selection: live-only/cross-thread lifecycle failed "
-            "(samples=%llu freed=%llu roots=%zu error=%s)\n",
-            static_cast<unsigned long long>(sampler.sampleCount()),
-            static_cast<unsigned long long>(sampler.freedSamples()),
-            sampler.threadTrees().size(), error.c_str());
+        std::fprintf(stderr,
+                     "allocation thread selection: live-only/cross-thread lifecycle failed "
+                     "(samples=%llu freed=%llu roots=%zu error=%s)\n",
+                     static_cast<unsigned long long>(sampler.sampleCount()),
+                     static_cast<unsigned long long>(sampler.freedSamples()), sampler.threadTrees().size(),
+                     error.c_str());
         return false;
     }
     if (!sampler.shutdown(error)) {
@@ -1698,10 +1533,7 @@ bool verifyAllocationThreadSelection()
     options.allocation_interval_bytes = 1;
     options.threads = {"spark-prof-a", "spark-prof-b"};
     if (!profiler.start(options, spark::currentNativeThreadId(), error)) {
-        std::fprintf(
-            stderr,
-            "allocation thread selection: ProfilerOptions selector was rejected: %s\n",
-            error.c_str());
+        std::fprintf(stderr, "allocation thread selection: ProfilerOptions selector was rejected: %s\n", error.c_str());
         return false;
     }
     std::thread profiler_worker([] {
@@ -1712,36 +1544,30 @@ bool verifyAllocationThreadSelection()
     profiler_worker.join();
     profiler.onTick(50.0);
     if (!profiler.stopSampling(error) || profiler.sampleCount() == 0) {
-        std::fprintf(
-            stderr,
-            "allocation thread selection: profiler integration failed "
-            "(samples=%llu error=%s)\n",
-            static_cast<unsigned long long>(profiler.sampleCount()),
-            error.c_str());
+        std::fprintf(stderr,
+                     "allocation thread selection: profiler integration failed "
+                     "(samples=%llu error=%s)\n",
+                     static_cast<unsigned long long>(profiler.sampleCount()), error.c_str());
         return false;
     }
 
     options.threads = {"*"};
     if (!profiler.start(options, spark::currentNativeThreadId(), error)) {
-        std::fprintf(stderr,
-                     "allocation thread selection: * selector start failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation thread selection: * selector start failed: %s\n", error.c_str());
         return false;
     }
     allocationBurst();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     profiler.onTick(50.0);
     if (!profiler.stopSampling(error) || profiler.sampleCount() == 0) {
-        std::fprintf(stderr,
-                     "allocation thread selection: * selector captured no samples\n");
+        std::fprintf(stderr, "allocation thread selection: * selector captured no samples\n");
         return false;
     }
 
     options.threads = {"*", "spark-prof-b"};
     if (profiler.start(options, spark::currentNativeThreadId(), error) ||
         error.find("--thread * cannot be combined") == std::string::npos) {
-        std::fprintf(stderr,
-                     "allocation thread selection: ambiguous * selector was accepted\n");
+        std::fprintf(stderr, "allocation thread selection: ambiguous * selector was accepted\n");
         profiler.cancel();
         return false;
     }
@@ -1749,16 +1575,14 @@ bool verifyAllocationThreadSelection()
     options.regex = true;
     if (profiler.start(options, spark::currentNativeThreadId(), error) ||
         error.find("--regex requires") == std::string::npos) {
-        std::fprintf(stderr,
-                     "allocation thread selection: patternless regex was accepted\n");
+        std::fprintf(stderr, "allocation thread selection: patternless regex was accepted\n");
         profiler.cancel();
         return false;
     }
     return profiler.shutdown(error);
 }
 
-bool runAllocationSession(spark::AllocationSampler &sampler,
-                          const spark::AllocationSamplerConfig &config,
+bool runAllocationSession(spark::AllocationSampler &sampler, const spark::AllocationSamplerConfig &config,
                           std::string &error)
 {
     if (!sampler.start(config, error)) {
@@ -1774,19 +1598,17 @@ bool runAllocationSession(spark::AllocationSampler &sampler,
         std::fprintf(stderr, "allocation lifecycle: stop failed: %s\n", error.c_str());
         return false;
     }
-    if (sampler.sampleCount() == 0 || sampler.observedBytes() == 0 ||
-        sampler.freedSamples() == 0 || sampler.freedBytes() == 0 ||
-        sampler.lifecycleDropped() != 0) {
-        std::fprintf(
-            stderr,
-            "allocation lifecycle: invalid counters "
-            "(samples=%llu observed=%llu freed=%llu freed-bytes=%llu "
-            "lifecycle-dropped=%llu)\n",
-            static_cast<unsigned long long>(sampler.sampleCount()),
-            static_cast<unsigned long long>(sampler.observedBytes()),
-            static_cast<unsigned long long>(sampler.freedSamples()),
-            static_cast<unsigned long long>(sampler.freedBytes()),
-            static_cast<unsigned long long>(sampler.lifecycleDropped()));
+    if (sampler.sampleCount() == 0 || sampler.observedBytes() == 0 || sampler.freedSamples() == 0 ||
+        sampler.freedBytes() == 0 || sampler.lifecycleDropped() != 0) {
+        std::fprintf(stderr,
+                     "allocation lifecycle: invalid counters "
+                     "(samples=%llu observed=%llu freed=%llu freed-bytes=%llu "
+                     "lifecycle-dropped=%llu)\n",
+                     static_cast<unsigned long long>(sampler.sampleCount()),
+                     static_cast<unsigned long long>(sampler.observedBytes()),
+                     static_cast<unsigned long long>(sampler.freedSamples()),
+                     static_cast<unsigned long long>(sampler.freedBytes()),
+                     static_cast<unsigned long long>(sampler.lifecycleDropped()));
         return false;
     }
     return true;
@@ -1803,8 +1625,7 @@ bool verifyProcessWideAllocationSampling()
     spark::AllocationSampler sampler;
     std::string error;
     if (!sampler.start(config, error)) {
-        std::fprintf(stderr, "process-wide allocation: start failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "process-wide allocation: start failed: %s\n", error.c_str());
         return false;
     }
 
@@ -1818,8 +1639,7 @@ bool verifyProcessWideAllocationSampling()
         for (int i = 0; i < 64; ++i) {
             void *pointer = std::malloc(static_cast<std::size_t>(512 + i));
             if (pointer != nullptr) {
-                static_cast<volatile unsigned char *>(pointer)[0] =
-                    static_cast<unsigned char>(i);
+                static_cast<volatile unsigned char *>(pointer)[0] = static_cast<unsigned char>(i);
                 std::free(pointer);
             }
         }
@@ -1834,9 +1654,7 @@ bool verifyProcessWideAllocationSampling()
     second.join();
 
     std::atomic<void *> handoff{nullptr};
-    std::thread allocator([&]() {
-        handoff.store(std::malloc(4096), std::memory_order_release);
-    });
+    std::thread allocator([&]() { handoff.store(std::malloc(4096), std::memory_order_release); });
     allocator.join();
     void *original = handoff.load(std::memory_order_acquire);
     if (original == nullptr) {
@@ -1846,13 +1664,10 @@ bool verifyProcessWideAllocationSampling()
     }
     std::thread resizer([&]() {
         void *replacement = std::realloc(original, 1024 * 1024);
-        handoff.store(replacement != nullptr ? replacement : original,
-                      std::memory_order_release);
+        handoff.store(replacement != nullptr ? replacement : original, std::memory_order_release);
     });
     resizer.join();
-    std::thread releaser([&]() {
-        std::free(handoff.load(std::memory_order_acquire));
-    });
+    std::thread releaser([&]() { std::free(handoff.load(std::memory_order_acquire)); });
     releaser.join();
 
     void *failed = std::malloc(1024);
@@ -1871,14 +1686,11 @@ bool verifyProcessWideAllocationSampling()
         std::free(failed);
     }
 #if defined(_WIN32)
-    _invalid_parameter_handler previous_handler =
-        _set_thread_local_invalid_parameter_handler(ignoreInvalidParameter);
+    _invalid_parameter_handler previous_handler = _set_thread_local_invalid_parameter_handler(ignoreInvalidParameter);
 #endif
     void *calloc_overflow = std::calloc(impossible_runtime, 2);
     if (calloc_overflow != nullptr) {
-        std::fprintf(stderr,
-                     "process-wide allocation: calloc overflow succeeded (%p)\n",
-                     calloc_overflow);
+        std::fprintf(stderr, "process-wide allocation: calloc overflow succeeded (%p)\n", calloc_overflow);
         std::free(calloc_overflow);
 #if defined(_WIN32)
         _set_thread_local_invalid_parameter_handler(previous_handler);
@@ -1893,8 +1705,7 @@ bool verifyProcessWideAllocationSampling()
     void *recalloc_overflow = ::reallocarray(nullptr, impossible_runtime, 2);
 #endif
     if (recalloc_overflow != nullptr) {
-        std::fprintf(stderr,
-                     "process-wide allocation: recalloc overflow succeeded\n");
+        std::fprintf(stderr, "process-wide allocation: recalloc overflow succeeded\n");
         std::free(recalloc_overflow);
         sampler.stop(error);
         return false;
@@ -1920,38 +1731,32 @@ bool verifyProcessWideAllocationSampling()
 
     sampler.onTick(50.0);
     if (!sampler.stop(error)) {
-        std::fprintf(stderr, "process-wide allocation: stop failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "process-wide allocation: stop failed: %s\n", error.c_str());
         return false;
     }
 
     const auto &trees = sampler.threadTrees();
     const auto overflow = trees.find(0);
-    if (sampler.sampleCount() == 0 || sampler.samplingPoints() == 0 ||
-        sampler.enqueuedSamples() == 0 || sampler.eventQueueHighWaterMark() == 0 ||
-        sampler.freedSamples() == 0 ||
-        trees.size() != sampler.threadRootCapacity() ||
-        sampler.overflowThreadCount() < 40 ||
+    if (sampler.sampleCount() == 0 || sampler.samplingPoints() == 0 || sampler.enqueuedSamples() == 0 ||
+        sampler.eventQueueHighWaterMark() == 0 || sampler.freedSamples() == 0 ||
+        trees.size() != sampler.threadRootCapacity() || sampler.overflowThreadCount() < 40 ||
         sampler.overflowThreadCount() > 512 || overflow == trees.end() ||
-        overflow->second.thread_name != "<other threads>" ||
-        overflow->second.tree.empty()) {
-        std::fprintf(
-            stderr,
-            "process-wide allocation: invalid coverage "
-            "(samples=%llu points=%llu enqueued=%llu high-water=%llu freed=%llu "
-            "threads=%zu overflow=%llu)\n",
-            static_cast<unsigned long long>(sampler.sampleCount()),
-            static_cast<unsigned long long>(sampler.samplingPoints()),
-            static_cast<unsigned long long>(sampler.enqueuedSamples()),
-            static_cast<unsigned long long>(sampler.eventQueueHighWaterMark()),
-            static_cast<unsigned long long>(sampler.freedSamples()), trees.size(),
-            static_cast<unsigned long long>(sampler.overflowThreadCount()));
+        overflow->second.thread_name != "<other threads>" || overflow->second.tree.empty()) {
+        std::fprintf(stderr,
+                     "process-wide allocation: invalid coverage "
+                     "(samples=%llu points=%llu enqueued=%llu high-water=%llu freed=%llu "
+                     "threads=%zu overflow=%llu)\n",
+                     static_cast<unsigned long long>(sampler.sampleCount()),
+                     static_cast<unsigned long long>(sampler.samplingPoints()),
+                     static_cast<unsigned long long>(sampler.enqueuedSamples()),
+                     static_cast<unsigned long long>(sampler.eventQueueHighWaterMark()),
+                     static_cast<unsigned long long>(sampler.freedSamples()), trees.size(),
+                     static_cast<unsigned long long>(sampler.overflowThreadCount()));
         return false;
     }
     for (const auto &[id, thread] : trees) {
         if (thread.thread_name.empty() || thread.tree.empty()) {
-            std::fprintf(stderr,
-                         "process-wide allocation: empty thread root %llu\n",
+            std::fprintf(stderr, "process-wide allocation: empty thread root %llu\n",
                          static_cast<unsigned long long>(id));
             return false;
         }
@@ -1960,9 +1765,7 @@ bool verifyProcessWideAllocationSampling()
     for (const auto &[id, thread] : trees) {
         views.push_back({thread.thread_name, &thread.tree});
     }
-    std::unordered_map<spark::FrameKey, spark::ResolvedFrame,
-                       spark::FrameKeyHash>
-        resolved;
+    std::unordered_map<spark::FrameKey, spark::ResolvedFrame, spark::FrameKeyHash> resolved;
     for (const spark::FrameKey &frame : spark::collectFrameKeys(views)) {
         resolved.emplace(frame, spark::ResolvedFrame{"selftest", "allocation"});
     }
@@ -1970,10 +1773,8 @@ bool verifyProcessWideAllocationSampling()
     metadata.mode = spark::ProfileMode::Allocation;
     metadata.all_threads = true;
     const std::string profile = spark::buildSamplerData(metadata, views, resolved);
-    if (profile.find("<other threads>") == std::string::npos ||
-        profile.find("session #") == std::string::npos) {
-        std::fprintf(stderr,
-                     "process-wide allocation: thread roots were not serialized\n");
+    if (profile.find("<other threads>") == std::string::npos || profile.find("session #") == std::string::npos) {
+        std::fprintf(stderr, "process-wide allocation: thread roots were not serialized\n");
         return false;
     }
     return sampler.shutdown(error);
@@ -1989,8 +1790,7 @@ bool verifyAllocationResourcePressure()
     std::string error;
     spark::AllocationSampler queue_sampler;
     if (!queue_sampler.start(config, error)) {
-        std::fprintf(stderr, "allocation pressure: queue start failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation pressure: queue start failed: %s\n", error.c_str());
         return false;
     }
     std::vector<std::thread> workers;
@@ -2000,8 +1800,7 @@ bool verifyAllocationResourcePressure()
             for (int i = 0; i < 4096; ++i) {
                 void *pointer = std::malloc(64);
                 if (pointer != nullptr) {
-                    static_cast<volatile unsigned char *>(pointer)[0] =
-                        static_cast<unsigned char>(i);
+                    static_cast<volatile unsigned char *>(pointer)[0] = static_cast<unsigned char>(i);
                     std::free(pointer);
                 }
             }
@@ -2010,46 +1809,34 @@ bool verifyAllocationResourcePressure()
     for (std::thread &worker_thread : workers) {
         worker_thread.join();
     }
-    if (!queue_sampler.stop(error) ||
-        queue_sampler.eventQueueHighWaterMark() !=
-            queue_sampler.eventQueueCapacity() ||
-        queue_sampler.droppedEvents() == 0 ||
-        !queue_sampler.dataIncomplete() ||
-        !queue_sampler.shutdown(error)) {
-        std::fprintf(
-            stderr,
-            "allocation pressure: queue did not saturate safely "
-            "(high-water=%llu capacity=%llu dropped=%llu error=%s)\n",
-            static_cast<unsigned long long>(
-                queue_sampler.eventQueueHighWaterMark()),
-            static_cast<unsigned long long>(queue_sampler.eventQueueCapacity()),
-            static_cast<unsigned long long>(queue_sampler.droppedEvents()),
-            error.c_str());
+    if (!queue_sampler.stop(error) || queue_sampler.eventQueueHighWaterMark() != queue_sampler.eventQueueCapacity() ||
+        queue_sampler.droppedEvents() == 0 || !queue_sampler.dataIncomplete() || !queue_sampler.shutdown(error)) {
+        std::fprintf(stderr,
+                     "allocation pressure: queue did not saturate safely "
+                     "(high-water=%llu capacity=%llu dropped=%llu error=%s)\n",
+                     static_cast<unsigned long long>(queue_sampler.eventQueueHighWaterMark()),
+                     static_cast<unsigned long long>(queue_sampler.eventQueueCapacity()),
+                     static_cast<unsigned long long>(queue_sampler.droppedEvents()), error.c_str());
         return false;
     }
 
     config.only_ticks_over_ms = 1;
     spark::AllocationSampler tick_sampler;
     if (!tick_sampler.start(config, error)) {
-        std::fprintf(stderr, "allocation pressure: tick queue start failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation pressure: tick queue start failed: %s\n", error.c_str());
         return false;
     }
     constexpr std::uint64_t extra_tick_events = 1024;
-    for (std::uint64_t i = 0;
-         i < tick_sampler.tickEventCapacity() + extra_tick_events; ++i) {
+    for (std::uint64_t i = 0; i < tick_sampler.tickEventCapacity() + extra_tick_events; ++i) {
         tick_sampler.onTick(2.0);
     }
-    if (!tick_sampler.stop(error) ||
-        tick_sampler.droppedTickEvents() != extra_tick_events ||
+    if (!tick_sampler.stop(error) || tick_sampler.droppedTickEvents() != extra_tick_events ||
         !tick_sampler.dataIncomplete() || !tick_sampler.shutdown(error)) {
-        std::fprintf(
-            stderr,
-            "allocation pressure: tick queue did not saturate at its declared "
-            "capacity (capacity=%llu dropped=%llu error=%s)\n",
-            static_cast<unsigned long long>(tick_sampler.tickEventCapacity()),
-            static_cast<unsigned long long>(tick_sampler.droppedTickEvents()),
-            error.c_str());
+        std::fprintf(stderr,
+                     "allocation pressure: tick queue did not saturate at its declared "
+                     "capacity (capacity=%llu dropped=%llu error=%s)\n",
+                     static_cast<unsigned long long>(tick_sampler.tickEventCapacity()),
+                     static_cast<unsigned long long>(tick_sampler.droppedTickEvents()), error.c_str());
         return false;
     }
 
@@ -2058,8 +1845,7 @@ bool verifyAllocationResourcePressure()
     config.thread_state_limit_for_testing = 8;
     spark::AllocationSampler registry_sampler;
     if (!registry_sampler.start(config, error)) {
-        std::fprintf(stderr, "allocation pressure: registry start failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation pressure: registry start failed: %s\n", error.c_str());
         return false;
     }
     std::atomic<int> registry_ready{0};
@@ -2085,16 +1871,13 @@ bool verifyAllocationResourcePressure()
     for (std::thread &worker_thread : workers) {
         worker_thread.join();
     }
-    if (!registry_sampler.stop(error) ||
-        registry_sampler.threadStateDrops() == 0 ||
-        !registry_sampler.dataIncomplete() ||
-        !registry_sampler.shutdown(error)) {
-        std::fprintf(
-            stderr,
-            "allocation pressure: thread registry did not fail bounded "
-            "(state-drops=%llu incomplete=%d error=%s)\n",
-            static_cast<unsigned long long>(registry_sampler.threadStateDrops()),
-            registry_sampler.dataIncomplete(), error.c_str());
+    if (!registry_sampler.stop(error) || registry_sampler.threadStateDrops() == 0 ||
+        !registry_sampler.dataIncomplete() || !registry_sampler.shutdown(error)) {
+        std::fprintf(stderr,
+                     "allocation pressure: thread registry did not fail bounded "
+                     "(state-drops=%llu incomplete=%d error=%s)\n",
+                     static_cast<unsigned long long>(registry_sampler.threadStateDrops()),
+                     registry_sampler.dataIncomplete(), error.c_str());
         return false;
     }
 
@@ -2102,11 +1885,9 @@ bool verifyAllocationResourcePressure()
     config.thread_state_limit_for_testing = 0;
     spark::AllocationSampler live_sampler;
     std::vector<void *> retained;
-    retained.reserve(static_cast<std::size_t>(live_sampler.liveIndexCapacity() +
-                                               1024));
+    retained.reserve(static_cast<std::size_t>(live_sampler.liveIndexCapacity() + 1024));
     if (!live_sampler.start(config, error)) {
-        std::fprintf(stderr, "allocation pressure: live start failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation pressure: live start failed: %s\n", error.c_str());
         return false;
     }
     for (std::uint64_t i = 0; i < live_sampler.liveIndexCapacity() + 1024; ++i) {
@@ -2118,8 +1899,7 @@ bool verifyAllocationResourcePressure()
     }
     const bool stopped = live_sampler.stop(error);
     const bool bounded = !stopped && live_sampler.lifecycleDropped() != 0 &&
-                         live_sampler.peakLiveSamples() <=
-                             live_sampler.liveIndexCapacity() &&
+                         live_sampler.peakLiveSamples() <= live_sampler.liveIndexCapacity() &&
                          live_sampler.dataIncomplete();
     for (void *pointer : retained) {
         std::free(pointer);
@@ -2127,16 +1907,14 @@ bool verifyAllocationResourcePressure()
     std::string shutdown_error;
     const bool shutdown = live_sampler.shutdown(shutdown_error);
     if (!bounded || !shutdown) {
-        std::fprintf(
-            stderr,
-            "allocation pressure: live index did not fail closed "
-            "(stopped=%d peak=%llu capacity=%llu lifecycle-dropped=%llu "
-            "error=%s shutdown=%s)\n",
-            stopped,
-            static_cast<unsigned long long>(live_sampler.peakLiveSamples()),
-            static_cast<unsigned long long>(live_sampler.liveIndexCapacity()),
-            static_cast<unsigned long long>(live_sampler.lifecycleDropped()),
-            error.c_str(), shutdown_error.c_str());
+        std::fprintf(stderr,
+                     "allocation pressure: live index did not fail closed "
+                     "(stopped=%d peak=%llu capacity=%llu lifecycle-dropped=%llu "
+                     "error=%s shutdown=%s)\n",
+                     stopped, static_cast<unsigned long long>(live_sampler.peakLiveSamples()),
+                     static_cast<unsigned long long>(live_sampler.liveIndexCapacity()),
+                     static_cast<unsigned long long>(live_sampler.lifecycleDropped()), error.c_str(),
+                     shutdown_error.c_str());
         return false;
     }
     return true;
@@ -2168,16 +1946,14 @@ bool verifyAllocationLifecycle()
     constexpr std::size_t expected_capabilities = 7;
 #endif
     if (capabilities.size() != expected_capabilities || active_hooks < 3) {
-        std::fprintf(stderr,
-                     "allocation lifecycle: invalid hook capability report (%zu total, %zu active)\n",
+        std::fprintf(stderr, "allocation lifecycle: invalid hook capability report (%zu total, %zu active)\n",
                      capabilities.size(), active_hooks);
         return false;
     }
 
     config.fail_aggregator_for_testing = true;
     if (!sampler.start(config, error)) {
-        std::fprintf(stderr, "allocation lifecycle: injected-failure start failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation lifecycle: injected-failure start failed: %s\n", error.c_str());
         return false;
     }
     bool failed = false;
@@ -2192,8 +1968,7 @@ bool verifyAllocationLifecycle()
     const bool stopped_cleanly = sampler.stop(stop_error);
     if (!failed || stopped_cleanly || sampler.running() ||
         stop_error.find("injected allocation aggregator failure") == std::string::npos) {
-        std::fprintf(stderr,
-                     "allocation lifecycle: aggregator failure was not surfaced safely: %s\n",
+        std::fprintf(stderr, "allocation lifecycle: aggregator failure was not surfaced safely: %s\n",
                      stop_error.c_str());
         return false;
     }
@@ -2205,8 +1980,7 @@ bool verifyAllocationLifecycle()
     }
 
     if (!sampler.start(config, error)) {
-        std::fprintf(stderr, "allocation lifecycle: concurrent-stop start failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation lifecycle: concurrent-stop start failed: %s\n", error.c_str());
         return false;
     }
     std::atomic<bool> allocate{true};
@@ -2229,19 +2003,16 @@ bool verifyAllocationLifecycle()
         worker_thread.join();
     }
     if (!concurrent_stop) {
-        std::fprintf(stderr, "allocation lifecycle: concurrent stop failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation lifecycle: concurrent stop failed: %s\n", error.c_str());
         return false;
     }
 
 #if defined(_WIN32)
     HMODULE fixture = ::LoadLibraryA(SPARK_WINDOWS_ALLOCATION_FIXTURE_PATH);
     using FixtureRun = void (*)(volatile LONG *);
-    auto fixture_run =
-        fixture == nullptr
-            ? nullptr
-            : reinterpret_cast<FixtureRun>(
-                  ::GetProcAddress(fixture, "sparkAllocationFixtureRun"));
+    auto fixture_run = fixture == nullptr
+                         ? nullptr
+                         : reinterpret_cast<FixtureRun>(::GetProcAddress(fixture, "sparkAllocationFixtureRun"));
     volatile LONG fixture_running = 1;
     std::thread fixture_worker;
     if (fixture_run != nullptr) {
@@ -2257,16 +2028,12 @@ bool verifyAllocationLifecycle()
         ::FreeLibrary(fixture);
     }
     if (!shutdown || sampler.hooksInstalled()) {
-        std::fprintf(
-            stderr,
-            "allocation lifecycle: concurrent hook shutdown failed: %s\n",
-            error.c_str());
+        std::fprintf(stderr, "allocation lifecycle: concurrent hook shutdown failed: %s\n", error.c_str());
         return false;
     }
 #else
     if (!sampler.shutdown(error) || sampler.hooksInstalled()) {
-        std::fprintf(stderr, "allocation lifecycle: final hook cleanup failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation lifecycle: final hook cleanup failed: %s\n", error.c_str());
         return false;
     }
 #endif
@@ -2274,10 +2041,8 @@ bool verifyAllocationLifecycle()
     // A second instance in the same process models plugin reload: the old
     // active-instance pointer and trampolines must not obstruct new setup.
     spark::AllocationSampler reloaded;
-    if (!runAllocationSession(reloaded, config, error) || !reloaded.shutdown(error) ||
-        reloaded.hooksInstalled()) {
-        std::fprintf(stderr, "allocation lifecycle: reload simulation failed: %s\n",
-                     error.c_str());
+    if (!runAllocationSession(reloaded, config, error) || !reloaded.shutdown(error) || reloaded.hooksInstalled()) {
+        std::fprintf(stderr, "allocation lifecycle: reload simulation failed: %s\n", error.c_str());
         return false;
     }
 
@@ -2287,8 +2052,7 @@ bool verifyAllocationLifecycle()
     options.allocation_interval_bytes = 256;
     options.fail_allocation_aggregator_for_testing = true;
     if (!failed_profiler.start(options, server_tid, error)) {
-        std::fprintf(stderr, "profiler failure state: injected start failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "profiler failure state: injected start failed: %s\n", error.c_str());
         return false;
     }
     bool profiler_failed = false;
@@ -2300,15 +2064,13 @@ bool verifyAllocationLifecycle()
         std::this_thread::sleep_for(1ms);
     }
     if (!profiler_failed || !failed_profiler.cancel(error) || failed_profiler.running()) {
-        std::fprintf(stderr, "profiler failure state: failed session did not cancel cleanly: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "profiler failure state: failed session did not cancel cleanly: %s\n", error.c_str());
         return false;
     }
     options.fail_allocation_aggregator_for_testing = false;
-    if (!failed_profiler.start(options, server_tid, error) ||
-        !exerciseNativeAllocations() || !failed_profiler.stopSampling(error)) {
-        std::fprintf(stderr, "profiler failure state: healthy restart failed: %s\n",
-                     error.c_str());
+    if (!failed_profiler.start(options, server_tid, error) || !exerciseNativeAllocations() ||
+        !failed_profiler.stopSampling(error)) {
+        std::fprintf(stderr, "profiler failure state: healthy restart failed: %s\n", error.c_str());
         return false;
     }
     spark::ExportContext allocation_context;
@@ -2317,8 +2079,7 @@ bool verifyAllocationLifecycle()
         allocation_profile.find("Allocation hook targets installed") == std::string::npos ||
         allocation_profile.find("Allocation thread filter stage") == std::string::npos ||
         !failed_profiler.shutdown(error)) {
-        std::fprintf(stderr, "allocation capability metadata: export validation failed: %s\n",
-                     error.c_str());
+        std::fprintf(stderr, "allocation capability metadata: export validation failed: %s\n", error.c_str());
         return false;
     }
     return true;
@@ -2351,8 +2112,7 @@ bool verifyRetainedAllocationProfile()
     if (resized != nullptr) {
         retained = resized;
     }
-    void *failed_resize =
-        std::realloc(retained, (std::numeric_limits<std::size_t>::max)());
+    void *failed_resize = std::realloc(retained, (std::numeric_limits<std::size_t>::max)());
     if (failed_resize != nullptr) {
         std::free(failed_resize);
         std::free(released);
@@ -2369,8 +2129,7 @@ bool verifyRetainedAllocationProfile()
 
     spark::ExportContext context;
     const std::string profile = profiler.exportData(context);
-    const bool valid = profiler.sampleCount() != 0 &&
-                       profiler.sampledAllocationBytes() >= 8192 &&
+    const bool valid = profiler.sampleCount() != 0 && profiler.sampledAllocationBytes() >= 8192 &&
                        profiler.freedAllocationSamples() != 0 &&
                        profile.find("Allocation live-only") != std::string::npos &&
                        profile.find("Allocation retained maximum age ms") != std::string::npos;
@@ -2379,8 +2138,7 @@ bool verifyRetainedAllocationProfile()
         std::fprintf(stderr,
                      "retained allocation: profile validation failed: %s "
                      "(samples=%llu bytes=%llu freed=%llu live-meta=%d age-meta=%d)\n",
-                     error.c_str(),
-                     static_cast<unsigned long long>(profiler.sampleCount()),
+                     error.c_str(), static_cast<unsigned long long>(profiler.sampleCount()),
                      static_cast<unsigned long long>(profiler.sampledAllocationBytes()),
                      static_cast<unsigned long long>(profiler.freedAllocationSamples()),
                      profile.find("Allocation live-only") != std::string::npos,
@@ -2403,11 +2161,10 @@ bool verifyLinuxImportHooks()
 {
     const pid_t expected = ::getpid();
     spark::ElfImportHooks hooks;
-    const spark::ElfImportHookSpec spec{
-        "getpid", reinterpret_cast<void *>(&linuxHookProbe), true};
+    const spark::ElfImportHookSpec spec{"getpid", reinterpret_cast<void *>(&linuxHookProbe), true};
     std::string error;
-    if (!hooks.prepare(std::span<const spark::ElfImportHookSpec>(&spec, 1), error) ||
-        hooks.targetCount() == 0 || !hooks.install(error)) {
+    if (!hooks.prepare(std::span<const spark::ElfImportHookSpec>(&spec, 1), error) || hooks.targetCount() == 0 ||
+        !hooks.install(error)) {
         std::fprintf(stderr, "linux import hooks: setup failed: %s\n", error.c_str());
         return false;
     }
@@ -2418,16 +2175,10 @@ bool verifyLinuxImportHooks()
 
     void *fixture = ::dlopen(SPARK_ELF_HOOK_FIXTURE_PATH, RTLD_NOW | RTLD_LOCAL);
     auto fixture_getpid =
-        fixture == nullptr
-            ? nullptr
-            : reinterpret_cast<pid_t (*)()>(
-                  ::dlsym(fixture, "sparkElfHookFixtureGetpid"));
-    if (fixture_getpid == nullptr || fixture_getpid() != expected ||
-        !hooks.rescan(error) ||
-        fixture_getpid() != static_cast<pid_t>(-12345) ||
-        hooks.hookedModuleCount() < 2) {
-        std::fprintf(stderr, "linux import hooks: loaded-module rescan failed: %s\n",
-                     error.c_str());
+        fixture == nullptr ? nullptr : reinterpret_cast<pid_t (*)()>(::dlsym(fixture, "sparkElfHookFixtureGetpid"));
+    if (fixture_getpid == nullptr || fixture_getpid() != expected || !hooks.rescan(error) ||
+        fixture_getpid() != static_cast<pid_t>(-12345) || hooks.hookedModuleCount() < 2) {
+        std::fprintf(stderr, "linux import hooks: loaded-module rescan failed: %s\n", error.c_str());
         if (fixture != nullptr) {
             ::dlclose(fixture);
         }
@@ -2503,11 +2254,10 @@ int main(int argc, char **argv)
     }
 
     if (argc > 1 && std::string(argv[1]) == "--statistics-only") {
-        return verifyStatisticsService() && verifySystemResourceStats() &&
-                       verifyWorldGaugeStatistics() &&
+        return verifyStatisticsService() && verifySystemResourceStats() && verifyWorldGaugeStatistics() &&
                        verifyWorldGaugeAbsentWhenNotRecorded()
-                   ? 0
-                   : 1;
+                 ? 0
+                 : 1;
     }
 
     int seconds = 4;
@@ -2527,31 +2277,22 @@ int main(int argc, char **argv)
         std::this_thread::sleep_for(1ms);
     }
 
-    if (!verifyArgumentParsing() || !verifyThreadSelectorSemantics() ||
-        !verifyTickMonitor() || !verifyStatisticsService() ||
-        !verifySystemResourceStats() ||
-        !verifyWorldGaugeStatistics() ||
-        !verifyWorldGaugeAbsentWhenNotRecorded() ||
-        !verifyThreadDiscovery() ||
-        !verifyMultiThreadSerialization() || !verifyStatisticsSerialization() ||
-        !verifyUploadFailure() || !verifyCaptureLifecycle() ||
+    if (!verifyArgumentParsing() || !verifyThreadSelectorSemantics() || !verifyTickMonitor() ||
+        !verifyStatisticsService() || !verifySystemResourceStats() || !verifyWorldGaugeStatistics() ||
+        !verifyWorldGaugeAbsentWhenNotRecorded() || !verifyThreadDiscovery() || !verifyMultiThreadSerialization() ||
+        !verifyStatisticsSerialization() || !verifyUploadFailure() || !verifyCaptureLifecycle() ||
 #if defined(_WIN32)
         !verifyWindowsThreadActivityDetection() ||
 #endif
-        !verifyAllThreadSampling() || !verifySelectedThreadSampling(g_worker_tid.load()) ||
-        !verifyExecutableHash() ||
-        !verifyByteSampling() ||
-        !verifyStopResponsiveness() ||
-        !verifySessionIsolation(g_worker_tid.load()) || !verifyTickFiltering(g_worker_tid.load())
+        !verifyAllThreadSampling() || !verifySelectedThreadSampling(g_worker_tid.load()) || !verifyExecutableHash() ||
+        !verifyByteSampling() || !verifyStopResponsiveness() || !verifySessionIsolation(g_worker_tid.load()) ||
+        !verifyTickFiltering(g_worker_tid.load())
 #if defined(_WIN32)
-        || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile() ||
-        !verifyAllocationThreadSelection() ||
-        !verifyProcessWideAllocationSampling() ||
-        !verifyAllocationResourcePressure()
+        || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile() || !verifyAllocationThreadSelection() ||
+        !verifyProcessWideAllocationSampling() || !verifyAllocationResourcePressure()
 #elif defined(__linux__)
-        || !verifyLinuxImportHooks() || !verifyAllocationLifecycle() ||
-        !verifyRetainedAllocationProfile() || !verifyAllocationThreadSelection() ||
-        !verifyProcessWideAllocationSampling() ||
+        || !verifyLinuxImportHooks() || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile() ||
+        !verifyAllocationThreadSelection() || !verifyProcessWideAllocationSampling() ||
         !verifyAllocationResourcePressure()
 #endif
     ) {
@@ -2603,8 +2344,7 @@ int main(int argc, char **argv)
 
     const std::filesystem::path profile_root =
         std::filesystem::temp_directory_path() /
-        ("spark-profile-selftest-" +
-         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        ("spark-profile-selftest-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     const std::filesystem::path profile_directory = spark::profileStorageDirectory(profile_root);
     spark::ProfileFileResult saved = spark::saveProfileToDirectory(profile_directory, gz, 42);
     if (!saved.ok) {
@@ -2618,8 +2358,7 @@ int main(int argc, char **argv)
         return 1;
     }
     std::ifstream saved_stream(saved.path, std::ios::binary);
-    std::string round_trip((std::istreambuf_iterator<char>(saved_stream)),
-                           std::istreambuf_iterator<char>());
+    std::string round_trip((std::istreambuf_iterator<char>(saved_stream)), std::istreambuf_iterator<char>());
     saved_stream.close();
     std::error_code cleanup_error;
     std::filesystem::remove_all(profile_root, cleanup_error);
@@ -2633,9 +2372,8 @@ int main(int argc, char **argv)
     std::printf("wrote profile.pb, profile.sparkprofile\n");
 
     if (upload) {
-        auto result = spark::uploadToBytebin(gz, spark::kBytebinUrl,
-                                                      spark::kSamplerContentType,
-                                                      std::string("endstone-spark/") + spark::kVersion);
+        auto result = spark::uploadToBytebin(gz, spark::kBytebinUrl, spark::kSamplerContentType,
+                                             std::string("endstone-spark/") + spark::kVersion);
         if (result.ok) {
             std::printf("%s%s\n", spark::kViewerUrl, result.key.c_str());
         }

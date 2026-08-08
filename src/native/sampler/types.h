@@ -19,10 +19,7 @@ struct FrameKey {
     std::uint64_t rva = 0;
     std::uint64_t raw_address = 0;  // runtime PC (for cpptrace resolution); not part of identity
 
-    bool operator==(const FrameKey &o) const noexcept
-    {
-        return module == o.module && rva == o.rva;
-    }
+    bool operator==(const FrameKey &o) const noexcept { return module == o.module && rva == o.rva; }
 };
 
 struct FrameKeyHash {
@@ -41,8 +38,7 @@ struct FrameKeyHash {
 // Interns module path strings to small ids.
 class ModuleTable {
 public:
-    explicit ModuleTable(std::size_t maximum_paths = 0)
-        : maximum_paths_(maximum_paths)
+    explicit ModuleTable(std::size_t maximum_paths = 0) : maximum_paths_(maximum_paths)
     {
         if (maximum_paths_ != 0) {
             paths_.emplace_back("<other modules>");
@@ -63,15 +59,9 @@ public:
         return static_cast<ModuleId>(paths_.size() - 1);
     }
 
-    const std::string &path(ModuleId id) const
-    {
-        return paths_.at(id);
-    }
+    const std::string &path(ModuleId id) const { return paths_.at(id); }
 
-    std::size_t size() const
-    {
-        return paths_.size();
-    }
+    std::size_t size() const { return paths_.size(); }
 
 private:
     std::size_t maximum_paths_ = 0;

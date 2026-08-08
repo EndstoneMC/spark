@@ -7,10 +7,7 @@
 
 namespace spark {
 
-TickMonitorCommand::TickMonitorCommand(ResultNotifier &notifier)
-    : notifier_(notifier)
-{
-}
+TickMonitorCommand::TickMonitorCommand(ResultNotifier &notifier) : notifier_(notifier) {}
 
 void TickMonitorCommand::cmdTickMonitor(CommandSender &sender, const Arguments &args)
 {
@@ -68,8 +65,7 @@ void TickMonitorCommand::processTickMonitor(double mspt)
     TickMonitorUpdate update = tick_monitor_.onTick(mspt);
     char message[256];
     if (update.setup_completed) {
-        std::snprintf(message, sizeof(message),
-                      "Tick monitor baseline ready: min %.2fms, average %.2fms, max %.2fms.",
+        std::snprintf(message, sizeof(message), "Tick monitor baseline ready: min %.2fms, average %.2fms, max %.2fms.",
                       update.setup_min_ms, update.baseline_ms, update.setup_max_ms);
         notifier_.notify(sender_name_, message);
 
@@ -78,17 +74,15 @@ void TickMonitorCommand::processTickMonitor(double mspt)
                           tick_monitor_.config().threshold);
         }
         else {
-            std::snprintf(message, sizeof(message),
-                          "Reporting ticks more than %.2f%% above the baseline.",
+            std::snprintf(message, sizeof(message), "Reporting ticks more than %.2f%% above the baseline.",
                           tick_monitor_.config().threshold);
         }
         notifier_.notify(sender_name_, message);
     }
     if (update.report) {
-        std::snprintf(message, sizeof(message),
-                      "Tick #%llu lasted %.2fms (%.2f%% change from the %.2fms baseline).",
-                      static_cast<unsigned long long>(update.tick), update.duration_ms,
-                      update.percentage_change, update.baseline_ms);
+        std::snprintf(message, sizeof(message), "Tick #%llu lasted %.2fms (%.2f%% change from the %.2fms baseline).",
+                      static_cast<unsigned long long>(update.tick), update.duration_ms, update.percentage_change,
+                      update.baseline_ms);
         notifier_.notify(sender_name_, message);
     }
 }

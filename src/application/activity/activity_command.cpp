@@ -13,7 +13,9 @@ namespace {
 std::string formatDateDiff(std::int64_t time_ms, std::int64_t now_ms)
 {
     std::int64_t seconds = (now_ms - time_ms) / 1000;
-    if (seconds <= 0) return "now";
+    if (seconds <= 0) {
+        return "now";
+    }
 
     std::int64_t minute = seconds / 60;
     seconds = seconds % 60;
@@ -23,13 +25,25 @@ std::string formatDateDiff(std::int64_t time_ms, std::int64_t now_ms)
     hour = hour % 24;
 
     std::string result;
-    if (day != 0) result += std::to_string(day) + "d ";
-    if (hour != 0) result += std::to_string(hour) + "h ";
-    if (minute != 0) result += std::to_string(minute) + "m ";
-    if (seconds != 0) result += std::to_string(seconds) + "s";
+    if (day != 0) {
+        result += std::to_string(day) + "d ";
+    }
+    if (hour != 0) {
+        result += std::to_string(hour) + "h ";
+    }
+    if (minute != 0) {
+        result += std::to_string(minute) + "m ";
+    }
+    if (seconds != 0) {
+        result += std::to_string(seconds) + "s";
+    }
 
-    if (result.empty()) result = "0s";
-    if (result.back() == ' ') result.pop_back();
+    if (result.empty()) {
+        result = "0s";
+    }
+    if (result.back() == ' ') {
+        result.pop_back();
+    }
     return result + " ago";
 }
 
@@ -43,9 +57,9 @@ void ActivityCommand::cmdActivity(CommandSender &sender, const Arguments &args)
         return;
     }
 
-    const std::int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    std::chrono::system_clock::now().time_since_epoch())
-                                    .count();
+    const std::int64_t now_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
 
     // Simple pagination: 4 entries per page.
     constexpr int kPerPage = 4;
@@ -69,9 +83,8 @@ void ActivityCommand::cmdActivity(CommandSender &sender, const Arguments &args)
 
     for (int i = start; i < end; ++i) {
         const Activity &a = entries[i];
-        sender.sendMessage("{}> {}#{} {}- {} {}{}",
-                           kColorDarkGray, kColorWhite, i + 1,
-                           kColorDarkGray, kColorYellow, a.type, kColorReset);
+        sender.sendMessage("{}> {}#{} {}- {} {}{}", kColorDarkGray, kColorWhite, i + 1, kColorDarkGray, kColorYellow,
+                           a.type, kColorReset);
         sender.sendMessage("  {}Created by: {}{}", kColorGray, kColorReset, a.user_name);
         const char *label = a.data_type == Activity::DataType::Url ? "URL" : "File";
         sender.sendMessage("  {}{}: {}{}", kColorGray, label, kColorReset, a.data_value);

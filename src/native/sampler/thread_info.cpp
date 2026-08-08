@@ -12,8 +12,9 @@
 #elif defined(__linux__)
 #include <dirent.h>
 #include <fcntl.h>
-#include <sys/syscall.h>
 #include <unistd.h>
+
+#include <sys/syscall.h>
 #endif
 
 namespace spark {
@@ -31,10 +32,10 @@ std::string utf8ThreadName(HANDLE thread)
 {
     using GetThreadDescriptionFn = HRESULT(WINAPI *)(HANDLE, PWSTR *);
     HMODULE kernel32 = ::GetModuleHandleW(L"kernel32.dll");
-    auto get_description = kernel32 == nullptr
-                               ? nullptr
-                               : reinterpret_cast<GetThreadDescriptionFn>(
-                                     ::GetProcAddress(kernel32, "GetThreadDescription"));
+    auto get_description =
+        kernel32 == nullptr
+            ? nullptr
+            : reinterpret_cast<GetThreadDescriptionFn>(::GetProcAddress(kernel32, "GetThreadDescription"));
     if (get_description == nullptr) {
         return {};
     }
@@ -62,8 +63,7 @@ std::optional<std::string> platformThreadName(std::uint64_t id)
     }
     std::string name = utf8ThreadName(thread);
     ::CloseHandle(thread);
-    return name.empty() ? std::nullopt
-                        : std::optional<std::string>(std::move(name));
+    return name.empty() ? std::nullopt : std::optional<std::string>(std::move(name));
 }
 
 #elif defined(__linux__)
@@ -84,10 +84,7 @@ std::optional<std::string> platformThreadName(std::uint64_t id)
     while (count > 0 && (buffer[count - 1] == '\n' || buffer[count - 1] == '\r' || buffer[count - 1] == '\0')) {
         --count;
     }
-    return count == 0
-               ? std::nullopt
-               : std::optional<std::string>(
-                     std::string(buffer, static_cast<std::size_t>(count)));
+    return count == 0 ? std::nullopt : std::optional<std::string>(std::string(buffer, static_cast<std::size_t>(count)));
 }
 
 #endif
@@ -161,12 +158,10 @@ std::vector<ThreadInfo> enumerateProcessThreads()
     ::closedir(directory);
 #endif
 
-    std::sort(threads.begin(), threads.end(), [](const ThreadInfo &left, const ThreadInfo &right) {
-        return left.id < right.id;
-    });
-    threads.erase(std::unique(threads.begin(), threads.end(), [](const ThreadInfo &left, const ThreadInfo &right) {
-                      return left.id == right.id;
-                  }),
+    std::sort(threads.begin(), threads.end(),
+              [](const ThreadInfo &left, const ThreadInfo &right) { return left.id < right.id; });
+    threads.erase(std::unique(threads.begin(), threads.end(),
+                              [](const ThreadInfo &left, const ThreadInfo &right) { return left.id == right.id; }),
                   threads.end());
     return threads;
 }

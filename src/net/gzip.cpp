@@ -1,8 +1,8 @@
 #include "net/gzip.h"
 
-#include <stdexcept>
-
 #include <zlib.h>
+
+#include <stdexcept>
 
 namespace spark {
 

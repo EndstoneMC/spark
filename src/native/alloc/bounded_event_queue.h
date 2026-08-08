@@ -33,14 +33,11 @@ public:
         Cell *cell = nullptr;
         for (;;) {
             cell = &storage_[position & (Capacity - 1)];
-            const std::size_t sequence =
-                cell->sequence.load(std::memory_order_acquire);
+            const std::size_t sequence = cell->sequence.load(std::memory_order_acquire);
             const std::intptr_t difference =
-                static_cast<std::intptr_t>(sequence) -
-                static_cast<std::intptr_t>(position);
+                static_cast<std::intptr_t>(sequence) - static_cast<std::intptr_t>(position);
             if (difference == 0) {
-                if (producer_.compare_exchange_weak(
-                        position, position + 1, std::memory_order_relaxed)) {
+                if (producer_.compare_exchange_weak(position, position + 1, std::memory_order_relaxed)) {
                     break;
                 }
             }
@@ -62,14 +59,11 @@ public:
         Cell *cell = nullptr;
         for (;;) {
             cell = &storage_[position & (Capacity - 1)];
-            const std::size_t sequence =
-                cell->sequence.load(std::memory_order_acquire);
+            const std::size_t sequence = cell->sequence.load(std::memory_order_acquire);
             const std::intptr_t difference =
-                static_cast<std::intptr_t>(sequence) -
-                static_cast<std::intptr_t>(position + 1);
+                static_cast<std::intptr_t>(sequence) - static_cast<std::intptr_t>(position + 1);
             if (difference == 0) {
-                if (consumer_.compare_exchange_weak(
-                        position, position + 1, std::memory_order_relaxed)) {
+                if (consumer_.compare_exchange_weak(position, position + 1, std::memory_order_relaxed)) {
                     break;
                 }
             }

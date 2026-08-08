@@ -76,15 +76,13 @@ public:
     bool onTick(double duration_ms);
 
     StatisticsSnapshot snapshot() const;
-    std::map<std::int32_t, WindowStats> profileWindows(
-        std::int64_t profile_start_unix_ms,
-        std::int64_t profile_end_unix_ms) const;
+    std::map<std::int32_t, WindowStats> profileWindows(std::int64_t profile_start_unix_ms,
+                                                       std::int64_t profile_end_unix_ms) const;
     void recordPlayerCount(long players);
     void recordWorldGauges(int entities, int chunks);
 
     // Deterministic clock/CPU entry points used by the offline self-test.
-    void startAt(std::int64_t steady_ms, std::int64_t unix_ms,
-                 const CpuSnapshot &initial_cpu);
+    void startAt(std::int64_t steady_ms, std::int64_t unix_ms, const CpuSnapshot &initial_cpu);
     void recordTickAt(double duration_ms, std::int64_t steady_ms);
     void recordCpuSnapshot(const CpuSnapshot &current);
     void recordPlayerCountAt(long players, std::int64_t steady_ms);
@@ -92,10 +90,7 @@ public:
     StatisticsSnapshot snapshotAt(std::int64_t steady_ms) const;
 
     std::int64_t unixTimeFor(std::int64_t steady_ms) const;
-    std::int64_t lastObservationSteadyMs() const
-    {
-        return last_observation_steady_ms_;
-    }
+    std::int64_t lastObservationSteadyMs() const { return last_observation_steady_ms_; }
 
 private:
     struct TickSample {
@@ -122,12 +117,9 @@ private:
     };
 
     RollingValue tpsFor(std::int64_t now_ms, std::int64_t window_ms) const;
-    DistributionValues msptFor(std::int64_t now_ms,
-                               std::int64_t window_ms) const;
-    RollingValue cpuFor(std::int64_t now_ms, std::int64_t window_ms,
-                        bool process) const;
-    std::int64_t effectiveStart(std::int64_t now_ms,
-                                std::int64_t window_ms) const;
+    DistributionValues msptFor(std::int64_t now_ms, std::int64_t window_ms) const;
+    RollingValue cpuFor(std::int64_t now_ms, std::int64_t window_ms, bool process) const;
+    std::int64_t effectiveStart(std::int64_t now_ms, std::int64_t window_ms) const;
 
     std::array<TickSample, kTickCapacity> ticks_{};
     std::array<CpuSample, kCpuCapacity> cpu_{};

@@ -19,30 +19,18 @@ struct AllocationThreadSelection {
     bool name_available = false;
 };
 
-// Resolves allocation-origin thread names and applies the same matching rules as
-// the execution sampler. This object is used only by allocation aggregators, never
-// allocator hooks. A monotonic session identity is the cache key; an OS TID is
-// only used for the initial name query.
+// Allocation-origin thread name resolution, used only by aggregators (never allocator hooks).
 class AllocationThreadFilter {
 public:
-    AllocationThreadFilter(std::uint64_t maximum_named_roots,
-                           std::size_t maximum_cached_identities);
+    AllocationThreadFilter(std::uint64_t maximum_named_roots, std::size_t maximum_cached_identities);
 
-    bool configure(bool all_threads, bool regex_threads,
-                   const std::vector<std::string> &patterns, std::string &error);
+    bool configure(bool all_threads, bool regex_threads, const std::vector<std::string> &patterns, std::string &error);
     void clear();
 
-    AllocationThreadSelection resolve(std::uint64_t session_thread_id,
-                                      std::uint64_t os_thread_id);
+    AllocationThreadSelection resolve(std::uint64_t session_thread_id, std::uint64_t os_thread_id);
 
-    std::uint64_t nameFailures() const noexcept
-    {
-        return name_failures_.load(std::memory_order_relaxed);
-    }
-    std::uint64_t cacheDrops() const noexcept
-    {
-        return cache_drops_.load(std::memory_order_relaxed);
-    }
+    std::uint64_t nameFailures() const noexcept { return name_failures_.load(std::memory_order_relaxed); }
+    std::uint64_t cacheDrops() const noexcept { return cache_drops_.load(std::memory_order_relaxed); }
     bool selectsAll() const noexcept { return selector_.selectsAll(); }
 
 private:

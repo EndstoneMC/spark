@@ -6,10 +6,10 @@
 #include <utility>
 
 #if defined(_WIN32)
-#  include <io.h>
-#  include <windows.h>
+#include <io.h>
+#include <windows.h>
 #else
-#  include <unistd.h>
+#include <unistd.h>
 #endif
 
 namespace spark {
@@ -18,8 +18,7 @@ namespace {
 
 std::uint64_t monotonicNowNs()
 {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
         .count();
 }
 
@@ -34,10 +33,7 @@ bool syncFileImpl(std::FILE *f)
 
 }  // namespace
 
-RecoveryWriter::RecoveryWriter(Config config)
-    : config_(std::move(config))
-{
-}
+RecoveryWriter::RecoveryWriter(Config config) : config_(std::move(config)) {}
 
 RecoveryWriter::~RecoveryWriter()
 {
@@ -46,7 +42,9 @@ RecoveryWriter::~RecoveryWriter()
 
 bool RecoveryWriter::start()
 {
-    if (running_.exchange(true)) return true;
+    if (running_.exchange(true)) {
+        return true;
+    }
 
     std::error_code ec;
     std::filesystem::create_directories(config_.directory, ec);
@@ -70,7 +68,9 @@ bool RecoveryWriter::start()
 
 void RecoveryWriter::stop()
 {
-    if (!running_.exchange(false)) return;
+    if (!running_.exchange(false)) {
+        return;
+    }
     cv_.notify_all();
     if (thread_.joinable()) {
         thread_.join();
@@ -85,7 +85,9 @@ void RecoveryWriter::stop()
 
 void RecoveryWriter::enqueue(RecordType type, const JournalBuffer &payload)
 {
-    if (!enabled_.load(std::memory_order_acquire)) return;
+    if (!enabled_.load(std::memory_order_acquire)) {
+        return;
+    }
 
     const std::size_t approx = queue_size_.load(std::memory_order_relaxed);
     if (approx >= config_.queue_capacity) {
@@ -104,8 +106,7 @@ void RecoveryWriter::journalModuleDef(std::uint32_t module_id, std::string_view 
     enqueue(RecordType::ModuleDef, buildModuleDefPayload(module_id, path));
 }
 
-void RecoveryWriter::journalThreadDef(std::uint64_t thread_id, std::uint64_t os_thread_id,
-                                      std::string_view name)
+void RecoveryWriter::journalThreadDef(std::uint64_t thread_id, std::uint64_t os_thread_id, std::string_view name)
 {
     enqueue(RecordType::ThreadDef, buildThreadDefPayload(thread_id, os_thread_id, name));
 }
@@ -136,20 +137,16 @@ void RecoveryWriter::journalCleanEnd()
     requestFlush();
 }
 
-void RecoveryWriter::journalSessionConfig(
-    std::uint32_t interval_us, std::int32_t only_ticks_over_ms,
-    bool all_threads, bool regex_threads, bool ignore_sleeping,
-    std::uint8_t thread_grouper, std::uint8_t profile_type, bool live_only,
-    std::string_view creator_name,
-    bool creator_is_player, std::string_view comment,
-    const std::vector<std::string> &thread_patterns)
+void RecoveryWriter::journalSessionConfig(std::uint32_t interval_us, std::int32_t only_ticks_over_ms, bool all_threads,
+                                          bool regex_threads, bool ignore_sleeping, std::uint8_t thread_grouper,
+                                          std::uint8_t profile_type, bool live_only, std::string_view creator_name,
+                                          bool creator_is_player, std::string_view comment,
+                                          const std::vector<std::string> &thread_patterns)
 {
     enqueue(RecordType::SessionConfig,
-            buildSessionConfigPayload(interval_us, only_ticks_over_ms,
-                                      all_threads, regex_threads, ignore_sleeping,
-                                      thread_grouper, profile_type, live_only,
-                                      creator_name,
-                                      creator_is_player, comment, thread_patterns));
+            buildSessionConfigPayload(interval_us, only_ticks_over_ms, all_threads, regex_threads, ignore_sleeping,
+                                      thread_grouper, profile_type, live_only, creator_name, creator_is_player, comment,
+                                      thread_patterns));
 }
 
 void RecoveryWriter::requestFlush()
@@ -189,7 +186,9 @@ void RecoveryWriter::closeSegment()
 
 bool RecoveryWriter::syncFile()
 {
-    if (!file_) return false;
+    if (!file_) {
+        return false;
+    }
     if (!syncFileImpl(file_)) {
         // Disable recovery for the rest of the session.
         enabled_.store(false, std::memory_order_release);
@@ -201,7 +200,9 @@ bool RecoveryWriter::syncFile()
 
 void RecoveryWriter::rotateIfNeeded()
 {
-    if (total_bytes_ <= config_.max_total_bytes) return;
+    if (total_bytes_ <= config_.max_total_bytes) {
+        return;
+    }
 
     // Delete oldest segments until under limit.  Segments are numbered
     // sequentially from 0; the lowest number is the oldest.
@@ -224,13 +225,13 @@ void RecoveryWriter::writerLoop()
     while (running_.load(std::memory_order_acquire)) {
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            cv_.wait_for(lock, flush_interval, [this] {
-                return !running_.load() || flush_requested_.load();
-            });
+            cv_.wait_for(lock, flush_interval, [this] { return !running_.load() || flush_requested_.load(); });
         }
         flush_requested_.store(false, std::memory_order_release);
 
-        if (!enabled_.load(std::memory_order_acquire)) break;
+        if (!enabled_.load(std::memory_order_acquire)) {
+            break;
+        }
 
         bool wrote_any = false;
         while (queue_.try_dequeue(record)) {

@@ -25,7 +25,8 @@ public:
     {
         if constexpr (sizeof...(Args) == 0) {
             sendImpl(fmt);
-        } else {
+        }
+        else {
             sendImpl(std::vformat(fmt, std::make_format_args(args...)));
         }
     }
@@ -35,7 +36,8 @@ public:
     {
         if constexpr (sizeof...(Args) == 0) {
             errorImpl(fmt);
-        } else {
+        }
+        else {
             errorImpl(std::vformat(fmt, std::make_format_args(args...)));
         }
     }

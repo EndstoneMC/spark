@@ -12,12 +12,8 @@
 
 namespace spark {
 
-// Groups chunks into connected regions using 8-neighbor BFS, matching
-// upstream spark's WorldStatisticsProvider.groupIntoRegions().
-// Only chunks with total_entities > 0 participate; empty chunks are
-// excluded from all regions.
-std::vector<WorldRegion> groupChunksIntoRegions(
-    const std::map<std::pair<int, int>, WorldChunk> &chunks);
+// Groups chunks into connected regions via 8-neighbor BFS, matching upstream spark.
+std::vector<WorldRegion> groupChunksIntoRegions(const std::map<std::pair<int, int>, WorldChunk> &chunks);
 
 }  // namespace spark
 

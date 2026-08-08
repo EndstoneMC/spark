@@ -10,8 +10,7 @@ void CallTree::log(const std::vector<FrameKey> &frames, std::int32_t window, std
     logBounded(frames, window, weight, unlimited);
 }
 
-bool CallTree::logBounded(const std::vector<FrameKey> &frames,
-                          std::int32_t window, std::uint64_t weight,
+bool CallTree::logBounded(const std::vector<FrameKey> &frames, std::int32_t window, std::uint64_t weight,
                           std::size_t &remaining_nodes)
 {
     if (frames.empty()) {

@@ -15,60 +15,50 @@
 namespace spark::symbol_guess {
 
 enum class EvidenceSource {
-  Rtti,
-  String,
-  Vtable,
-  Thunk,
+    Rtti,
+    String,
+    Vtable,
+    Thunk,
 };
 
 struct VtableEvidence {
-  std::string class_name;
-  std::uint32_t slot = 0;
-  bool secondary = false;
-  bool via_thunk = false;
+    std::string class_name;
+    std::uint32_t slot = 0;
+    bool secondary = false;
+    bool via_thunk = false;
 
-  bool operator==(const VtableEvidence &) const = default;
+    bool operator==(const VtableEvidence &) const = default;
 };
 
 // A label with its evidence type and confidence already determined at
 // construction time, so callers never need to reverse-parse the prefix.
 struct TypedLabel {
-  std::string label;
-  GuessKind kind = GuessKind::None;
-  Confidence confidence = Confidence::None;
+    std::string label;
+    GuessKind kind = GuessKind::None;
+    Confidence confidence = Confidence::None;
 
-  bool empty() const { return label.empty(); }
-  bool operator==(const TypedLabel &) const = default;
+    bool empty() const { return label.empty(); }
+    bool operator==(const TypedLabel &) const = default;
 };
 
-// Maps direct inheritance relationships so that shared vtable implementations
-// can be attributed to their common ancestor. The map stores only direct
-// parent links; ancestor queries compute the transitive closure with cycle
-// detection.
+// Direct inheritance map for attributing shared vtable implementations to a common ancestor.
 class InheritanceMap {
 public:
-  void addBase(std::string_view derived, std::string_view base);
-  bool isAncestor(std::string_view ancestor,
-                  std::string_view descendant) const;
-  // Returns the most-derived class that is an ancestor of every candidate,
-  // or nullopt when no unique common ancestor exists.
-  std::optional<std::string>
-  findCommonAncestor(const std::set<std::string> &classes) const;
-  bool empty() const { return parents_.empty(); }
-  std::size_t size() const { return parents_.size(); }
+    void addBase(std::string_view derived, std::string_view base);
+    bool isAncestor(std::string_view ancestor, std::string_view descendant) const;
+    // Returns the most-derived class that is an ancestor of every candidate,
+    // or nullopt when no unique common ancestor exists.
+    std::optional<std::string> findCommonAncestor(const std::set<std::string> &classes) const;
+    bool empty() const { return parents_.empty(); }
+    std::size_t size() const { return parents_.size(); }
 
 private:
-  std::unordered_map<std::string, std::unordered_set<std::string>> parents_;
+    std::unordered_map<std::string, std::unordered_set<std::string>> parents_;
 };
 
-// Guesses always carry their evidence source. A question mark means the
-// evidence is useful but cannot identify the exact member (for example, one
-// class mapping the same implementation to several vtable slots). Conflicting
-// evidence returns an empty label instead of hiding the conflict behind '?'.
-TypedLabel formatEvidenceLabel(EvidenceSource source, std::string_view message,
-                               bool tentative = false);
-TypedLabel chooseVtableLabel(std::vector<VtableEvidence> evidence,
-                             const InheritanceMap *inheritance = nullptr);
+// Evidence label with source. '?' means useful but inexact; conflicting evidence returns empty.
+TypedLabel formatEvidenceLabel(EvidenceSource source, std::string_view message, bool tentative = false);
+TypedLabel chooseVtableLabel(std::vector<VtableEvidence> evidence, const InheritanceMap *inheritance = nullptr);
 
 // Deterministic semantic scoring shared by both native backends. Scores are an
 // internal ranking, not probabilities: accepted strings below the strong
@@ -79,6 +69,6 @@ TypedLabel formatStringHint(std::string_view value, int score);
 inline constexpr int kMinimumStringHintScore = 50;
 inline constexpr int kStrongStringHintScore = 80;
 
-} // namespace spark::symbol_guess
+}  // namespace spark::symbol_guess
 
-#endif // ENDSTONE_SPARK_SYMBOL_GUESS_EVIDENCE_H
+#endif  // ENDSTONE_SPARK_SYMBOL_GUESS_EVIDENCE_H

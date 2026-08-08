@@ -25,26 +25,15 @@
 
 namespace spark {
 
-// Owns the Profiler and manages the profiling session lifecycle:
-// start, stop, cancel, timeout auto-stop, and background export.
-// Platform access is through injected capabilities (dispatcher,
-// metadata provider, notifier). No Endstone dependency.
+// Manages the profiling session lifecycle and background export. No Endstone dependency.
 class ProfilerService {
 public:
-    ProfilerService(StatisticsService &statistics,
-                    std::string bds_executable_sha256,
-                    std::filesystem::path profile_storage_dir,
-                    std::string bytebin_url,
-                    std::string viewer_url,
-                    std::string bytesocks_host,
-                    bool background_enabled,
-                    int background_interval,
-                    std::string background_thread_grouper,
-                    std::string background_thread_dumper,
-                    TrustedViewersState &trusted_viewers,
-                    MainThreadDispatcher &dispatcher,
-                    ProfileMetadataProvider &metadata_provider,
-                    ResultNotifier &notifier);
+    ProfilerService(StatisticsService &statistics, std::string bds_executable_sha256,
+                    std::filesystem::path profile_storage_dir, std::string bytebin_url, std::string viewer_url,
+                    std::string bytesocks_host, bool background_enabled, int background_interval,
+                    std::string background_thread_grouper, std::string background_thread_dumper,
+                    TrustedViewersState &trusted_viewers, MainThreadDispatcher &dispatcher,
+                    ProfileMetadataProvider &metadata_provider, ResultNotifier &notifier);
     ~ProfilerService();
 
     ProfilerService(const ProfilerService &) = delete;
@@ -71,8 +60,7 @@ public:
     }
 
     // Sets a callback that returns the current network snapshots for export.
-    void setNetworkSnapshotProvider(
-        std::function<std::map<std::string, NetworkInterfaceSnapshot>()> provider)
+    void setNetworkSnapshotProvider(std::function<std::map<std::string, NetworkInterfaceSnapshot>()> provider)
     {
         network_snapshot_provider_ = std::move(provider);
     }
@@ -104,11 +92,14 @@ public:
     void startBackgroundProfiler();
 
 private:
-    enum class SessionType { None, Background, Foreground };
+    enum class SessionType {
+        None,
+        Background,
+        Foreground
+    };
     bool background_started_ = false;
     void sendAllocationHookCoverage(CommandSender &sender);
-    void finishProfiler(const std::string &sender_name, bool sender_is_player,
-                        bool save, const std::string &comment);
+    void finishProfiler(const std::string &sender_name, bool sender_is_player, bool save, const std::string &comment);
     void runExport();
     void announceResult();
     bool startBackgroundSession();

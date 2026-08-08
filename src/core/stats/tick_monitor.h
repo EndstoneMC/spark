@@ -36,15 +36,9 @@ public:
     bool start(const TickMonitorConfig &config);
     void stop();
 
-    bool running() const
-    {
-        return running_;
-    }
+    bool running() const { return running_; }
 
-    const TickMonitorConfig &config() const
-    {
-        return config_;
-    }
+    const TickMonitorConfig &config() const { return config_; }
 
     TickMonitorUpdate onTick(double duration_ms);
 

@@ -7,20 +7,11 @@
 
 namespace spark {
 
-// Parses server.properties with a strict allowlist. Only explicitly safe
-// keys are returned; all other keys (including any future sensitive fields)
-// are silently dropped. Returns an empty map if the file is missing or
-// unreadable.
-std::map<std::string, std::string> parseServerProperties(
-    const std::filesystem::path &file);
+// Parses server.properties with a strict allowlist; unsafe keys are silently dropped.
+std::map<std::string, std::string> parseServerProperties(const std::filesystem::path &file);
 
-// Serializes a properties map into the JSON object string format expected by
-// the spark viewer's server_configurations field. Boolean strings ("true"/
-// "false") become JSON booleans, all-digit strings become JSON numbers, and
-// everything else becomes a JSON string. This matches the upstream Java
-// spark PropertiesConfigParser + Gson.toJsonTree pipeline.
-std::string serverPropertiesToJsonString(
-    const std::map<std::string, std::string> &properties);
+// Serializes properties as a JSON object string matching upstream spark's server_configurations.
+std::string serverPropertiesToJsonString(const std::map<std::string, std::string> &properties);
 
 }  // namespace spark
 

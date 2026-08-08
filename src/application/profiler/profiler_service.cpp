@@ -6,10 +6,10 @@
 #include <utility>
 #include <vector>
 
+#include "core/stats/system_stats.h"
 #include "core/util/base64.h"
 #include "core/util/format.h"
 #include "core/ws/crypto.h"
-#include "core/stats/system_stats.h"
 #include "net/bytebin.h"
 #include "net/gzip.h"
 #include "spark_constants.h"
@@ -20,43 +20,25 @@ namespace {
 
 std::int64_t nowMs()
 {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::system_clock::now().time_since_epoch())
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
 
 }  // namespace
 
-ProfilerService::ProfilerService(StatisticsService &statistics,
-                                 std::string bds_executable_sha256,
-                                 std::filesystem::path profile_storage_dir,
-                                 std::string bytebin_url,
-                                 std::string viewer_url,
-                                 std::string bytesocks_host,
-                                 bool background_enabled,
-                                 int background_interval,
-                                 std::string background_thread_grouper,
-                                 std::string background_thread_dumper,
-                                 TrustedViewersState &trusted_viewers,
-                                 MainThreadDispatcher &dispatcher,
-                                 ProfileMetadataProvider &metadata_provider,
+ProfilerService::ProfilerService(StatisticsService &statistics, std::string bds_executable_sha256,
+                                 std::filesystem::path profile_storage_dir, std::string bytebin_url,
+                                 std::string viewer_url, std::string bytesocks_host, bool background_enabled,
+                                 int background_interval, std::string background_thread_grouper,
+                                 std::string background_thread_dumper, TrustedViewersState &trusted_viewers,
+                                 MainThreadDispatcher &dispatcher, ProfileMetadataProvider &metadata_provider,
                                  ResultNotifier &notifier)
-    : statistics_(statistics),
-      bds_executable_sha256_(std::move(bds_executable_sha256)),
-      dispatcher_(dispatcher),
-      metadata_provider_(metadata_provider),
-      notifier_(notifier),
-      exporter_(std::move(profile_storage_dir),
-                bytebin_url,
-                viewer_url),
-      background_enabled_(background_enabled),
-      background_interval_(background_interval),
-      background_thread_grouper_(std::move(background_thread_grouper)),
-      background_thread_dumper_(std::move(background_thread_dumper)),
-      bytebin_url_(std::move(bytebin_url)),
-      viewer_url_(std::move(viewer_url)),
-      bytesocks_host_(std::move(bytesocks_host)),
-      trusted_viewers_(trusted_viewers)
+    : statistics_(statistics), bds_executable_sha256_(std::move(bds_executable_sha256)), dispatcher_(dispatcher),
+      metadata_provider_(metadata_provider), notifier_(notifier),
+      exporter_(std::move(profile_storage_dir), bytebin_url, viewer_url), background_enabled_(background_enabled),
+      background_interval_(background_interval), background_thread_grouper_(std::move(background_thread_grouper)),
+      background_thread_dumper_(std::move(background_thread_dumper)), bytebin_url_(std::move(bytebin_url)),
+      viewer_url_(std::move(viewer_url)), bytesocks_host_(std::move(bytesocks_host)), trusted_viewers_(trusted_viewers)
 {
 }
 
@@ -84,7 +66,8 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
             std::string cancel_error;
             profiler_.cancel(cancel_error);
             session_type_ = SessionType::None;
-        } else {
+        }
+        else {
             cmdInfo(sender);
             return;
         }
@@ -99,8 +82,7 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
     options.alloc = args.boolFlag("alloc") || options.alloc_live_only;
 #if !defined(_WIN32) && !defined(__linux__)
     if (options.alloc) {
-        sender.sendErrorMessage(
-            "The native allocation profiler is supported only on Windows x64 and Linux x86-64.");
+        sender.sendErrorMessage("The native allocation profiler is supported only on Windows x64 and Linux x86-64.");
         return;
     }
 #endif
@@ -115,8 +97,7 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
         return;
     }
     const auto all_selector = std::find(options.threads.begin(), options.threads.end(), "*");
-    if (all_selector != options.threads.end() &&
-        (options.regex || options.threads.size() != 1)) {
+    if (all_selector != options.threads.end() && (options.regex || options.threads.size() != 1)) {
         sender.sendErrorMessage("--thread * cannot be combined with another --thread or --regex.");
         return;
     }
@@ -137,17 +118,15 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
                                     spark::kMaxAllocationIntervalBytes);
             return;
         }
-        options.allocation_interval_bytes = interval
-                                                ? static_cast<std::int32_t>(*interval + 0.5)
-                                                : spark::kDefaultAllocationIntervalBytes;
+        options.allocation_interval_bytes =
+            interval ? static_cast<std::int32_t>(*interval + 0.5) : spark::kDefaultAllocationIntervalBytes;
         if (options.allocation_interval_bytes < 1) {
             options.allocation_interval_bytes = 1;
         }
     }
     else {
         if (interval && *interval > spark::kMaxSamplingIntervalMs) {
-            sender.sendErrorMessage("The sampling interval must not exceed {}ms.",
-                                    spark::kMaxSamplingIntervalMs);
+            sender.sendErrorMessage("The sampling interval must not exceed {}ms.", spark::kMaxSamplingIntervalMs);
             return;
         }
         options.interval_ms = interval ? static_cast<int>(*interval + 0.5) : 4;
@@ -185,7 +164,8 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
     }
     if (args.boolFlag("combine-all")) {
         options.thread_grouper = spark::ThreadGrouperMode::AsOne;
-    } else if (args.boolFlag("not-combined")) {
+    }
+    else if (args.boolFlag("not-combined")) {
         options.thread_grouper = spark::ThreadGrouperMode::ByName;
     }
     auto comments = args.stringFlag("comment");
@@ -213,25 +193,18 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
 
     if (options.alloc) {
         if (options.alloc_live_only) {
-            sender.sendMessage("{}Retained Allocation Profiler is now running!{} (async)",
-                               kColorGold, kColorGray);
+            sender.sendMessage("{}Retained Allocation Profiler is now running!{} (async)", kColorGold, kColorGray);
         }
         else {
-            sender.sendMessage("{}Allocation Profiler is now running!{} (async)",
-                               kColorGold, kColorGray);
+            sender.sendMessage("{}Allocation Profiler is now running!{} (async)", kColorGold, kColorGray);
         }
-        if (options.threads.empty() ||
-            (options.threads.size() == 1 && options.threads.front() == "*")) {
-            sender.sendMessage(
-                "Sampling approximately every {} of native allocations across process threads.",
-                spark::formatBytes(static_cast<std::uint64_t>(
-                    options.allocation_interval_bytes)));
+        if (options.threads.empty() || (options.threads.size() == 1 && options.threads.front() == "*")) {
+            sender.sendMessage("Sampling approximately every {} of native allocations across process threads.",
+                               spark::formatBytes(static_cast<std::uint64_t>(options.allocation_interval_bytes)));
         }
         else {
-            sender.sendMessage(
-                "Sampling approximately every {} of native allocations from matching threads.",
-                spark::formatBytes(static_cast<std::uint64_t>(
-                    options.allocation_interval_bytes)));
+            sender.sendMessage("Sampling approximately every {} of native allocations from matching threads.",
+                               spark::formatBytes(static_cast<std::uint64_t>(options.allocation_interval_bytes)));
         }
         if (options.alloc_live_only) {
             sender.sendMessage("The result will contain only sampled allocations still live when profiling stops.");
@@ -239,8 +212,8 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
     }
     else {
         if (options.threads.empty()) {
-            sender.sendMessage("{}Profiler is now running!{} (async, {}ms interval)", kColorGold,
-                               kColorGray, options.interval_ms);
+            sender.sendMessage("{}Profiler is now running!{} (async, {}ms interval)", kColorGold, kColorGray,
+                               options.interval_ms);
         }
         else if (options.threads.size() == 1 && options.threads.front() == "*") {
             sender.sendMessage("{}Profiler is now running for all process threads!{} (async, {}ms interval)",
@@ -318,8 +291,8 @@ void ProfilerService::cmdInfo(CommandSender &sender)
         sender.sendMessage("Backend service failure: {}", backend_error);
         sendAllocationHookCoverage(sender);
         sender.sendMessage("The incomplete profile will not be exported.");
-        sender.sendMessage("Run {}/spark profiler stop{} or {}/spark profiler cancel{} to discard it.",
-                           kColorGray, kColorReset, kColorGray, kColorReset);
+        sender.sendMessage("Run {}/spark profiler stop{} or {}/spark profiler cancel{} to discard it.", kColorGray,
+                           kColorReset, kColorGray, kColorReset);
         return;
     }
     if (allocation) {
@@ -331,15 +304,12 @@ void ProfilerService::cmdInfo(CommandSender &sender)
         }
         sendAllocationHookCoverage(sender);
         const auto &threads = profiler_.options().threads;
-        if (threads.empty() ||
-            (threads.size() == 1 && threads.front() == "*")) {
+        if (threads.empty() || (threads.size() == 1 && threads.front() == "*")) {
             sender.sendMessage("Thread selection: all process threads.");
         }
         else {
-            sender.sendMessage(
-                "Thread selection: {} {} selector{} (matched at aggregation).",
-                threads.size(), profiler_.options().regex ? "regex" : "exact-name",
-                threads.size() == 1 ? "" : "s");
+            sender.sendMessage("Thread selection: {} {} selector{} (matched at aggregation).", threads.size(),
+                               profiler_.options().regex ? "regex" : "exact-name", threads.size() == 1 ? "" : "s");
         }
     }
     else {
@@ -348,23 +318,25 @@ void ProfilerService::cmdInfo(CommandSender &sender)
     std::int64_t ran = (nowMs() - profiler_.startTimeMs()) / 1000;
     if (!allocation && session_type_ == SessionType::Background) {
         sender.sendMessage("It was started automatically when spark enabled and has been "
-                           "running in the background for {}.", spark::formatDuration(ran));
+                           "running in the background for {}.",
+                           spark::formatDuration(ran));
     }
     if (allocation) {
         if (profiler_.options().alloc_live_only) {
-            sender.sendMessage("So far it has profiled for {} ({} tracked sampled allocations still live process-wide, {} estimated).",
-                               spark::formatDuration(ran), profiler_.liveAllocationSamples(),
-                               spark::formatBytes(profiler_.liveAllocationBytes()));
+            sender.sendMessage(
+                "So far it has profiled for {} ({} tracked sampled allocations still live process-wide, {} estimated).",
+                spark::formatDuration(ran), profiler_.liveAllocationSamples(),
+                spark::formatBytes(profiler_.liveAllocationBytes()));
         }
         else {
-            sender.sendMessage("So far it has profiled for {} ({} selected allocation samples, {} estimated; {} observed process-wide).",
+            sender.sendMessage("So far it has profiled for {} ({} selected allocation samples, {} estimated; {} "
+                               "observed process-wide).",
                                spark::formatDuration(ran), profiler_.sampleCount(),
                                spark::formatBytes(profiler_.sampledAllocationBytes()),
                                spark::formatBytes(profiler_.observedAllocationBytes()));
         }
         sender.sendMessage("Process-wide tracked lifecycle: {} freed, {} still live ({}).",
-                           profiler_.freedAllocationSamples(),
-                           profiler_.liveAllocationSamples(),
+                           profiler_.freedAllocationSamples(), profiler_.liveAllocationSamples(),
                            spark::formatBytes(profiler_.liveAllocationBytes()));
         if (profiler_.droppedSamples() != 0) {
             sender.sendMessage("Dropped allocation samples: {}", profiler_.droppedSamples());
@@ -374,9 +346,8 @@ void ProfilerService::cmdInfo(CommandSender &sender)
                                profiler_.filteredAllocationSamples());
         }
         if (profiler_.allocationThreadNameFailures() != 0) {
-            sender.sendMessage(
-                "Allocation-origin thread names unavailable (failed closed for named selectors): {}.",
-                profiler_.allocationThreadNameFailures());
+            sender.sendMessage("Allocation-origin thread names unavailable (failed closed for named selectors): {}.",
+                               profiler_.allocationThreadNameFailures());
         }
     }
     else {
@@ -416,8 +387,7 @@ void ProfilerService::sendAllocationHookCoverage(CommandSender &sender)
         }
     }
     sender.sendMessage("Native allocation hooks: {}/{} entry points covered ({} patched targets, {} aliases).",
-                       active + aliases, capabilities.size(),
-                       profiler_.allocationHookTargetCount(), aliases);
+                       active + aliases, capabilities.size(), profiler_.allocationHookTargetCount(), aliases);
     if (!unavailable.empty()) {
         sender.sendMessage("Unavailable optional hooks: {}", unavailable);
     }
@@ -439,8 +409,7 @@ void ProfilerService::cmdCancel(CommandSender &sender)
     session_type_ = SessionType::None;
     closeViewerSocket();
     if (failed) {
-        sender.sendMessage("{}Failed allocation profile data was discarded: {}", kColorRed,
-                           backend_error);
+        sender.sendMessage("{}Failed allocation profile data was discarded: {}", kColorRed, backend_error);
         sender.sendMessage("The allocation profiler backend is ready for a new session.");
     }
     else {
@@ -499,7 +468,9 @@ void ProfilerService::cmdOpen(CommandSender &sender)
 
 void ProfilerService::startViewerWorker()
 {
-    if (viewer_worker_running_.load()) return;
+    if (viewer_worker_running_.load()) {
+        return;
+    }
     viewer_worker_running_.store(true);
     viewer_update_requested_.store(false);
     viewer_update_thread_ = std::thread([this]() { viewerUpdateLoop(); });
@@ -507,7 +478,9 @@ void ProfilerService::startViewerWorker()
 
 void ProfilerService::stopViewerWorker()
 {
-    if (!viewer_worker_running_.exchange(false)) return;
+    if (!viewer_worker_running_.exchange(false)) {
+        return;
+    }
     viewer_update_cv_.notify_all();
     if (viewer_update_thread_.joinable()) {
         viewer_update_thread_.join();
@@ -519,18 +492,23 @@ void ProfilerService::viewerUpdateLoop()
     while (viewer_worker_running_.load()) {
         {
             std::unique_lock<std::mutex> lock(viewer_update_mutex_);
-            viewer_update_cv_.wait_for(lock, std::chrono::seconds(1),
-                [this] {
-                    return !viewer_worker_running_.load() || viewer_update_requested_.load();
-                });
+            viewer_update_cv_.wait_for(lock, std::chrono::seconds(1), [this] {
+                return !viewer_worker_running_.load() || viewer_update_requested_.load();
+            });
         }
-        if (!viewer_worker_running_.load()) break;
-        if (!viewer_update_requested_.exchange(false)) continue;
+        if (!viewer_worker_running_.load()) {
+            break;
+        }
+        if (!viewer_update_requested_.exchange(false)) {
+            continue;
+        }
 
         // Snapshot the raw pointer; stopViewerWorker() guarantees the worker
         // is joined before viewer_socket_ is reset, so this is safe.
         ViewerSocket *vs = viewer_socket_.get();
-        if (!vs || !vs->isOpen()) continue;
+        if (!vs || !vs->isOpen()) {
+            continue;
+        }
 
         std::string bytebin_key = uploadSamplerData(std::string());
         if (!bytebin_key.empty() && viewer_worker_running_.load()) {
@@ -560,8 +538,8 @@ std::string ProfilerService::uploadSamplerData(const std::string &channel_info_p
         return {};
     }
     std::string compressed = gzipCompress(body);
-    UploadResult result = uploadToBytebin(compressed, bytebin_url_, kSamplerContentType,
-                                           std::string("endstone-spark/") + kVersion);
+    UploadResult result =
+        uploadToBytebin(compressed, bytebin_url_, kSamplerContentType, std::string("endstone-spark/") + kVersion);
     return result.ok ? result.key : std::string();
 }
 
@@ -606,16 +584,15 @@ void ProfilerService::cmdTrustViewer(CommandSender &sender, const Arguments &arg
     }
 }
 
-void ProfilerService::finishProfiler(const std::string &sender_name, bool sender_is_player,
-                                     bool save, const std::string &comment)
+void ProfilerService::finishProfiler(const std::string &sender_name, bool sender_is_player, bool save,
+                                     const std::string &comment)
 {
     std::string stop_error;
     if (!profiler_.stopSampling(stop_error)) {
         std::string backend_error;
         if (!profiler_.running() && profiler_.backendFailure(backend_error)) {
             notifier_.notify(sender_name,
-                     "Allocation profiler FAILED; incomplete profile data was discarded: " +
-                         backend_error);
+                             "Allocation profiler FAILED; incomplete profile data was discarded: " + backend_error);
             notifier_.notify(sender_name, "The allocation profiler backend is ready for a new session.");
         }
         else {
@@ -632,8 +609,7 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
     metadata_provider_.gatherServerMetadata(pending_ctx_, nowMs());
     pending_ctx_.comment = comment;
     pending_ctx_.statistics = statistics_.snapshot();
-    pending_ctx_.window_stats = statistics_.profileWindows(
-        profiler_.startTimeMs(), profiler_.endTimeMs());
+    pending_ctx_.window_stats = statistics_.profileWindows(profiler_.startTimeMs(), profiler_.endTimeMs());
     pending_ctx_.system_stats = spark::gatherSystemStats(".");
     metadata_provider_.gatherWorldMetadata(pending_ctx_);
     if (ping_samples_provider_) {
@@ -658,8 +634,7 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
 
 void ProfilerService::runExport()
 {
-    ProfileExporter::Result result =
-        exporter_.exportProfile(profiler_, pending_ctx_, pending_save_);
+    ProfileExporter::Result result = exporter_.exportProfile(profiler_, pending_ctx_, pending_save_);
     pending_outcome_ = result.outcome;
     pending_result_ = std::move(result.message);
     try {
@@ -673,11 +648,9 @@ void ProfilerService::runExport()
 
 void ProfilerService::announceResult()
 {
-    const char *headline = pending_outcome_ == ExportOutcome::Uploaded
-                               ? "Profiler stopped & upload complete!"
-                           : pending_outcome_ == ExportOutcome::Saved
-                               ? "Profiler stopped & saved locally!"
-                               : "Profiler stopped.";
+    const char *headline = pending_outcome_ == ExportOutcome::Uploaded ? "Profiler stopped & upload complete!"
+                         : pending_outcome_ == ExportOutcome::Saved    ? "Profiler stopped & saved locally!"
+                                                                       : "Profiler stopped.";
     notifier_.notify(pending_sender_, headline);
     notifier_.notify(pending_sender_, pending_result_);
 
@@ -686,11 +659,12 @@ void ProfilerService::announceResult()
         if (log) {
             const std::int64_t now_ms = nowMs();
             if (pending_outcome_ == ExportOutcome::Uploaded) {
-                log->add(Activity::url(pending_sender_, pending_sender_is_player_, now_ms,
-                                       "Profiler", pending_result_));
-            } else if (pending_outcome_ == ExportOutcome::Saved) {
-                log->add(Activity::file(pending_sender_, pending_sender_is_player_, now_ms,
-                                        "Profiler", pending_result_));
+                log->add(
+                    Activity::url(pending_sender_, pending_sender_is_player_, now_ms, "Profiler", pending_result_));
+            }
+            else if (pending_outcome_ == ExportOutcome::Saved) {
+                log->add(
+                    Activity::file(pending_sender_, pending_sender_is_player_, now_ms, "Profiler", pending_result_));
             }
         }
     }
@@ -709,18 +683,19 @@ void ProfilerService::announceResult()
 
 void ProfilerService::onTick(double mspt)
 {
-    if (!background_started_ && background_enabled_ && main_tid_ != 0 &&
-        !profiler_.running() && !exporting_.load()) {
+    if (!background_started_ && background_enabled_ && main_tid_ != 0 && !profiler_.running() && !exporting_.load()) {
         auto now = nowMs();
         if (now >= next_background_retry_ms_) {
             if (startBackgroundSession()) {
                 background_started_ = true;
                 background_retry_delay_s_ = 0;
-            } else {
+            }
+            else {
                 // Exponential backoff: 5s -> 15s -> 30s -> 60s (cap).
                 if (background_retry_delay_s_ == 0) {
                     background_retry_delay_s_ = 5;
-                } else if (background_retry_delay_s_ < 60) {
+                }
+                else if (background_retry_delay_s_ < 60) {
                     background_retry_delay_s_ = std::min(60, background_retry_delay_s_ * 2);
                 }
                 next_background_retry_ms_ = now + background_retry_delay_s_ * 1000;
@@ -801,9 +776,11 @@ bool ProfilerService::startBackgroundSession()
 
     if (background_thread_grouper_ == "by-name") {
         options.thread_grouper = spark::ThreadGrouperMode::ByName;
-    } else if (background_thread_grouper_ == "as-one") {
+    }
+    else if (background_thread_grouper_ == "as-one") {
         options.thread_grouper = spark::ThreadGrouperMode::AsOne;
-    } else {
+    }
+    else {
         options.thread_grouper = spark::ThreadGrouperMode::ByPool;
     }
 

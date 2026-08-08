@@ -13,8 +13,7 @@ namespace spark {
 // only from sampler/aggregator service threads.
 class ThreadSelector {
 public:
-    bool configure(bool all_threads, bool regex_threads,
-                   const std::vector<std::string> &patterns, std::string &error);
+    bool configure(bool all_threads, bool regex_threads, const std::vector<std::string> &patterns, std::string &error);
 
     bool matches(std::string_view thread_name) const;
     bool selectsAll() const noexcept { return all_threads_; }

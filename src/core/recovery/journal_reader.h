@@ -37,10 +37,8 @@ struct JournalRecord {
 
     // Payload accessors (return false on short/invalid payload).
     bool asModuleDef(std::uint32_t &module_id, std::string &path) const;
-    bool asThreadDef(std::uint64_t &thread_id, std::uint64_t &os_thread_id,
-                     std::string &name) const;
-    bool asSample(std::uint64_t &thread_id, std::uint64_t &tick_id,
-                  std::int32_t &window, std::uint64_t &weight,
+    bool asThreadDef(std::uint64_t &thread_id, std::uint64_t &os_thread_id, std::string &name) const;
+    bool asSample(std::uint64_t &thread_id, std::uint64_t &tick_id, std::int32_t &window, std::uint64_t &weight,
                   std::vector<FrameKey> &frames) const;
     bool asTickEvent(std::uint64_t &tick_id, double &mspt) const;
     bool asStallBegin(std::uint64_t &detected_ns, std::uint64_t &last_tick_ns) const;
@@ -51,21 +49,18 @@ struct JournalRecord {
 
 // Result of reading a journal session.
 struct JournalReadResult {
-    bool valid = false;         // at least the file header was parsed
+    bool valid = false;  // at least the file header was parsed
     std::uint64_t session_id = 0;
     std::uint64_t created_ns = 0;
     bool has_clean_end = false;
     SessionConfig session_config;
     std::vector<JournalRecord> records;
-    std::uint64_t corrupt_records = 0;  // CRC mismatches
-    std::uint64_t truncated_records = 0; // incomplete trailing records
+    std::uint64_t corrupt_records = 0;    // CRC mismatches
+    std::uint64_t truncated_records = 0;  // incomplete trailing records
 };
 
-// Reads all segment files from a recovery directory, parses records, and
-// validates CRC.  Truncated trailing records are silently dropped.  Records
-// with CRC mismatches terminate reading of the current segment (the writer
-// never produces out-of-order records, so a CRC failure indicates corruption
-// or an interrupted write).
+// Reads and validates recovery journal segments. Truncated records are dropped;
+// CRC mismatches terminate the current segment (indicates corruption or interrupted write).
 class JournalReader {
 public:
     // Reads all segments in the given directory, ordered by segment number.

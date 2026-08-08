@@ -27,13 +27,9 @@ namespace spark {
 // The Endstone plugin creates this object and delegates commands and ticks to it.
 class SparkApplication {
 public:
-    SparkApplication(std::string bds_executable_sha256,
-                     std::filesystem::path profile_storage_dir,
-                     std::filesystem::path activity_log_file,
-                     SparkConfig config,
-                     TrustedViewersState trusted_viewers,
-                     MainThreadDispatcher &dispatcher,
-                     ProfileMetadataProvider &metadata_provider,
+    SparkApplication(std::string bds_executable_sha256, std::filesystem::path profile_storage_dir,
+                     std::filesystem::path activity_log_file, SparkConfig config, TrustedViewersState trusted_viewers,
+                     MainThreadDispatcher &dispatcher, ProfileMetadataProvider &metadata_provider,
                      ResultNotifier &notifier);
 
     // Dispatches a /spark command. Returns true if handled.

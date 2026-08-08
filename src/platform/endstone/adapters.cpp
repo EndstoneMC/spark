@@ -9,12 +9,12 @@
 #include <utility>
 #include <vector>
 
+#include "core/metadata/server_properties.h"
 #include "core/profiler/profiler.h"
 #include "core/stats/ping_statistics.h"
 #include "core/stats/system_stats.h"
 #include "core/util/format.h"
 #include "core/util/world_region.h"
-#include "core/metadata/server_properties.h"
 
 namespace spark::endstone_adapter {
 
@@ -40,8 +40,7 @@ int floorDiv(int value, int divisor)
 
 }  // namespace
 
-void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx,
-                                                     std::int64_t now_ms)
+void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx, std::int64_t now_ms)
 {
     ctx.endstone_version = server_.getVersion();
     ctx.minecraft_version = server_.getMinecraftVersion();
@@ -49,9 +48,8 @@ void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx,
     ctx.player_count = static_cast<long>(server_.getOnlinePlayers().size());
     ctx.online_mode = server_.getOnlineMode() ? 2 : 1;
     {
-        std::int64_t start_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    server_.getStartTime().time_since_epoch())
-                                    .count();
+        std::int64_t start_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(server_.getStartTime().time_since_epoch()).count();
         ctx.uptime_ms = now_ms - start_ms;
     }
 
@@ -65,18 +63,11 @@ void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx,
         ctx.plugins.push_back({desc.getName(), desc.getVersion(), author, desc.getDescription()});
     }
 
-    // Parse server.properties with a strict allowlist for performance
-    // diagnostics. Sensitive fields are never included. The upstream Java
-    // spark viewer expects server_configurations to be a map of config file
-    // names to JSON object strings (not individual key-value pairs), so the
-    // parsed properties are serialized as a single JSON object under the
-    // "server.properties" key.
-    auto properties = spark::parseServerProperties(
-        std::filesystem::current_path() / "server.properties");
+    // Strict allowlist parse; serialized as a JSON object string for server_configurations.
+    auto properties = spark::parseServerProperties(std::filesystem::current_path() / "server.properties");
     if (!properties.empty()) {
         ctx.server_configurations.clear();
-        ctx.server_configurations["server.properties"] =
-            spark::serverPropertiesToJsonString(properties);
+        ctx.server_configurations["server.properties"] = spark::serverPropertiesToJsonString(properties);
     }
 }
 
@@ -133,8 +124,7 @@ void EndstoneMetadataProvider::gatherWorldMetadata(ExportContext &ctx)
 
 std::int64_t EndstoneMetadataProvider::serverUptimeSeconds()
 {
-    return std::chrono::duration_cast<std::chrono::seconds>(
-               std::chrono::system_clock::now() - server_.getStartTime())
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now() - server_.getStartTime())
         .count();
 }
 
@@ -170,7 +160,8 @@ void EndstoneNotifier::notify(const std::string &sender_name, const std::string 
         if (player) {
             player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
         }
-    } else {
+    }
+    else {
         for (auto *player : server_.getOnlinePlayers()) {
             if (player && player->hasPermission("endstone.command.spark")) {
                 player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
@@ -186,8 +177,7 @@ std::map<std::string, int> EndstonePlayerPingProvider::poll()
     std::map<std::string, int> result;
     for (const auto &player : server_.getOnlinePlayers()) {
         if (player) {
-            result.emplace(player->getName(),
-                           static_cast<int>(player->getPing().count()));
+            result.emplace(player->getName(), static_cast<int>(player->getPing().count()));
         }
     }
     return result;
@@ -201,8 +191,7 @@ constexpr std::int64_t kReconcileIntervalMs = 30000;
 
 std::int64_t steadyNowMs()
 {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
         .count();
 }
 
@@ -220,24 +209,24 @@ void EndstoneWorldGaugeProvider::init()
             if (event.getActor().asPlayer() == nullptr) {
                 entity_count_.fetch_add(1, std::memory_order_relaxed);
             }
-        }, ::endstone::EventPriority::Monitor);
+        },
+        ::endstone::EventPriority::Monitor);
 
     plugin_.registerEvent<::endstone::ActorRemoveEvent>(
         [this](::endstone::ActorRemoveEvent &event) {
             if (event.getActor().asPlayer() == nullptr) {
                 entity_count_.fetch_sub(1, std::memory_order_relaxed);
             }
-        }, ::endstone::EventPriority::Monitor);
+        },
+        ::endstone::EventPriority::Monitor);
 
     plugin_.registerEvent<::endstone::ChunkLoadEvent>(
-        [this](::endstone::ChunkLoadEvent &) {
-            chunk_count_.fetch_add(1, std::memory_order_relaxed);
-        }, ::endstone::EventPriority::Monitor);
+        [this](::endstone::ChunkLoadEvent &) { chunk_count_.fetch_add(1, std::memory_order_relaxed); },
+        ::endstone::EventPriority::Monitor);
 
     plugin_.registerEvent<::endstone::ChunkUnloadEvent>(
-        [this](::endstone::ChunkUnloadEvent &) {
-            chunk_count_.fetch_sub(1, std::memory_order_relaxed);
-        }, ::endstone::EventPriority::Monitor);
+        [this](::endstone::ChunkUnloadEvent &) { chunk_count_.fetch_sub(1, std::memory_order_relaxed); },
+        ::endstone::EventPriority::Monitor);
 
     reconcile();
 }
@@ -248,8 +237,7 @@ std::pair<int, int> EndstoneWorldGaugeProvider::worldGauges()
     if (now - last_reconcile_steady_ms_ >= kReconcileIntervalMs) {
         reconcile();
     }
-    return {entity_count_.load(std::memory_order_relaxed),
-            chunk_count_.load(std::memory_order_relaxed)};
+    return {entity_count_.load(std::memory_order_relaxed), chunk_count_.load(std::memory_order_relaxed)};
 }
 
 void EndstoneWorldGaugeProvider::reconcile()

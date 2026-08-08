@@ -5,10 +5,7 @@
 
 namespace spark {
 
-// Per-process-thread state for byte-based systematic sampling. Each session uses
-// a uniformly random initial phase and then samples every `interval` bytes. This
-// is unbiased for every allocation, has lower total-weight variance than
-// independent Poisson points, and counts a large allocation's crossings in O(1).
+// Per-thread byte-based systematic sampling state. Unbiased, low-variance, O(1) per allocation.
 struct ByteSamplingState {
     std::uint64_t generation = 0;
     std::uint64_t bytes_until_sample = 1;
@@ -36,8 +33,7 @@ inline std::uint64_t nextSamplingRandom(ByteSamplingState &state) noexcept
     return value * 0x2545f4914f6cdd1dULL;
 }
 
-inline std::uint64_t initialByteSamplingOffset(ByteSamplingState &state,
-                                               std::uint64_t interval) noexcept
+inline std::uint64_t initialByteSamplingOffset(ByteSamplingState &state, std::uint64_t interval) noexcept
 {
     if (interval <= 1) {
         return 1;
@@ -53,16 +49,15 @@ inline std::uint64_t initialByteSamplingOffset(ByteSamplingState &state,
     return value % interval + 1;
 }
 
-inline void resetByteSamplingState(ByteSamplingState &state, std::uint64_t generation,
-                                   std::uint64_t seed, std::uint64_t interval) noexcept
+inline void resetByteSamplingState(ByteSamplingState &state, std::uint64_t generation, std::uint64_t seed,
+                                   std::uint64_t interval) noexcept
 {
     state.generation = generation;
     state.random_state = mixSamplingSeed(seed);
     state.bytes_until_sample = initialByteSamplingOffset(state, interval);
 }
 
-inline std::uint64_t consumeSampledBytes(ByteSamplingState &state,
-                                         std::uint64_t requested_bytes,
+inline std::uint64_t consumeSampledBytes(ByteSamplingState &state, std::uint64_t requested_bytes,
                                          std::uint64_t interval) noexcept
 {
     if (interval <= 1) {

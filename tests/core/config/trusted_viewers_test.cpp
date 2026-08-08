@@ -1,10 +1,10 @@
-#include "core/config/trusted_viewers.h"
-
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
+
+#include "core/config/trusted_viewers.h"
 
 using namespace spark;
 
@@ -159,8 +159,7 @@ void test_save_pretty_format()
     tv.save();
 
     std::ifstream in(path);
-    std::string content((std::istreambuf_iterator<char>(in)),
-                         std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
     // Should be multi-line with indentation.
     assert(content.find("[\n") != std::string::npos);

@@ -43,10 +43,7 @@ public:
     std::size_t hookedModuleCount() const noexcept { return hooked_modules_; }
     std::size_t skippedModuleCount() const noexcept { return skipped_modules_; }
     std::size_t failedModuleCount() const noexcept { return failed_modules_; }
-    const std::vector<ElfImportHookCapability> &capabilities() const noexcept
-    {
-        return capabilities_;
-    }
+    const std::vector<ElfImportHookCapability> &capabilities() const noexcept { return capabilities_; }
 
 private:
     struct Target {

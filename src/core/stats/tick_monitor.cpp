@@ -71,9 +71,8 @@ TickMonitorUpdate TickMonitor::onTick(double duration_ms)
         return update;
     }
 
-    update.report = config_.mode == TickMonitorMode::Duration
-                        ? duration_ms > config_.threshold
-                        : update.percentage_change > config_.threshold;
+    update.report = config_.mode == TickMonitorMode::Duration ? duration_ms > config_.threshold
+                                                              : update.percentage_change > config_.threshold;
     return update;
 }
 

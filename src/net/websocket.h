@@ -11,11 +11,8 @@
 
 namespace spark {
 
-// Minimal WebSocket client built on libcurl's experimental WS API.
-// Creates a channel via HTTP GET to <host>/create, then connects to
-// wss://<host>/<channelId>. A background thread receives messages and
-// invokes the callback. Sends are enqueued and processed by the same
-// thread to avoid concurrent curl handle access.
+// WebSocket client on libcurl's WS API. Sends are enqueued to a background thread
+// to avoid concurrent curl handle access.
 class WebSocketClient {
 public:
     using MessageCallback = std::function<void(const std::string &)>;

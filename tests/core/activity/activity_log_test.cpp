@@ -1,5 +1,3 @@
-#include "core/activity/activity_log.h"
-
 #include <cassert>
 #include <chrono>
 #include <filesystem>
@@ -7,21 +5,21 @@
 #include <iostream>
 #include <string>
 
+#include "core/activity/activity_log.h"
+
 using namespace spark;
 
 namespace {
 
 std::int64_t nowMs()
 {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::system_clock::now().time_since_epoch())
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
 
 void testSerializeDeserialize()
 {
-    Activity a = Activity::url("Steve", true, 1234567890, "Profiler",
-                               "https://spark.lucko.me/abc123");
+    Activity a = Activity::url("Steve", true, 1234567890, "Profiler", "https://spark.lucko.me/abc123");
     std::string json = a.serialize();
     std::cout << "Serialized: " << json << "\n";
 
@@ -35,8 +33,7 @@ void testSerializeDeserialize()
     assert(b.data_value == "https://spark.lucko.me/abc123");
 
     // Round-trip a file activity.
-    Activity c = Activity::file("Console", false, 1234567891, "Profiler",
-                                "/plugins/spark/profiles/test.sparkprofile");
+    Activity c = Activity::file("Console", false, 1234567891, "Profiler", "/plugins/spark/profiles/test.sparkprofile");
     json = c.serialize();
     assert(Activity::deserialize(json, b));
     assert(b.user_name == "Console");
@@ -49,8 +46,7 @@ void testSerializeDeserialize()
 
 void testSpecialCharacters()
 {
-    Activity a = Activity::url("Player\"With\"Quotes", false, 100, "Health",
-                               "https://example.com/path?x=1&y=2");
+    Activity a = Activity::url("Player\"With\"Quotes", false, 100, "Health", "https://example.com/path?x=1&y=2");
     std::string json = a.serialize();
     Activity b;
     assert(Activity::deserialize(json, b));
@@ -76,17 +72,15 @@ void testExpiry()
 {
     std::int64_t now = nowMs();
     // URL activity: expires after 60 days.
-    Activity url_old = Activity::url("P", false, now - 61 * 24 * 3600 * 1000LL,
-                                     "Profiler", "https://example.com/old");
+    Activity url_old = Activity::url("P", false, now - 61 * 24 * 3600 * 1000LL, "Profiler", "https://example.com/old");
     assert(url_old.shouldExpire(now));
 
-    Activity url_recent = Activity::url("P", false, now - 30 * 24 * 3600 * 1000LL,
-                                        "Profiler", "https://example.com/recent");
+    Activity url_recent =
+        Activity::url("P", false, now - 30 * 24 * 3600 * 1000LL, "Profiler", "https://example.com/recent");
     assert(!url_recent.shouldExpire(now));
 
     // File activity: never expires.
-    Activity file_old = Activity::file("P", false, now - 365 * 24 * 3600 * 1000LL,
-                                       "Profiler", "/path/to/file");
+    Activity file_old = Activity::file("P", false, now - 365 * 24 * 3600 * 1000LL, "Profiler", "/path/to/file");
     assert(!file_old.shouldExpire(now));
 
     std::cout << "testExpiry: PASS\n";

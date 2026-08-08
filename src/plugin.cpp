@@ -10,8 +10,9 @@
 #if defined(_WIN32)
 #include <windows.h>
 #else
-#include <sys/syscall.h>
 #include <unistd.h>
+
+#include <sys/syscall.h>
 #endif
 
 #include "application/command/command_sender.h"
@@ -64,24 +65,18 @@ public:
         spark::TrustedViewersState trusted_viewers(getDataFolder() / "trusted-viewers.json");
         trusted_viewers.load();
 
-        notifier_ = std::make_unique<spark::endstone_adapter::EndstoneNotifier>(
-            *this, getServer(), config.disable_response_broadcast);
+        notifier_ = std::make_unique<spark::endstone_adapter::EndstoneNotifier>(*this, getServer(),
+                                                                                config.disable_response_broadcast);
 
         app_ = std::make_unique<spark::SparkApplication>(
-            bds_executable_sha256_,
-            spark::profileStorageDirectory(getDataFolder()),
-            getDataFolder() / "activity.json",
-            std::move(config),
-            std::move(trusted_viewers),
-            *dispatcher_, *metadata_provider_, *notifier_);
+            bds_executable_sha256_, spark::profileStorageDirectory(getDataFolder()), getDataFolder() / "activity.json",
+            std::move(config), std::move(trusted_viewers), *dispatcher_, *metadata_provider_, *notifier_);
 
         app_->statistics().start();
-        app_->statistics().recordPlayerCount(
-            static_cast<long>(getServer().getOnlinePlayers().size()));
+        app_->statistics().recordPlayerCount(static_cast<long>(getServer().getOnlinePlayers().size()));
         app_->enable();
 
-        tick_task_ = getServer().getScheduler().runTaskTimer(
-            *this, [this]() { onServerTick(); }, 0, 1);
+        tick_task_ = getServer().getScheduler().runTaskTimer(*this, [this]() { onServerTick(); }, 0, 1);
         getLogger().info("endstone-spark v{} enabled. Run {}/spark{} to get started.", spark::kVersion,
                          endstone::ColorFormat::Gold, endstone::ColorFormat::Reset);
     }
@@ -96,8 +91,7 @@ public:
 
         std::string shutdown_error;
         if (app_ && !app_->shutdownProfilerBackend(shutdown_error)) {
-            std::fprintf(stderr, "[spark] profiler shutdown failed before plugin unload: %s\n",
-                         shutdown_error.c_str());
+            std::fprintf(stderr, "[spark] profiler shutdown failed before plugin unload: %s\n", shutdown_error.c_str());
             std::abort();
         }
     }
@@ -154,10 +148,12 @@ ENDSTONE_PLUGIN("spark", "0.4.1", SparkPlugin)
 
     command("spark")
         .description("spark profiler")
-        .usages("/spark",
-                "/spark (tps|cpu|ping|health|healthreport|ht|activity|activitylog|log|tickmonitor|tickmonitoring)<module: SparkStatusModule> [flags: message]",
-                "/spark (profiler|sampler)<module: SparkProfilerModule> "
-                "(start|stop|info|cancel|open|trust-viewer)[action: SparkProfilerAction] [flags: message]")
+        .usages(
+            "/spark",
+            "/spark (tps|cpu|ping|health|healthreport|ht|activity|activitylog|log|tickmonitor|tickmonitoring)<module: "
+            "SparkStatusModule> [flags: message]",
+            "/spark (profiler|sampler)<module: SparkProfilerModule> "
+            "(start|stop|info|cancel|open|trust-viewer)[action: SparkProfilerAction] [flags: message]")
         .permissions("endstone.command.spark");
 
     permission("endstone.command.spark")
@@ -168,13 +164,9 @@ ENDSTONE_PLUGIN("spark", "0.4.1", SparkPlugin)
         .description("Allows use of /spark profiler")
         .default_(endstone::PermissionDefault::Operator);
 
-    permission("spark.tps")
-        .description("Allows use of /spark tps")
-        .default_(endstone::PermissionDefault::Operator);
+    permission("spark.tps").description("Allows use of /spark tps").default_(endstone::PermissionDefault::Operator);
 
-    permission("spark.ping")
-        .description("Allows use of /spark ping")
-        .default_(endstone::PermissionDefault::Operator);
+    permission("spark.ping").description("Allows use of /spark ping").default_(endstone::PermissionDefault::Operator);
 
     permission("spark.health")
         .description("Allows use of /spark health")

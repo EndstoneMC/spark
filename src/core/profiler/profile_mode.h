@@ -12,9 +12,9 @@ enum class ProfileMode : std::uint8_t {
 
 // Matches upstream spark's ThreadGrouper proto enum.
 enum class ThreadGrouperMode : std::uint8_t {
-    ByName = 0,   // each thread gets its own tree
-    ByPool = 1,   // threads grouped by pool name
-    AsOne = 2,    // all threads merged into one tree
+    ByName = 0,  // each thread gets its own tree
+    ByPool = 1,  // threads grouped by pool name
+    AsOne = 2,   // all threads merged into one tree
 };
 
 }  // namespace spark

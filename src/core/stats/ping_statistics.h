@@ -30,11 +30,7 @@ private:
 // Each add() contributes one median value; query-time statistics are
 // computed from the accumulated samples.
 struct PingRollingAverage {
-    explicit PingRollingAverage(std::size_t window_size)
-        : capacity_(window_size)
-    {
-        samples_.reserve(window_size);
-    }
+    explicit PingRollingAverage(std::size_t window_size) : capacity_(window_size) { samples_.reserve(window_size); }
 
     void add(int value);
     std::size_t samples() const { return count_; }
@@ -76,7 +72,7 @@ public:
 class PingStatistics {
 public:
     static constexpr int kQueryRateSeconds = 10;
-    static constexpr int kWindowSizeSeconds = 15 * 60;  // 900
+    static constexpr int kWindowSizeSeconds = 15 * 60;                          // 900
     static constexpr int kWindowSize = kWindowSizeSeconds / kQueryRateSeconds;  // 90
 
     explicit PingStatistics(PlayerPingProvider &provider);

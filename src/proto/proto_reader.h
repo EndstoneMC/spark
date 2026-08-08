@@ -20,7 +20,9 @@ public:
     // Read the next field tag + wire type. Returns false at end of message.
     bool nextField(int &field, int &wire_type)
     {
-        if (pos_ >= data_.size()) return false;
+        if (pos_ >= data_.size()) {
+            return false;
+        }
         auto tag = readVarint();
         field = static_cast<int>(tag >> 3);
         wire_type = static_cast<int>(tag & 0x07);
@@ -34,7 +36,9 @@ public:
         while (pos_ < data_.size()) {
             auto byte = static_cast<unsigned char>(data_[pos_++]);
             value |= static_cast<std::uint64_t>(byte & 0x7f) << shift;
-            if (!(byte & 0x80)) break;
+            if (!(byte & 0x80)) {
+                break;
+            }
             shift += 7;
         }
         return value;
@@ -47,7 +51,9 @@ public:
     std::string_view readString()
     {
         auto len = readVarint();
-        if (pos_ + len > data_.size()) len = data_.size() - pos_;
+        if (pos_ + len > data_.size()) {
+            len = data_.size() - pos_;
+        }
         std::string_view result(data_.data() + pos_, len);
         pos_ += len;
         return result;
@@ -62,7 +68,9 @@ public:
     ProtoReader readMessage()
     {
         auto len = readVarint();
-        if (pos_ + len > data_.size()) len = data_.size() - pos_;
+        if (pos_ + len > data_.size()) {
+            len = data_.size() - pos_;
+        }
         ProtoReader sub(data_.substr(pos_, len));
         pos_ += len;
         return sub;
@@ -71,13 +79,26 @@ public:
     void skip(int wire_type)
     {
         switch (wire_type) {
-            case 0: readVarint(); break;
-            case 1: pos_ += 8; break;
-            case 2: { auto len = readVarint(); pos_ += len; } break;
-            case 5: pos_ += 4; break;
-            default: pos_ = data_.size(); break;
+        case 0:
+            readVarint();
+            break;
+        case 1:
+            pos_ += 8;
+            break;
+        case 2: {
+            auto len = readVarint();
+            pos_ += len;
+        } break;
+        case 5:
+            pos_ += 4;
+            break;
+        default:
+            pos_ = data_.size();
+            break;
         }
-        if (pos_ > data_.size()) pos_ = data_.size();
+        if (pos_ > data_.size()) {
+            pos_ = data_.size();
+        }
     }
 
 private:

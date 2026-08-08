@@ -10,35 +10,19 @@
 
 namespace spark {
 
-SparkApplication::SparkApplication(std::string bds_executable_sha256,
-                                   std::filesystem::path profile_storage_dir,
-                                   std::filesystem::path activity_log_file,
-                                   SparkConfig config,
-                                   TrustedViewersState trusted_viewers,
-                                   MainThreadDispatcher &dispatcher,
-                                   ProfileMetadataProvider &metadata_provider,
-                                   ResultNotifier &notifier)
-    : statistics_(),
-      config_(std::move(config)),
-      trusted_viewers_(std::move(trusted_viewers)),
-      dispatcher_(dispatcher),
-      metadata_provider_(metadata_provider),
-      notifier_(notifier),
-      profiler_(statistics_, std::move(bds_executable_sha256),
-                profile_storage_dir,
-                config_.bytebin_url, config_.viewer_url,
-                config_.bytesocks_host,
-                config_.background_profiler_enabled,
-                config_.background_profiler_interval,
-                config_.background_profiler_thread_grouper,
-                config_.background_profiler_thread_dumper,
-                trusted_viewers_,
-                dispatcher_, metadata_provider_, notifier_),
-      health_(statistics_, metadata_provider_,
-              config_.bytebin_url, config_.viewer_url),
-      activity_log_(std::move(activity_log_file)),
-      activity_command_(activity_log_),
-      tick_monitor_(notifier_),
+SparkApplication::SparkApplication(std::string bds_executable_sha256, std::filesystem::path profile_storage_dir,
+                                   std::filesystem::path activity_log_file, SparkConfig config,
+                                   TrustedViewersState trusted_viewers, MainThreadDispatcher &dispatcher,
+                                   ProfileMetadataProvider &metadata_provider, ResultNotifier &notifier)
+    : statistics_(), config_(std::move(config)), trusted_viewers_(std::move(trusted_viewers)), dispatcher_(dispatcher),
+      metadata_provider_(metadata_provider), notifier_(notifier),
+      profiler_(statistics_, std::move(bds_executable_sha256), profile_storage_dir, config_.bytebin_url,
+                config_.viewer_url, config_.bytesocks_host, config_.background_profiler_enabled,
+                config_.background_profiler_interval, config_.background_profiler_thread_grouper,
+                config_.background_profiler_thread_dumper, trusted_viewers_, dispatcher_, metadata_provider_,
+                notifier_),
+      health_(statistics_, metadata_provider_, config_.bytebin_url, config_.viewer_url),
+      activity_log_(std::move(activity_log_file)), activity_command_(activity_log_), tick_monitor_(notifier_),
       watchdog_(server_heartbeat_)
 {
     recovery_dir_ = profile_storage_dir / "recovery";
@@ -53,13 +37,16 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
     watchdog_.setAggregatorHeartbeat(&profiler_.aggregatorHeartbeat());
     watchdog_.setStallCallback([this](bool stalled) {
         RecoveryWriter *writer = profiler_.recoveryWriter();
-        if (!writer) return;
+        if (!writer) {
+            return;
+        }
         const std::uint64_t now = Heartbeat::monotonicNowNs();
         if (stalled) {
             stall_begin_ns_ = now;
             writer->journalStallBegin(now, server_heartbeat_.last_ns.load(std::memory_order_acquire));
             writer->requestFlush();
-        } else {
+        }
+        else {
             writer->journalStallEnd(stall_begin_ns_, now);
             writer->requestFlush();
         }
@@ -68,64 +55,45 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
 
 void SparkApplication::registerCommands()
 {
+    registry_.registerCommand({"profiler", "sampler"},
+                              "start/stop/info/cancel/open/trust-viewer an execution or allocation profile",
+                              "spark.profiler", [this](CommandSender &sender, const Arguments &args) {
+                                  const std::string &action = args.subCommand();
+                                  if (action == "start") {
+                                      profiler_.cmdStart(sender, args);
+                                  }
+                                  else if (action == "stop") {
+                                      profiler_.cmdStop(sender, args);
+                                  }
+                                  else if (action == "cancel") {
+                                      profiler_.cmdCancel(sender);
+                                  }
+                                  else if (action == "open") {
+                                      profiler_.cmdOpen(sender);
+                                  }
+                                  else if (action == "trust-viewer") {
+                                      profiler_.cmdTrustViewer(sender, args);
+                                  }
+                                  else {
+                                      profiler_.cmdInfo(sender);
+                                  }
+                              });
+    registry_.registerCommand({"tps", "cpu"}, "rolling TPS, MSPT percentiles, and CPU usage", "spark.tps",
+                              [this](CommandSender &sender, const Arguments &) { health_.cmdTps(sender); });
+    registry_.registerCommand({"ping"}, "player ping RTT statistics", "spark.ping",
+                              [this](CommandSender &sender, const Arguments &args) { health_.cmdPing(sender, args); });
     registry_.registerCommand(
-        {"profiler", "sampler"}, "start/stop/info/cancel/open/trust-viewer an execution or allocation profile",
-        "spark.profiler",
-        [this](CommandSender &sender, const Arguments &args) {
-            const std::string &action = args.subCommand();
-            if (action == "start") {
-                profiler_.cmdStart(sender, args);
-            }
-            else if (action == "stop") {
-                profiler_.cmdStop(sender, args);
-            }
-            else if (action == "cancel") {
-                profiler_.cmdCancel(sender);
-            }
-            else if (action == "open") {
-                profiler_.cmdOpen(sender);
-            }
-            else if (action == "trust-viewer") {
-                profiler_.cmdTrustViewer(sender, args);
-            }
-            else {
-                profiler_.cmdInfo(sender);
-            }
-        });
+        {"health", "healthreport", "ht"}, "performance and host resource report", "spark.health",
+        [this](CommandSender &sender, const Arguments &args) { health_.cmdHealth(sender, args); });
     registry_.registerCommand(
-        {"tps", "cpu"}, "rolling TPS, MSPT percentiles, and CPU usage",
-        "spark.tps",
-        [this](CommandSender &sender, const Arguments &) {
-            health_.cmdTps(sender);
-        });
+        {"activity", "activitylog", "log"}, "show recent profiler and health report activity", "spark.activity",
+        [this](CommandSender &sender, const Arguments &args) { activity_command_.cmdActivity(sender, args); });
     registry_.registerCommand(
-        {"ping"}, "player ping RTT statistics",
-        "spark.ping",
-        [this](CommandSender &sender, const Arguments &args) {
-            health_.cmdPing(sender, args);
-        });
-    registry_.registerCommand(
-        {"health", "healthreport", "ht"}, "performance and host resource report",
-        "spark.health",
-        [this](CommandSender &sender, const Arguments &args) {
-            health_.cmdHealth(sender, args);
-        });
-    registry_.registerCommand(
-        {"activity", "activitylog", "log"}, "show recent profiler and health report activity",
-        "spark.activity",
-        [this](CommandSender &sender, const Arguments &args) {
-            activity_command_.cmdActivity(sender, args);
-        });
-    registry_.registerCommand(
-        {"tickmonitor", "tickmonitoring"}, "report unusually long ticks",
-        "spark.tickmonitor",
-        [this](CommandSender &sender, const Arguments &args) {
-            tick_monitor_.cmdTickMonitor(sender, args);
-        });
+        {"tickmonitor", "tickmonitoring"}, "report unusually long ticks", "spark.tickmonitor",
+        [this](CommandSender &sender, const Arguments &args) { tick_monitor_.cmdTickMonitor(sender, args); });
 }
 
-bool SparkApplication::dispatchCommand(CommandSender &sender,
-                                       const std::vector<std::string> &tokens)
+bool SparkApplication::dispatchCommand(CommandSender &sender, const std::vector<std::string> &tokens)
 {
     return registry_.dispatch(sender, tokens);
 }
@@ -168,21 +136,29 @@ void SparkApplication::recoverPreviousSession()
     namespace fs = std::filesystem;
     std::error_code ec;
 
-    if (!fs::exists(recovery_dir_, ec) || ec) return;
+    if (!fs::exists(recovery_dir_, ec) || ec) {
+        return;
+    }
 
     // Check for any segment-*.jnl files.
     bool has_journal = false;
     for (const auto &entry : fs::directory_iterator(recovery_dir_, ec)) {
-        if (ec) break;
-        if (!entry.is_regular_file()) continue;
+        if (ec) {
+            break;
+        }
+        if (!entry.is_regular_file()) {
+            continue;
+        }
         auto name = entry.path().filename().string();
-        if (name.size() >= 8 && name.substr(0, 8) == "segment-" &&
-            name.size() >= 4 && name.substr(name.size() - 4) == ".jnl") {
+        if (name.size() >= 8 && name.substr(0, 8) == "segment-" && name.size() >= 4 &&
+            name.substr(name.size() - 4) == ".jnl") {
             has_journal = true;
             break;
         }
     }
-    if (!has_journal) return;
+    if (!has_journal) {
+        return;
+    }
 
     RecoveredProfile profile = RecoveryPlayer::replay(recovery_dir_);
     if (!profile.valid) {
@@ -202,12 +178,11 @@ void SparkApplication::recoverPreviousSession()
 
     // Compress and save.
     try {
-        ProfileFileResult saved = saveProfileToDirectory(
-            fs::path(recovery_dir_).parent_path(), profile.serialized_proto, profile.session_start_ms);
+        ProfileFileResult saved = saveProfileToDirectory(fs::path(recovery_dir_).parent_path(),
+                                                         profile.serialized_proto, profile.session_start_ms);
         if (saved.ok) {
-            notifier_.notify("crash recovery",
-                             "Recovered profile saved to " + saved.path.string() +
-                             " - open it at " + config_.viewer_url);
+            notifier_.notify("crash recovery", "Recovered profile saved to " + saved.path.string() + " - open it at " +
+                                                   config_.viewer_url);
         }
     }
     catch (const std::exception &) {

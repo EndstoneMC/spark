@@ -15,8 +15,7 @@ class RecoverySink {
 public:
     virtual ~RecoverySink() = default;
     virtual void journalModuleDef(std::uint32_t module_id, std::string_view path) = 0;
-    virtual void journalThreadDef(std::uint64_t thread_id, std::uint64_t os_thread_id,
-                                  std::string_view name) = 0;
+    virtual void journalThreadDef(std::uint64_t thread_id, std::uint64_t os_thread_id, std::string_view name) = 0;
     virtual void journalSample(const Sample &sample) = 0;
     virtual void journalTickEvent(std::uint64_t tick_id, double mspt) = 0;
 };

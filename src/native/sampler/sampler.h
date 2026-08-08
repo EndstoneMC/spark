@@ -45,10 +45,8 @@ struct ThreadCallTree {
     CallTree tree;
 };
 
-// Wall-clock sampling profiler for the default, selected, or all matching process
-// threads. One stack is captured per interval and handed to an aggregator through
-// a lock-free queue. The aggregator builds per-thread call trees and can drop fast
-// ticks for --only-ticks-over. Nothing here touches the Endstone API.
+// Wall-clock sampling profiler. Captures stacks at a fixed interval into a lock-free
+// queue; the aggregator thread builds per-thread call trees. No Endstone API access.
 class Sampler {
 public:
     ~Sampler();
@@ -68,10 +66,8 @@ public:
         target_name_ = std::move(name);
     }
 
-    // Sets the recovery sink for crash-safe journaling.  Must be called
-    // before start().  The sampler thread journals MODULE_DEF records;
-    // the aggregator thread journals THREAD_DEF, SAMPLE, and TICK_EVENT
-    // records.  All RecoverySink methods are non-blocking.
+    // Sets the recovery sink for crash-safe journaling. Must be called before start().
+    // All RecoverySink methods are non-blocking.
     void setRecoverySink(RecoverySink *sink) { recovery_sink_ = sink; }
 
     // Called once per server tick from the main thread: `mspt_ms` is the duration
@@ -79,34 +75,13 @@ public:
     void onTick(double mspt_ms);
 
     // Valid after stop(): the aggregated data.
-    const CallTree &tree() const
-    {
-        return tree_;
-    }
-    const ModuleTable &modules() const
-    {
-        return modules_;
-    }
-    const std::map<std::uint64_t, ThreadCallTree> &threadTrees() const
-    {
-        return thread_trees_;
-    }
-    const std::map<std::int32_t, WindowTickStats> &windowTicks() const
-    {
-        return window_ticks_;
-    }
-    std::uint64_t numberOfTicks() const
-    {
-        return current_tick_.load();
-    }
-    std::uint64_t sampleCount() const
-    {
-        return sample_count_.load(std::memory_order_relaxed);
-    }
-    const std::string &lastError() const
-    {
-        return last_error_;
-    }
+    const CallTree &tree() const { return tree_; }
+    const ModuleTable &modules() const { return modules_; }
+    const std::map<std::uint64_t, ThreadCallTree> &threadTrees() const { return thread_trees_; }
+    const std::map<std::int32_t, WindowTickStats> &windowTicks() const { return window_ticks_; }
+    std::uint64_t numberOfTicks() const { return current_tick_.load(); }
+    std::uint64_t sampleCount() const { return sample_count_.load(std::memory_order_relaxed); }
+    const std::string &lastError() const { return last_error_; }
 
     // Heartbeats updated by the sampler and aggregator threads.
     const Heartbeat &samplerHeartbeat() const { return sampler_heartbeat_; }

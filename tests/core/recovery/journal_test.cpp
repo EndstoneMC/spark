@@ -1,9 +1,3 @@
-#include "core/recovery/journal_format.h"
-#include "core/recovery/journal_reader.h"
-#include "core/recovery/recovery_player.h"
-#include "core/recovery/recovery_writer.h"
-#include "native/sampler/types.h"
-
 #include <cassert>
 #include <chrono>
 #include <cstdio>
@@ -11,6 +5,12 @@
 #include <filesystem>
 #include <iostream>
 #include <thread>
+
+#include "core/recovery/journal_format.h"
+#include "core/recovery/journal_reader.h"
+#include "core/recovery/recovery_player.h"
+#include "core/recovery/recovery_writer.h"
+#include "native/sampler/types.h"
 
 using namespace spark;
 
@@ -160,13 +160,11 @@ void testWriterBasic()
     writer.stop();
 
     if (writer.writtenRecords() != 8) {
-        std::cerr << "testWriterBasic: FAIL - expected 8 written, got "
-                  << writer.writtenRecords() << "\n";
+        std::cerr << "testWriterBasic: FAIL - expected 8 written, got " << writer.writtenRecords() << "\n";
         std::exit(1);
     }
     if (writer.droppedRecords() != 0) {
-        std::cerr << "testWriterBasic: FAIL - expected 0 dropped, got "
-                  << writer.droppedRecords() << "\n";
+        std::cerr << "testWriterBasic: FAIL - expected 0 dropped, got " << writer.droppedRecords() << "\n";
         std::exit(1);
     }
 
@@ -185,18 +183,41 @@ void testWriterBasic()
         std::exit(1);
     }
     if (result.records.size() != 8) {
-        std::cerr << "testWriterBasic: FAIL - expected 8 records, got "
-                  << result.records.size() << "\n";
+        std::cerr << "testWriterBasic: FAIL - expected 8 records, got " << result.records.size() << "\n";
         std::exit(1);
     }
-    if (result.records[0].type != RecordType::ModuleDef) { std::cerr << "testWriterBasic: FAIL - record 0\n"; std::exit(1); }
-    if (result.records[1].type != RecordType::ModuleDef) { std::cerr << "testWriterBasic: FAIL - record 1\n"; std::exit(1); }
-    if (result.records[2].type != RecordType::ThreadDef) { std::cerr << "testWriterBasic: FAIL - record 2\n"; std::exit(1); }
-    if (result.records[3].type != RecordType::TickEvent) { std::cerr << "testWriterBasic: FAIL - record 3\n"; std::exit(1); }
-    if (result.records[4].type != RecordType::TickEvent) { std::cerr << "testWriterBasic: FAIL - record 4\n"; std::exit(1); }
-    if (result.records[5].type != RecordType::StallBegin) { std::cerr << "testWriterBasic: FAIL - record 5\n"; std::exit(1); }
-    if (result.records[6].type != RecordType::StallEnd) { std::cerr << "testWriterBasic: FAIL - record 6\n"; std::exit(1); }
-    if (result.records[7].type != RecordType::CleanEnd) { std::cerr << "testWriterBasic: FAIL - record 7\n"; std::exit(1); }
+    if (result.records[0].type != RecordType::ModuleDef) {
+        std::cerr << "testWriterBasic: FAIL - record 0\n";
+        std::exit(1);
+    }
+    if (result.records[1].type != RecordType::ModuleDef) {
+        std::cerr << "testWriterBasic: FAIL - record 1\n";
+        std::exit(1);
+    }
+    if (result.records[2].type != RecordType::ThreadDef) {
+        std::cerr << "testWriterBasic: FAIL - record 2\n";
+        std::exit(1);
+    }
+    if (result.records[3].type != RecordType::TickEvent) {
+        std::cerr << "testWriterBasic: FAIL - record 3\n";
+        std::exit(1);
+    }
+    if (result.records[4].type != RecordType::TickEvent) {
+        std::cerr << "testWriterBasic: FAIL - record 4\n";
+        std::exit(1);
+    }
+    if (result.records[5].type != RecordType::StallBegin) {
+        std::cerr << "testWriterBasic: FAIL - record 5\n";
+        std::exit(1);
+    }
+    if (result.records[6].type != RecordType::StallEnd) {
+        std::cerr << "testWriterBasic: FAIL - record 6\n";
+        std::exit(1);
+    }
+    if (result.records[7].type != RecordType::CleanEnd) {
+        std::cerr << "testWriterBasic: FAIL - record 7\n";
+        std::exit(1);
+    }
     std::cout << "testWriterBasic: PASS\n";
 }
 
@@ -243,9 +264,9 @@ void testTruncationRecovery()
     file_buf.insert(file_buf.end(), record.begin(), record.end());
     // Add a partial record (just the header, no payload).
     file_buf.push_back(static_cast<std::uint8_t>(RecordType::TickEvent));
-    file_buf.push_back(0);  // reserved
-    file_buf.insert(file_buf.end(), {1, 0, 0, 0});  // sequence
-    file_buf.insert(file_buf.end(), {100, 0, 0, 0}); // payload_len
+    file_buf.push_back(0);                            // reserved
+    file_buf.insert(file_buf.end(), {1, 0, 0, 0});    // sequence
+    file_buf.insert(file_buf.end(), {100, 0, 0, 0});  // payload_len
     // No CRC, no payload - truncated.
 
     std::FILE *f = std::fopen(path.string().c_str(), "wb");
@@ -310,8 +331,8 @@ void testWriterStopJoins()
 void testSessionConfigRoundTrip()
 {
     std::vector<std::string> patterns = {"Server thread", "Worker-*"};
-    JournalBuffer payload = buildSessionConfigPayload(
-        8000, 50, true, false, true, 2, 1, true, "Console", false, "test profile", patterns);
+    JournalBuffer payload =
+        buildSessionConfigPayload(8000, 50, true, false, true, 2, 1, true, "Console", false, "test profile", patterns);
     auto record = serializeRecord(RecordType::SessionConfig, 0, payload);
 
     JournalRecord rec;
@@ -353,8 +374,8 @@ void testRecoveryPlayerReplay()
         std::exit(1);
     }
 
-    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false,
-                                "Console", false, "replay test", {"Server thread"});
+    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false, "Console", false, "replay test",
+                                {"Server thread"});
     writer.journalModuleDef(0, "bedrock_server");
     writer.journalThreadDef(100, 200, "Server thread");
 
@@ -389,8 +410,7 @@ void testRecoveryPlayerReplay()
     assert(result.tick_count == 2);
     assert(result.has_clean_end);
     assert(!result.serialized_proto.empty());
-    std::cout << "testRecoveryPlayerReplay: PASS (proto size="
-              << result.serialized_proto.size() << ")\n";
+    std::cout << "testRecoveryPlayerReplay: PASS (proto size=" << result.serialized_proto.size() << ")\n";
 }
 
 void testRecoveryPlayerEmptyJournal()
@@ -416,8 +436,7 @@ void testCleanEndDetected()
     RecoveryWriter writer(cfg);
     assert(writer.start());
 
-    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false,
-                                "Console", false, "clean stop", {});
+    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false, "Console", false, "clean stop", {});
     writer.journalModuleDef(0, "bedrock_server");
     writer.journalThreadDef(1, 100, "Server thread");
 
@@ -453,8 +472,7 @@ void testNoCleanEndRecovered()
     RecoveryWriter writer(cfg);
     assert(writer.start());
 
-    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false,
-                                "Console", false, "crashed", {});
+    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false, "Console", false, "crashed", {});
     writer.journalModuleDef(0, "bedrock_server");
     writer.journalThreadDef(1, 100, "Server thread");
 
@@ -489,8 +507,7 @@ void testLiveOnlyRefused()
     RecoveryWriter writer(cfg);
     assert(writer.start());
 
-    writer.journalSessionConfig(524287, 0, true, false, false, 1, 1, true,
-                                "Console", false, "live-only", {});
+    writer.journalSessionConfig(524287, 0, true, false, false, 1, 1, true, "Console", false, "live-only", {});
     writer.journalModuleDef(0, "bedrock_server");
     writer.journalThreadDef(1, 100, "Server thread");
 

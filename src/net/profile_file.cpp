@@ -21,8 +21,7 @@ std::filesystem::path profileStorageDirectory(const std::filesystem::path &data_
     return data_folder / "profiles";
 }
 
-ProfileFileResult saveProfileToDirectory(const std::filesystem::path &folder,
-                                         std::string_view profile_data,
+ProfileFileResult saveProfileToDirectory(const std::filesystem::path &folder, std::string_view profile_data,
                                          std::int64_t timestamp_ms)
 {
     std::error_code error;
@@ -55,8 +54,7 @@ ProfileFileResult saveProfileToDirectory(const std::filesystem::path &folder,
     temporary += ".tmp";
     {
         std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-        stream.write(profile_data.data(),
-                     static_cast<std::streamsize>(profile_data.size()));
+        stream.write(profile_data.data(), static_cast<std::streamsize>(profile_data.size()));
         stream.close();
         if (!stream) {
             std::filesystem::remove(temporary, error);

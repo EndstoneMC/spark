@@ -15,17 +15,14 @@
 #endif
 
 #include "native/sampler/capture.h"
-#include "native/symbol/symbolicate.h"
 #include "native/sampler/thread_info.h"
+#include "native/symbol/symbolicate.h"
 
 namespace spark {
 
 namespace {
-// Leading frames to discard from each capture. On Linux the SIGPROF handler (frame 0)
-// and the kernel signal-return trampoline (frame 1) sit above the real interrupted
-// instruction (safe_generate_raw_trace already omits its own frame); this handler code
-// path is identical in-plugin and in the self-test, so the count is stable. On Windows
-// StackWalk64 reads the suspended thread's real context, so there is nothing to drop.
+// Leading frames to discard. Linux drops the SIGPROF handler and signal-return trampoline;
+// Windows StackWalk64 reads the real context so nothing is dropped.
 #if defined(_WIN32)
 constexpr std::size_t kLeadingDrop = 0;
 #else
@@ -47,8 +44,7 @@ bool Sampler::start(const SamplerConfig &config)
         return false;
     }
     config_ = config;
-    if (!thread_selector_.configure(config_.all_threads, config_.regex_threads,
-                                    config_.thread_patterns, last_error_)) {
+    if (!thread_selector_.configure(config_.all_threads, config_.regex_threads, config_.thread_patterns, last_error_)) {
         return false;
     }
     if (!Capture::arm()) {
@@ -203,20 +199,20 @@ void Sampler::samplerLoop()
                 targets = enumerateProcessThreads();
                 const std::uint64_t sampler_tid = sampler_tid_.load(std::memory_order_acquire);
                 const std::uint64_t aggregator_tid = aggregator_tid_.load(std::memory_order_acquire);
-                targets.erase(std::remove_if(targets.begin(), targets.end(), [&](const ThreadInfo &thread) {
-                                  return thread.id == sampler_tid || thread.id == aggregator_tid;
-                              }),
+                targets.erase(std::remove_if(targets.begin(), targets.end(),
+                                             [&](const ThreadInfo &thread) {
+                                                 return thread.id == sampler_tid || thread.id == aggregator_tid;
+                                             }),
                               targets.end());
                 if (!config_.all_threads) {
-                    targets.erase(std::remove_if(targets.begin(), targets.end(), [&](const ThreadInfo &thread) {
-                                      return !thread_selector_.matches(thread.name);
-                                  }),
+                    targets.erase(std::remove_if(
+                                      targets.begin(), targets.end(),
+                                      [&](const ThreadInfo &thread) { return !thread_selector_.matches(thread.name); }),
                                   targets.end());
                 }
                 std::erase_if(timings, [&](const auto &entry) {
-                    return std::none_of(targets.begin(), targets.end(), [&](const ThreadInfo &thread) {
-                        return thread.id == entry.first;
-                    });
+                    return std::none_of(targets.begin(), targets.end(),
+                                        [&](const ThreadInfo &thread) { return thread.id == entry.first; });
                 });
                 for (ThreadInfo &thread : targets) {
                     thread.name += " (#" + std::to_string(thread.id) + ")";
@@ -226,8 +222,7 @@ void Sampler::samplerLoop()
         }
         else {
             const std::uint64_t tid = target_tid_.load();
-            targets = tid == 0 ? std::vector<ThreadInfo>{}
-                               : std::vector<ThreadInfo>{{tid, target_name_}};
+            targets = tid == 0 ? std::vector<ThreadInfo>{} : std::vector<ThreadInfo>{{tid, target_name_}};
         }
 
         const std::size_t target_count = targets.size();
@@ -244,14 +239,10 @@ void Sampler::samplerLoop()
             ThreadTiming &timing = timing_it->second;
             std::uint64_t elapsed_us = static_cast<std::uint64_t>(config_.interval_us);
             if (!inserted) {
-                const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-                    attempt_time - timing.last_attempt);
-                const std::uint64_t wall_us = elapsed.count() > 0
-                                                  ? static_cast<std::uint64_t>(elapsed.count())
-                                                  : 1;
-                elapsed_us = wall_us > timing.previous_capture_us
-                                 ? wall_us - timing.previous_capture_us
-                                 : 1;
+                const auto elapsed =
+                    std::chrono::duration_cast<std::chrono::microseconds>(attempt_time - timing.last_attempt);
+                const std::uint64_t wall_us = elapsed.count() > 0 ? static_cast<std::uint64_t>(elapsed.count()) : 1;
+                elapsed_us = wall_us > timing.previous_capture_us ? wall_us - timing.previous_capture_us : 1;
             }
             timing.last_attempt = attempt_time;
             timing.previous_capture_us = 0;
@@ -260,8 +251,8 @@ void Sampler::samplerLoop()
                 continue;
             }
             const bool captured = Capture::captureThread(target.id, buf);
-            const auto capture_elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - attempt_time);
+            const auto capture_elapsed =
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - attempt_time);
             if (capture_elapsed.count() > 0) {
                 timing.previous_capture_us = static_cast<std::uint64_t>(capture_elapsed.count());
             }
@@ -284,9 +275,9 @@ void Sampler::samplerLoop()
                 std::string path = "unknown";
                 if (module_base != 0) {
                     char module_path[MAX_PATH]{};
-                    DWORD length = GetModuleFileNameA(
-                        reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(module_base)), module_path,
-                        static_cast<DWORD>(sizeof(module_path)));
+                    DWORD length =
+                        GetModuleFileNameA(reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(module_base)),
+                                           module_path, static_cast<DWORD>(sizeof(module_path)));
                     if (length > 0) {
                         path.assign(module_path, length);
                     }
@@ -303,9 +294,8 @@ void Sampler::samplerLoop()
 #else
                 cpptrace::safe_object_frame frame;
                 cpptrace::get_safe_object_frame(buf.ips[i], &frame);
-                std::string_view path = frame.object_path[0] != '\0'
-                                            ? std::string_view(frame.object_path)
-                                            : std::string_view("unknown");
+                std::string_view path =
+                    frame.object_path[0] != '\0' ? std::string_view(frame.object_path) : std::string_view("unknown");
                 FrameKey key;
                 const std::size_t prev_module_count = modules_.size();
                 key.module = modules_.intern(path);
@@ -393,8 +383,7 @@ void Sampler::aggregatorLoop()
             if (!ticked) {
                 acceptSample(s);
             }
-            else if (s.tick_id < tick_decisions_.size() &&
-                     tick_decisions_[static_cast<std::size_t>(s.tick_id)] != 0) {
+            else if (s.tick_id < tick_decisions_.size() && tick_decisions_[static_cast<std::size_t>(s.tick_id)] != 0) {
                 if (tick_decisions_[static_cast<std::size_t>(s.tick_id)] == 2) {
                     acceptSample(s);
                 }

@@ -1,8 +1,8 @@
-#include "core/profiler/thread_grouper.h"
-
 #include <cassert>
 #include <cstdio>
 #include <string>
+
+#include "core/profiler/thread_grouper.h"
 
 using namespace spark;
 

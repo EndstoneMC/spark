@@ -18,8 +18,8 @@ namespace spark {
 // Platform-independent: uses CommandSender and ProfileMetadataProvider.
 class HealthCommand {
 public:
-    HealthCommand(StatisticsService &statistics, ProfileMetadataProvider &metadata_provider,
-                  std::string bytebin_url, std::string viewer_url);
+    HealthCommand(StatisticsService &statistics, ProfileMetadataProvider &metadata_provider, std::string bytebin_url,
+                  std::string viewer_url);
 
     void cmdTps(CommandSender &sender);
     void cmdPing(CommandSender &sender, const Arguments &args);

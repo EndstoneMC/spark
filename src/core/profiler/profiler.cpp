@@ -104,9 +104,8 @@ struct GroupedThreads {
     std::deque<std::string> owned_labels;
 };
 
-GroupedThreads groupThreads(
-    std::vector<std::pair<std::uint64_t, std::pair<std::string, const CallTree *>>> &&input,
-    ThreadGrouperMode mode)
+GroupedThreads groupThreads(std::vector<std::pair<std::uint64_t, std::pair<std::string, const CallTree *>>> &&input,
+                            ThreadGrouperMode mode)
 {
     ThreadGrouper grouper(mode);
     // std::map for deterministic group ordering.
@@ -121,7 +120,8 @@ GroupedThreads groupThreads(
         if (mode == ThreadGrouperMode::ByName || trees.size() == 1) {
             result.owned_labels.push_back(grouper.label(g));
             result.views.push_back({result.owned_labels.back(), trees.front()});
-        } else {
+        }
+        else {
             auto merged = std::make_unique<CallTree>();
             for (const CallTree *tree : trees) {
                 mergeCallTree(*merged, *tree);
@@ -177,12 +177,14 @@ void addSymbolGuessMetadata(ProfileMetadata &meta)
     meta.extra_platform_metadata["Symbol guess vtable conflicts"] = std::to_string(stats.vtable_conflicts);
     meta.extra_platform_metadata["Symbol guess RTTI types"] = std::to_string(stats.rtti_types);
     meta.extra_platform_metadata["Symbol guess RTTI bases"] = std::to_string(stats.rtti_bases);
-    meta.extra_platform_metadata["Symbol guess vtable inheritance resolved"] = std::to_string(stats.vtable_inheritance_resolved);
+    meta.extra_platform_metadata["Symbol guess vtable inheritance resolved"] =
+        std::to_string(stats.vtable_inheritance_resolved);
     meta.extra_platform_metadata["Symbol guess sampled functions"] = std::to_string(stats.sampled_functions);
     meta.extra_platform_metadata["Symbol guess decoded instructions"] = std::to_string(stats.decoded_instructions);
     meta.extra_platform_metadata["Symbol guess string candidates"] = std::to_string(stats.string_candidates);
     meta.extra_platform_metadata["Symbol guess string labels"] = std::to_string(stats.string_labels);
-    meta.extra_platform_metadata["Symbol guess string accumulated labels"] = std::to_string(stats.string_accumulated_labels);
+    meta.extra_platform_metadata["Symbol guess string accumulated labels"] =
+        std::to_string(stats.string_accumulated_labels);
     meta.extra_platform_metadata["Symbol guess lambda body labels"] = std::to_string(stats.lambda_body_labels);
     meta.extra_platform_metadata["Symbol guess code pattern labels"] = std::to_string(stats.code_pattern_labels);
     meta.extra_platform_metadata["Symbol guess shared strings"] = std::to_string(stats.shared_strings);
@@ -197,7 +199,7 @@ void addSymbolGuessMetadata(ProfileMetadata &meta)
 #endif
 }
 
-} // namespace
+}  // namespace
 
 std::uint64_t Profiler::sampleCount() const
 {
@@ -258,7 +260,10 @@ const std::vector<AllocationHookCapability> &Profiler::allocationHookCapabilitie
     return allocation_sampler_.hookCapabilities();
 }
 
-std::size_t Profiler::allocationHookTargetCount() const { return allocation_sampler_.hookTargetCount(); }
+std::size_t Profiler::allocationHookTargetCount() const
+{
+    return allocation_sampler_.hookTargetCount();
+}
 
 bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std::string &error)
 {
@@ -315,13 +320,12 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
                 recovery_writer_->journalSessionConfig(
                     static_cast<std::uint32_t>(interval_),
                     options.only_ticks_over_ms > 0 ? static_cast<std::int32_t>(options.only_ticks_over_ms) : 0,
-                    config.all_threads, config.regex_threads, false,
-                    static_cast<std::uint8_t>(options.thread_grouper),
-                    1, config.live_only,
-                    options.creator_name, options.creator_is_player,
-                    options.comment, options.threads);
+                    config.all_threads, config.regex_threads, false, static_cast<std::uint8_t>(options.thread_grouper),
+                    1, config.live_only, options.creator_name, options.creator_is_player, options.comment,
+                    options.threads);
                 recovery_writer_->requestFlush();
-            } else {
+            }
+            else {
                 allocation_sampler_.setRecoverySink(nullptr);
                 recovery_writer_.reset();
             }
@@ -357,12 +361,11 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
                     static_cast<std::uint32_t>(interval_),
                     options.only_ticks_over_ms > 0 ? static_cast<std::int32_t>(options.only_ticks_over_ms) : 0,
                     config.all_threads, config.regex_threads, config.ignore_sleeping,
-                    static_cast<std::uint8_t>(options.thread_grouper),
-                    0, false,
-                    options.creator_name, options.creator_is_player,
-                    options.comment, options.threads);
+                    static_cast<std::uint8_t>(options.thread_grouper), 0, false, options.creator_name,
+                    options.creator_is_player, options.comment, options.threads);
                 recovery_writer_->requestFlush();
-            } else {
+            }
+            else {
                 sampler_.setRecoverySink(nullptr);
                 recovery_writer_.reset();
             }
@@ -432,7 +435,9 @@ void Profiler::stopSampling()
 
 void Profiler::stopRecoveryWriter()
 {
-    if (!recovery_writer_) return;
+    if (!recovery_writer_) {
+        return;
+    }
     recovery_writer_->journalCleanEnd();
     recovery_writer_->requestFlush();
     recovery_writer_->stop();
@@ -669,8 +674,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         if (input.empty()) {
             input.emplace_back(0, std::make_pair(meta.thread_name, &allocation_sampler_.tree()));
         }
-        auto [threads, owned_trees, owned_labels] =
-            groupThreads(std::move(input), options_.thread_grouper);
+        auto [threads, owned_trees, owned_labels] = groupThreads(std::move(input), options_.thread_grouper);
         std::vector<FrameKey> keys = collectFrameKeys(threads);
         auto resolved = resolveFrames(allocation_sampler_.modules(), keys);
         addSymbolGuessMetadata(meta);
@@ -687,8 +691,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     if (input.empty()) {
         input.emplace_back(0, std::make_pair(meta.thread_name, &sampler_.tree()));
     }
-    auto [threads, owned_trees, owned_labels] =
-        groupThreads(std::move(input), options_.thread_grouper);
+    auto [threads, owned_trees, owned_labels] = groupThreads(std::move(input), options_.thread_grouper);
     std::vector<FrameKey> keys = collectFrameKeys(threads);
     auto resolved = resolveFrames(sampler_.modules(), keys);
     addSymbolGuessMetadata(meta);
@@ -729,11 +732,7 @@ bool Profiler::cancel(std::string &error)
         return true;
     }
 
-    // A failed allocation aggregator invalidates the profile, but stopSampling
-    // still joins the service thread, releases the event pool, and returns the
-    // session to Idle. Cancelling intentionally discards that invalid data, so
-    // completed cleanup is a successful cancel rather than another backend
-    // failure presented to the user.
+    // A failed aggregator invalidates the data; completed cleanup is a successful cancel.
     std::string backend_error;
     if (!running_.load() && backendFailure(backend_error)) {
         error.clear();
@@ -769,4 +768,4 @@ bool Profiler::shutdown(std::string &error)
     return allocation_sampler_.shutdown(error);
 }
 
-} // namespace spark
+}  // namespace spark

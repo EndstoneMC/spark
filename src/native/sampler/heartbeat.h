@@ -22,8 +22,7 @@ struct Heartbeat {
 
     static std::uint64_t monotonicNowNs() noexcept
     {
-        return std::chrono::duration_cast<std::chrono::nanoseconds>(
-                   std::chrono::steady_clock::now().time_since_epoch())
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
             .count();
     }
 };

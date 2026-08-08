@@ -52,15 +52,11 @@ bool isAllowlisted(std::string_view key)
 std::string trim(std::string_view s)
 {
     std::size_t start = 0;
-    while (start < s.size() &&
-           (s[start] == ' ' || s[start] == '\t' || s[start] == '\r' ||
-            s[start] == '\n')) {
+    while (start < s.size() && (s[start] == ' ' || s[start] == '\t' || s[start] == '\r' || s[start] == '\n')) {
         ++start;
     }
     std::size_t end = s.size();
-    while (end > start &&
-           (s[end - 1] == ' ' || s[end - 1] == '\t' || s[end - 1] == '\r' ||
-            s[end - 1] == '\n')) {
+    while (end > start && (s[end - 1] == ' ' || s[end - 1] == '\t' || s[end - 1] == '\r' || s[end - 1] == '\n')) {
         --end;
     }
     return std::string(s.substr(start, end - start));
@@ -84,19 +80,34 @@ void appendJsonString(std::string &out, std::string_view value)
     out += '"';
     for (char c : value) {
         switch (c) {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\b': out += "\\b"; break;
-        case '\f': out += "\\f"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
         default:
             if (static_cast<unsigned char>(c) < 0x20) {
                 char buf[8];
                 std::snprintf(buf, sizeof(buf), "\\u%04x", c);
                 out += buf;
-            } else {
+            }
+            else {
                 out += c;
             }
             break;
@@ -107,8 +118,7 @@ void appendJsonString(std::string &out, std::string_view value)
 
 }  // namespace
 
-std::map<std::string, std::string> parseServerProperties(
-    const std::filesystem::path &file)
+std::map<std::string, std::string> parseServerProperties(const std::filesystem::path &file)
 {
     std::map<std::string, std::string> result;
     if (!std::filesystem::exists(file)) {
@@ -151,8 +161,7 @@ std::map<std::string, std::string> parseServerProperties(
     return result;
 }
 
-std::string serverPropertiesToJsonString(
-    const std::map<std::string, std::string> &properties)
+std::string serverPropertiesToJsonString(const std::map<std::string, std::string> &properties)
 {
     std::string out;
     out += '{';
@@ -166,9 +175,11 @@ std::string serverPropertiesToJsonString(
         out += ':';
         if (value == "true" || value == "false") {
             out += value;
-        } else if (isAllDigits(value)) {
+        }
+        else if (isAllDigits(value)) {
             out += value;
-        } else {
+        }
+        else {
             appendJsonString(out, value);
         }
     }

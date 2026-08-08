@@ -1,9 +1,9 @@
 #include "net/websocket.h"
 
-#include <curl/curl.h>
-
 #include <chrono>
 #include <cstring>
+
+#include <curl/curl.h>
 
 namespace spark {
 
@@ -26,13 +26,21 @@ std::string parseChannelKey(const std::string &json)
 {
     // Simple JSON extraction: find "key":"..." and extract the value.
     auto pos = json.find("\"key\"");
-    if (pos == std::string::npos) return {};
+    if (pos == std::string::npos) {
+        return {};
+    }
     pos = json.find(':', pos + 5);
-    if (pos == std::string::npos) return {};
+    if (pos == std::string::npos) {
+        return {};
+    }
     pos = json.find('"', pos + 1);
-    if (pos == std::string::npos) return {};
+    if (pos == std::string::npos) {
+        return {};
+    }
     auto end = json.find('"', pos + 1);
-    if (end == std::string::npos) return {};
+    if (end == std::string::npos) {
+        return {};
+    }
     return json.substr(pos + 1, end - pos - 1);
 }
 
@@ -52,7 +60,9 @@ std::string WebSocketClient::connect(const std::string &host, const std::string 
 
     // Step 1: Create a channel via HTTP GET.
     CURL *curl = curl_easy_init();
-    if (!curl) return {};
+    if (!curl) {
+        return {};
+    }
 
     std::string url = "https://" + host + "/create";
     CreateResponse resp;
@@ -73,10 +83,14 @@ std::string WebSocketClient::connect(const std::string &host, const std::string 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
-    if (rc != CURLE_OK) return {};
+    if (rc != CURLE_OK) {
+        return {};
+    }
 
     channel_id_ = parseChannelKey(resp.data);
-    if (channel_id_.empty()) return {};
+    if (channel_id_.empty()) {
+        return {};
+    }
 
     // Step 2: Connect via WebSocket.
     running_.store(true);
@@ -94,7 +108,9 @@ std::string WebSocketClient::connect(const std::string &host, const std::string 
 
 void WebSocketClient::send(const std::string &message)
 {
-    if (!running_.load()) return;
+    if (!running_.load()) {
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(send_mutex_);
         send_queue_.push(message);
@@ -105,12 +121,16 @@ void WebSocketClient::send(const std::string &message)
 
 void WebSocketClient::close()
 {
-    if (!running_.exchange(false)) return;
+    if (!running_.exchange(false)) {
+        return;
+    }
     send_cv_.notify_all();
     if (thread_.joinable()) {
         thread_.join();
     }
-    if (close_cb_) close_cb_();
+    if (close_cb_) {
+        close_cb_();
+    }
 }
 
 void WebSocketClient::runReceiveLoop()
@@ -156,8 +176,7 @@ void WebSocketClient::runReceiveLoop()
             while (!to_send.empty()) {
                 const auto &msg = to_send.front();
                 size_t sent = 0;
-                curl_ws_send(curl, msg.data(), msg.size(), &sent, 0,
-                             CURLWS_TEXT);
+                curl_ws_send(curl, msg.data(), msg.size(), &sent, 0, CURLWS_TEXT);
                 to_send.pop();
             }
         }
@@ -174,12 +193,14 @@ void WebSocketClient::runReceiveLoop()
                 }
                 pending_recv.clear();
             }
-        } else if (r == CURLE_AGAIN) {
+        }
+        else if (r == CURLE_AGAIN) {
             // No data available, wait briefly.
             std::unique_lock<std::mutex> lock(send_mutex_);
             send_cv_.wait_for(lock, std::chrono::milliseconds(kPollIntervalMs),
                               [this]() { return !running_.load() || has_data_.load(); });
-        } else {
+        }
+        else {
             // Error or connection closed.
             break;
         }

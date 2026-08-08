@@ -6,14 +6,8 @@
 
 namespace spark {
 
-// Persistent Spark configuration loaded from config.toml in the plugin data
-// directory.  All fields have safe defaults; a missing or malformed file
-// produces a warning and falls back to those defaults.  Unknown keys are
-// silently ignored so that future config additions do not break older builds.
-//
-// The file is user-owned: save() is only for first-time default creation.
-// Runtime mutations (e.g. trust-viewer) go through TrustedViewersState, never
-// through this class.
+// Persistent TOML configuration with safe defaults. The file is user-owned:
+// save() is only for first-time creation; runtime mutations go through TrustedViewersState.
 class SparkConfig {
 public:
     explicit SparkConfig(std::filesystem::path file);

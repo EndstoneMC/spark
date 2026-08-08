@@ -38,7 +38,9 @@ public:
         std::smatch m;
         std::string g = std::regex_match(n, m, kPoolPattern) ? m[1].str() : n;
         // trim trailing spaces
-        while (!g.empty() && g.back() == ' ') g.pop_back();
+        while (!g.empty() && g.back() == ' ') {
+            g.pop_back();
+        }
         cache_[tid] = g;
         pool_members_[g].insert(tid);
         return g;

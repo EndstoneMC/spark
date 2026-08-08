@@ -19,14 +19,8 @@ public:
     // Tokenize a raw rest-of-line string, preserving quoted names and patterns.
     static std::vector<std::string> tokenize(const std::string &line);
 
-    const std::string &subCommand() const
-    {
-        return sub_;
-    }
-    const std::vector<std::string> &raw() const
-    {
-        return raw_;
-    }
+    const std::string &subCommand() const { return sub_; }
+    const std::vector<std::string> &raw() const { return raw_; }
 
     bool boolFlag(const std::string &name) const;
     std::optional<long> intFlag(const std::string &name) const;

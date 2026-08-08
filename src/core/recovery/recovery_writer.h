@@ -18,15 +18,8 @@
 
 namespace spark {
 
-// Crash-safe recovery journal writer.  Runs a dedicated thread that drains
-// a bounded lock-free queue and appends serialized records to segmented
-// journal files.  All file I/O happens on the writer thread; producers
-// (aggregator, watchdog, main thread) only enqueue lightweight serialized
-// records.
-//
-// Implements RecoverySink for use by the Sampler's aggregator thread.
-// Additional methods (stall, clean-end, flush) are called from the
-// watchdog or main thread.
+// Crash-safe recovery journal writer. Dedicated thread drains a bounded lock-free queue;
+// all file I/O is on the writer thread. Producers only enqueue lightweight serialized records.
 class RecoveryWriter : public RecoverySink {
 public:
     struct Config {
@@ -34,8 +27,8 @@ public:
         std::uint64_t session_id = 0;
         std::size_t max_segment_bytes = 16 * 1024 * 1024;  // 16 MiB
         std::size_t max_total_bytes = 128 * 1024 * 1024;   // 128 MiB
-        int flush_interval_ms = 1000;   // batch flush
-        int sync_interval_ms = 5000;    // durable sync
+        int flush_interval_ms = 1000;                      // batch flush
+        int sync_interval_ms = 5000;                       // durable sync
         std::size_t queue_capacity = 65536;
     };
 
@@ -60,8 +53,7 @@ public:
 
     // --- RecoverySink (called from the aggregator thread) ---
     void journalModuleDef(std::uint32_t module_id, std::string_view path) override;
-    void journalThreadDef(std::uint64_t thread_id, std::uint64_t os_thread_id,
-                          std::string_view name) override;
+    void journalThreadDef(std::uint64_t thread_id, std::uint64_t os_thread_id, std::string_view name) override;
     void journalSample(const Sample &sample) override;
     void journalTickEvent(std::uint64_t tick_id, double mspt) override;
 
@@ -69,13 +61,11 @@ public:
     void journalStallBegin(std::uint64_t detected_ns, std::uint64_t last_tick_ns);
     void journalStallEnd(std::uint64_t detected_ns, std::uint64_t recovered_ns);
     void journalCleanEnd();
-    void journalSessionConfig(
-        std::uint32_t interval_us, std::int32_t only_ticks_over_ms,
-        bool all_threads, bool regex_threads, bool ignore_sleeping,
-        std::uint8_t thread_grouper, std::uint8_t profile_type, bool live_only,
-        std::string_view creator_name,
-        bool creator_is_player, std::string_view comment,
-        const std::vector<std::string> &thread_patterns);
+    void journalSessionConfig(std::uint32_t interval_us, std::int32_t only_ticks_over_ms, bool all_threads,
+                              bool regex_threads, bool ignore_sleeping, std::uint8_t thread_grouper,
+                              std::uint8_t profile_type, bool live_only, std::string_view creator_name,
+                              bool creator_is_player, std::string_view comment,
+                              const std::vector<std::string> &thread_patterns);
 
     // Requests an immediate durable flush (sync to disk).
     void requestFlush();
