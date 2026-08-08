@@ -1,6 +1,7 @@
 #ifndef ENDSTONE_SPARK_NETWORK_MONITOR_H
 #define ENDSTONE_SPARK_NETWORK_MONITOR_H
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -11,12 +12,12 @@ namespace spark {
 
 struct NetworkInterfaceInfo {
     std::string name;
-    std::int64_t rx_bytes = 0;
-    std::int64_t rx_packets = 0;
-    std::int64_t rx_errors = 0;
-    std::int64_t tx_bytes = 0;
-    std::int64_t tx_packets = 0;
-    std::int64_t tx_errors = 0;
+    std::uint64_t rx_bytes = 0;
+    std::uint64_t rx_packets = 0;
+    std::uint64_t rx_errors = 0;
+    std::uint64_t tx_bytes = 0;
+    std::uint64_t tx_packets = 0;
+    std::uint64_t tx_errors = 0;
 
     bool isZero() const;
     NetworkInterfaceInfo subtract(const NetworkInterfaceInfo &other) const;
@@ -76,13 +77,15 @@ struct NetworkInterfaceSnapshot {
 class NetworkMonitor {
 public:
     using PollFn = std::function<std::map<std::string, NetworkInterfaceInfo>()>;
+    using Clock = std::chrono::steady_clock;
+    using NowFn = std::function<Clock::time_point()>;
 
     static constexpr int kPollIntervalSeconds = 60;
     static constexpr int kWindowSizeSeconds = 15 * 60;
     static constexpr int kWindowSize = kWindowSizeSeconds / kPollIntervalSeconds;  // 15
 
     NetworkMonitor();
-    explicit NetworkMonitor(PollFn poll_fn);
+    explicit NetworkMonitor(PollFn poll_fn, NowFn now_fn = Clock::now);
 
     // Polls the system and updates rolling averages. Returns false on the first
     // call (no previous reading to diff against), true once averages are available.
@@ -95,9 +98,11 @@ private:
     static bool shouldIgnore(const std::string &name);
 
     PollFn poll_fn_;
+    NowFn now_fn_;
     std::map<std::string, NetworkInterfaceInfo> previous_;
     std::map<std::string, NetworkInterfaceAverages> averages_;
     bool first_poll_ = true;
+    Clock::time_point previous_poll_time_{};
 };
 
 // Platform-specific: reads all network interface counters.
@@ -107,3 +112,4 @@ std::map<std::string, NetworkInterfaceInfo> pollNetworkInterfaces();
 }  // namespace spark
 
 #endif  // ENDSTONE_SPARK_NETWORK_MONITOR_H
+#include <chrono>

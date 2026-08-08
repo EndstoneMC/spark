@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <string>
@@ -11,6 +12,14 @@
 using namespace spark;
 
 namespace {
+
+void require(bool condition, const char *message)
+{
+    if (!condition) {
+        std::fprintf(stderr, "network monitor: %s\n", message);
+        std::abort();
+    }
+}
 
 // Mock poll function that returns a sequence of predefined readings.
 class MockPoller {
@@ -30,8 +39,17 @@ private:
     std::size_t index_ = 0;
 };
 
-NetworkInterfaceInfo makeInfo(const std::string &name, std::int64_t rx_bytes, std::int64_t rx_packets,
-                              std::int64_t tx_bytes, std::int64_t tx_packets)
+class MockClock {
+public:
+    NetworkMonitor::Clock::time_point operator()() const { return now_; }
+    void advance(std::chrono::nanoseconds duration) { now_ += duration; }
+
+private:
+    NetworkMonitor::Clock::time_point now_{};
+};
+
+NetworkInterfaceInfo makeInfo(const std::string &name, std::uint64_t rx_bytes, std::uint64_t rx_packets,
+                              std::uint64_t tx_bytes, std::uint64_t tx_packets)
 {
     NetworkInterfaceInfo info;
     info.name = name;
@@ -126,8 +144,10 @@ void testNetworkMonitorSecondPoll()
     poller.addReading({{"eth0", makeInfo("eth0", 1000, 10, 2000, 20)}});
     poller.addReading({{"eth0", makeInfo("eth0", 7000, 70, 8000, 80)}});
 
-    NetworkMonitor monitor(std::ref(poller));
+    MockClock clock;
+    NetworkMonitor monitor(std::ref(poller), std::ref(clock));
     monitor.poll();  // first poll, returns false
+    clock.advance(std::chrono::seconds(60));
     bool result = monitor.poll();
     assert(result);  // second poll returns true
 
@@ -156,8 +176,10 @@ void testNetworkMonitorIgnoresVethAndBr()
         {"br-abc", makeInfo("br-abc", 600, 6, 600, 6)},
     });
 
-    NetworkMonitor monitor(std::ref(poller));
+    MockClock clock;
+    NetworkMonitor monitor(std::ref(poller), std::ref(clock));
     monitor.poll();
+    clock.advance(std::chrono::seconds(60));
     monitor.poll();
 
     auto snap = monitor.snapshot();
@@ -175,6 +197,74 @@ void testNetworkMonitorEmptyPolls()
     assert(monitor.snapshot().empty());
 }
 
+void testNetworkMonitorResetAndRebaseline()
+{
+    MockPoller poller;
+    poller.addReading({{"eth0", makeInfo("eth0", 1000, 100, 2000, 200)}});
+    poller.addReading({{"eth0", makeInfo("eth0", 2000, 200, 3000, 300)}});
+    poller.addReading({{"eth0", makeInfo("eth0", 100, 10, 200, 20)}});
+    poller.addReading({{"eth0", makeInfo("eth0", 1100, 110, 1200, 120)}});
+
+    MockClock clock;
+    NetworkMonitor monitor(std::ref(poller), std::ref(clock));
+    require(!monitor.poll(), "initial reset baseline was accepted");
+    clock.advance(std::chrono::seconds(10));
+    require(monitor.poll(), "normal reset prelude delta was rejected");
+    clock.advance(std::chrono::seconds(10));
+    require(!monitor.poll(), "counter reset was accepted as a delta");
+    clock.advance(std::chrono::seconds(10));
+    require(monitor.poll(), "post-reset delta was rejected");
+    const auto snapshot = monitor.snapshot();
+    require(snapshot.at("eth0").rx_bytes_per_second.min >= 0.0, "reset produced a negative rate");
+    require(std::abs(snapshot.at("eth0").rx_bytes_per_second.mean - 100.0) < 0.001,
+            "post-reset rate used the absolute counter");
+}
+
+void testNetworkMonitorInterfaceLifecycle()
+{
+    MockPoller poller;
+    poller.addReading({{"eth0", makeInfo("eth0", 1000, 10, 1000, 10)}});
+    poller.addReading(
+        {{"eth0", makeInfo("eth0", 1100, 11, 1100, 11)}, {"wlan0", makeInfo("wlan0", 1000000, 1000, 1000000, 1000)}});
+    poller.addReading({});
+    poller.addReading({{"wlan0", makeInfo("wlan0", 2000000, 2000, 2000000, 2000)}});
+    poller.addReading({{"wlan0", makeInfo("wlan0", 2000100, 2001, 2000100, 2001)}});
+
+    MockClock clock;
+    NetworkMonitor monitor(std::ref(poller), std::ref(clock));
+    require(!monitor.poll(), "initial interface baseline was accepted");
+    clock.advance(std::chrono::seconds(10));
+    require(monitor.poll(), "existing interface delta was rejected");
+    require(monitor.snapshot().count("wlan0") == 0, "new interface absolute counter was accepted");
+    clock.advance(std::chrono::seconds(10));
+    require(!monitor.poll(), "disappeared interface produced a rate");
+    require(monitor.snapshot().count("eth0") == 0, "disappeared interface retained stale rates");
+    clock.advance(std::chrono::seconds(10));
+    require(!monitor.poll(), "reappeared interface absolute counter was accepted");
+    clock.advance(std::chrono::seconds(10));
+    require(monitor.poll(), "reappeared interface delta was rejected");
+    require(std::abs(monitor.snapshot().at("wlan0").rx_bytes_per_second.mean - 10.0) < 0.001,
+            "reappeared interface rate was incorrect");
+}
+
+void testNetworkMonitorElapsedGuard()
+{
+    MockPoller poller;
+    poller.addReading({{"eth0", makeInfo("eth0", 100, 10, 100, 10)}});
+    poller.addReading({{"eth0", makeInfo("eth0", 200, 20, 200, 20)}});
+    poller.addReading({{"eth0", makeInfo("eth0", 201, 21, 201, 21)}});
+
+    MockClock clock;
+    NetworkMonitor monitor(std::ref(poller), std::ref(clock));
+    require(!monitor.poll(), "initial elapsed baseline was accepted");
+    require(!monitor.poll(), "zero elapsed interval was accepted");
+    clock.advance(std::chrono::microseconds(1));
+    require(monitor.poll(), "small positive elapsed interval was rejected");
+    const double rate = monitor.snapshot().at("eth0").rx_bytes_per_second.mean;
+    require(std::isfinite(rate), "small elapsed interval produced a non-finite rate");
+    require(rate >= 0.0, "small elapsed interval produced a negative rate");
+}
+
 }  // namespace
 
 int main()
@@ -187,6 +277,9 @@ int main()
     testNetworkMonitorSecondPoll();
     testNetworkMonitorIgnoresVethAndBr();
     testNetworkMonitorEmptyPolls();
+    testNetworkMonitorResetAndRebaseline();
+    testNetworkMonitorInterfaceLifecycle();
+    testNetworkMonitorElapsedGuard();
 
     std::printf("All network_monitor tests passed.\n");
     return 0;

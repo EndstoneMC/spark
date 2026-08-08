@@ -1,3 +1,12 @@
+#if defined(_WIN32)
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+#ifndef NTDDI_VERSION
+#define NTDDI_VERSION 0x06000000
+#endif
+#endif
+
 #include "core/stats/network_monitor.h"
 
 #include <algorithm>
@@ -6,8 +15,11 @@
 
 #if defined(_WIN32)
 // clang-format off: iphlpapi.h requires windows.h types
+#include <winsock2.h>
+#include <ws2ipdef.h>
 #include <windows.h>
 #include <iphlpapi.h>
+#include <netioapi.h>
 // clang-format on
 #else
 #include <fstream>
@@ -136,9 +148,11 @@ void NetworkInterfaceAverages::accept(const NetworkInterfaceInfo &info, double p
 
 // ---- NetworkMonitor ----
 
-NetworkMonitor::NetworkMonitor() : poll_fn_(pollNetworkInterfaces) {}
+NetworkMonitor::NetworkMonitor() : poll_fn_(pollNetworkInterfaces), now_fn_(Clock::now) {}
 
-NetworkMonitor::NetworkMonitor(PollFn poll_fn) : poll_fn_(std::move(poll_fn)) {}
+NetworkMonitor::NetworkMonitor(PollFn poll_fn, NowFn now_fn) : poll_fn_(std::move(poll_fn)), now_fn_(std::move(now_fn))
+{
+}
 
 bool NetworkMonitor::shouldIgnore(const std::string &name)
 {
@@ -155,33 +169,48 @@ bool NetworkMonitor::shouldIgnore(const std::string &name)
 bool NetworkMonitor::poll()
 {
     std::map<std::string, NetworkInterfaceInfo> current = poll_fn_();
+    const Clock::time_point now = now_fn_();
 
     if (first_poll_) {
         previous_ = current;
+        previous_poll_time_ = now;
         first_poll_ = false;
         return false;
     }
 
-    if (current.empty() && previous_.empty()) {
+    const double elapsed_seconds = std::chrono::duration<double>(now - previous_poll_time_).count();
+    previous_poll_time_ = now;
+    if (elapsed_seconds <= 0.0 || !std::isfinite(elapsed_seconds)) {
+        previous_ = current;
         return false;
     }
 
-    // Compute diff and submit to rolling averages.
+    bool accepted = false;
+    std::erase_if(averages_, [&current](const auto &entry) { return current.find(entry.first) == current.end(); });
     for (const auto &[name, info] : current) {
         if (shouldIgnore(name)) {
+            continue;
+        }
+        auto prev_it = previous_.find(name);
+        if (prev_it == previous_.end()) {
+            continue;
+        }
+        const NetworkInterfaceInfo &previous = prev_it->second;
+        if (info.rx_bytes < previous.rx_bytes || info.rx_packets < previous.rx_packets ||
+            info.rx_errors < previous.rx_errors || info.tx_bytes < previous.tx_bytes ||
+            info.tx_packets < previous.tx_packets || info.tx_errors < previous.tx_errors) {
             continue;
         }
         auto it = averages_.find(name);
         if (it == averages_.end()) {
             it = averages_.emplace(name, NetworkInterfaceAverages(kWindowSize)).first;
         }
-        auto prev_it = previous_.find(name);
-        NetworkInterfaceInfo diff = prev_it != previous_.end() ? info.subtract(prev_it->second) : info;
-        it->second.accept(diff, static_cast<double>(kPollIntervalSeconds));
+        it->second.accept(info.subtract(previous), elapsed_seconds);
+        accepted = true;
     }
 
     previous_ = current;
-    return true;
+    return accepted;
 }
 
 std::map<std::string, NetworkInterfaceSnapshot> NetworkMonitor::snapshot() const
@@ -311,8 +340,8 @@ std::map<std::string, NetworkInterfaceInfo> readProcNetDev(const std::vector<std
 
         // Values are after the colon.
         std::istringstream iss(line.substr(colon + 1));
-        std::vector<long long> values;
-        long long v;
+        std::vector<unsigned long long> values;
+        unsigned long long v;
         while (iss >> v) {
             values.push_back(v);
         }
@@ -354,43 +383,34 @@ std::map<std::string, NetworkInterfaceInfo> pollNetworkInterfaces()
 
 std::map<std::string, NetworkInterfaceInfo> pollNetworkInterfaces()
 {
-    ULONG table_size = 0;
-    if (GetIfTable(nullptr, &table_size, FALSE) != ERROR_INSUFFICIENT_BUFFER || table_size == 0) {
-        return {};
-    }
-
-    std::vector<BYTE> buffer(table_size);
-    PMIB_IFTABLE table = reinterpret_cast<PMIB_IFTABLE>(buffer.data());
-    if (GetIfTable(table, &table_size, FALSE) != NO_ERROR) {
+    PMIB_IF_TABLE2 table = nullptr;
+    if (GetIfTable2(&table) != NO_ERROR || table == nullptr) {
         return {};
     }
 
     std::map<std::string, NetworkInterfaceInfo> result;
-    for (DWORD i = 0; i < table->dwNumEntries; ++i) {
-        const MIB_IFROW &row = table->table[i];
-        if (row.dwType == IF_TYPE_SOFTWARE_LOOPBACK) {
+    for (ULONG i = 0; i < table->NumEntries; ++i) {
+        const MIB_IF_ROW2 &row = table->Table[i];
+        if (row.Type == IF_TYPE_SOFTWARE_LOOPBACK) {
             continue;
         }
 
-        // Convert wide interface name to narrow string.
-        std::string name;
-        for (int j = 0; j < MAX_INTERFACE_NAME_LEN && row.wszName[j] != L'\0'; ++j) {
-            name.push_back(static_cast<char>(row.wszName[j]));
-        }
-        if (name.empty()) {
+        char interface_name[IF_MAX_STRING_SIZE + 1]{};
+        if (ConvertInterfaceLuidToNameA(&row.InterfaceLuid, interface_name, sizeof(interface_name)) != NO_ERROR) {
             continue;
         }
 
         NetworkInterfaceInfo info;
-        info.name = name;
-        info.rx_bytes = static_cast<std::int64_t>(row.dwInOctets);
-        info.tx_bytes = static_cast<std::int64_t>(row.dwOutOctets);
-        info.rx_packets = static_cast<std::int64_t>(row.dwInUcastPkts + row.dwInNUcastPkts);
-        info.tx_packets = static_cast<std::int64_t>(row.dwOutUcastPkts + row.dwOutNUcastPkts);
-        info.rx_errors = static_cast<std::int64_t>(row.dwInErrors);
-        info.tx_errors = static_cast<std::int64_t>(row.dwOutErrors);
-        result[name] = info;
+        info.name = interface_name;
+        info.rx_bytes = row.InOctets;
+        info.tx_bytes = row.OutOctets;
+        info.rx_packets = row.InUcastPkts + row.InNUcastPkts;
+        info.tx_packets = row.OutUcastPkts + row.OutNUcastPkts;
+        info.rx_errors = row.InErrors;
+        info.tx_errors = row.OutErrors;
+        result[info.name] = info;
     }
+    FreeMibTable(table);
 
     return result;
 }
