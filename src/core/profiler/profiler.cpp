@@ -613,6 +613,8 @@ std::string Profiler::exportData(const ExportContext &ctx) const
             std::to_string(allocation_sampler_.maximumLifetimeMs());
         meta.extra_platform_metadata["Allocation lifecycle records dropped"] =
             std::to_string(allocation_sampler_.lifecycleDropped());
+        meta.extra_platform_metadata["Allocation lock contention records dropped"] =
+            std::to_string(allocation_sampler_.contentionDropped());
         meta.extra_platform_metadata["Allocation profile sampled bytes"] =
             std::to_string(allocation_sampler_.sampledBytes());
         meta.extra_platform_metadata["Allocation observed request bytes (process-wide)"] =

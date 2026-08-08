@@ -598,6 +598,7 @@ struct AllocationSampler::Impl {
     std::atomic<std::uint64_t> lifetime_ms_total{0};
     std::atomic<std::uint64_t> lifetime_ms_max{0};
     std::atomic<std::uint64_t> lifecycle_dropped{0};
+    std::atomic<std::uint64_t> contention_dropped{0};
     std::atomic<std::uint64_t> retained_age_ms_total{0};
     std::atomic<std::uint64_t> retained_age_ms_max{0};
     SLIST_HEADER free_events{};
@@ -921,7 +922,11 @@ struct AllocationSampler::Impl {
         }
         const std::uint64_t hash = liveIndexHash(pointer);
         const std::size_t shard = liveIndexShard(hash);
-        ::AcquireSRWLockExclusive(&live_index_locks[shard]);
+        if (config.force_live_lock_contention_for_testing || !::TryAcquireSRWLockExclusive(&live_index_locks[shard])) {
+            lifecycle_dropped.fetch_add(1, std::memory_order_relaxed);
+            contention_dropped.fetch_add(1, std::memory_order_relaxed);
+            return nullptr;
+        }
         LiveAllocation *detached = nullptr;
         for (std::size_t offset = 0; offset < kLiveIndexShardCapacity; ++offset) {
             LiveIndexEntry &entry = live_index[liveIndexSlot(hash, shard, offset)];
@@ -1332,7 +1337,10 @@ struct AllocationSampler::Impl {
         bool inserted = false;
         const std::uint64_t hash = liveIndexHash(allocation->pointer);
         const std::size_t shard = liveIndexShard(hash);
-        ::AcquireSRWLockExclusive(&live_index_locks[shard]);
+        if (config.force_live_lock_contention_for_testing || !::TryAcquireSRWLockExclusive(&live_index_locks[shard])) {
+            contention_dropped.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
         std::size_t tombstone = kLiveIndexCapacity;
         for (std::size_t offset = 0; offset < kLiveIndexShardCapacity; ++offset) {
             const std::size_t slot = liveIndexSlot(hash, shard, offset);
@@ -2319,6 +2327,7 @@ struct AllocationSampler::Impl {
         lifetime_ms_total.store(0, std::memory_order_relaxed);
         lifetime_ms_max.store(0, std::memory_order_relaxed);
         lifecycle_dropped.store(0, std::memory_order_relaxed);
+        contention_dropped.store(0, std::memory_order_relaxed);
         retained_age_ms_total.store(0, std::memory_order_relaxed);
         retained_age_ms_max.store(0, std::memory_order_relaxed);
         aggregator_failure.fill('\0');
@@ -2748,6 +2757,7 @@ bool AllocationSampler::dataIncomplete() const
 {
     return impl_->dropped_samples.load(std::memory_order_relaxed) != 0 ||
            impl_->lifecycle_dropped.load(std::memory_order_relaxed) != 0 ||
+           impl_->contention_dropped.load(std::memory_order_relaxed) != 0 ||
            impl_->dropped_tick_events.load(std::memory_order_relaxed) != 0 ||
            impl_->thread_state_drops.load(std::memory_order_relaxed) != 0 || impl_->thread_filter.cacheDrops() != 0 ||
            impl_->profile_nodes_exhausted.load(std::memory_order_relaxed);
@@ -2767,6 +2777,10 @@ std::uint64_t AllocationSampler::maximumLifetimeMs() const
 std::uint64_t AllocationSampler::lifecycleDropped() const
 {
     return impl_->lifecycle_dropped.load(std::memory_order_relaxed);
+}
+std::uint64_t AllocationSampler::contentionDropped() const
+{
+    return impl_->contention_dropped.load(std::memory_order_relaxed);
 }
 
 std::uint64_t AllocationSampler::retainedAverageAgeMs() const

@@ -31,6 +31,7 @@ struct AllocationSamplerConfig {
     bool fail_aggregator_for_testing = false;
     std::uint32_t aggregator_delay_ms_for_testing = 0;
     std::uint32_t thread_state_limit_for_testing = 0;
+    bool force_live_lock_contention_for_testing = false;
 };
 
 enum class AllocationHookStatus {
@@ -130,6 +131,7 @@ public:
     std::uint64_t averageLifetimeMs() const;
     std::uint64_t maximumLifetimeMs() const;
     std::uint64_t lifecycleDropped() const;
+    std::uint64_t contentionDropped() const;
     std::uint64_t retainedAverageAgeMs() const;
     std::uint64_t retainedMaximumAgeMs() const;
     bool running() const;

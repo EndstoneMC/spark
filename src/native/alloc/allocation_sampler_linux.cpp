@@ -378,6 +378,7 @@ struct AllocationSampler::Impl {
     std::atomic<std::uint64_t> lifetime_ms_total{0};
     std::atomic<std::uint64_t> lifetime_ms_max{0};
     std::atomic<std::uint64_t> lifecycle_dropped{0};
+    std::atomic<std::uint64_t> contention_dropped{0};
     std::atomic<std::uint64_t> retained_age_ms_total{0};
     std::atomic<std::uint64_t> retained_age_ms_max{0};
     std::atomic<bool> profile_nodes_exhausted{false};
@@ -601,13 +602,14 @@ struct AllocationSampler::Impl {
         while (previous < lifetime &&
                !lifetime_ms_max.compare_exchange_weak(previous, lifetime, std::memory_order_relaxed)) {
         }
-        if (::pthread_mutex_lock(&live_pool_mutex) == 0) {
+        if (!config.force_live_lock_contention_for_testing && ::pthread_mutex_trylock(&live_pool_mutex) == 0) {
             allocation->next = free_live;
             free_live = allocation;
             ::pthread_mutex_unlock(&live_pool_mutex);
         }
         else {
             lifecycle_dropped.fetch_add(1, std::memory_order_relaxed);
+            contention_dropped.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
@@ -618,8 +620,10 @@ struct AllocationSampler::Impl {
         }
         const std::uint64_t hash = liveIndexHash(pointer);
         const std::size_t shard = liveIndexShard(hash);
-        if (::pthread_rwlock_wrlock(&live_index_locks[shard]) != 0) {
+        if (config.force_live_lock_contention_for_testing ||
+            ::pthread_rwlock_trywrlock(&live_index_locks[shard]) != 0) {
             lifecycle_dropped.fetch_add(1, std::memory_order_relaxed);
+            contention_dropped.fetch_add(1, std::memory_order_relaxed);
             return nullptr;
         }
         LiveAllocation *detached = nullptr;
@@ -809,7 +813,8 @@ struct AllocationSampler::Impl {
 
     LiveAllocation *acquireLiveRecord() noexcept
     {
-        if (::pthread_mutex_lock(&live_pool_mutex) != 0) {
+        if (config.force_live_lock_contention_for_testing || ::pthread_mutex_trylock(&live_pool_mutex) != 0) {
+            contention_dropped.fetch_add(1, std::memory_order_relaxed);
             return nullptr;
         }
         LiveAllocation *record = free_live;
@@ -825,7 +830,9 @@ struct AllocationSampler::Impl {
     {
         const std::uint64_t hash = liveIndexHash(allocation->pointer);
         const std::size_t shard = liveIndexShard(hash);
-        if (::pthread_rwlock_wrlock(&live_index_locks[shard]) != 0) {
+        if (config.force_live_lock_contention_for_testing ||
+            ::pthread_rwlock_trywrlock(&live_index_locks[shard]) != 0) {
+            contention_dropped.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
         LiveAllocation *replaced = nullptr;
@@ -869,8 +876,9 @@ struct AllocationSampler::Impl {
 
     void recycleLiveRecord(LiveAllocation *allocation) noexcept
     {
-        if (::pthread_mutex_lock(&live_pool_mutex) != 0) {
+        if (config.force_live_lock_contention_for_testing || ::pthread_mutex_trylock(&live_pool_mutex) != 0) {
             lifecycle_dropped.fetch_add(1, std::memory_order_relaxed);
+            contention_dropped.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         allocation->next = free_live;
@@ -1388,6 +1396,7 @@ struct AllocationSampler::Impl {
         lifetime_ms_total.store(0, std::memory_order_relaxed);
         lifetime_ms_max.store(0, std::memory_order_relaxed);
         lifecycle_dropped.store(0, std::memory_order_relaxed);
+        contention_dropped.store(0, std::memory_order_relaxed);
         retained_age_ms_total.store(0, std::memory_order_relaxed);
         retained_age_ms_max.store(0, std::memory_order_relaxed);
         aggregator_failure.fill('\0');
@@ -1762,6 +1771,7 @@ bool AllocationSampler::dataIncomplete() const
 {
     return impl_->dropped_samples.load(std::memory_order_relaxed) != 0 ||
            impl_->lifecycle_dropped.load(std::memory_order_relaxed) != 0 ||
+           impl_->contention_dropped.load(std::memory_order_relaxed) != 0 ||
            impl_->dropped_tick_events.load(std::memory_order_relaxed) != 0 ||
            impl_->thread_state_drops.load(std::memory_order_relaxed) != 0 || impl_->thread_filter.cacheDrops() != 0 ||
            impl_->profile_nodes_exhausted.load(std::memory_order_relaxed) || impl_->hooks.failedModuleCount() != 0;
@@ -1778,6 +1788,10 @@ std::uint64_t AllocationSampler::maximumLifetimeMs() const
 std::uint64_t AllocationSampler::lifecycleDropped() const
 {
     return impl_->lifecycle_dropped.load(std::memory_order_relaxed);
+}
+std::uint64_t AllocationSampler::contentionDropped() const
+{
+    return impl_->contention_dropped.load(std::memory_order_relaxed);
 }
 std::uint64_t AllocationSampler::retainedAverageAgeMs() const
 {

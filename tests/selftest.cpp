@@ -2210,6 +2210,58 @@ bool verifyProcessWideAllocationSampling()
     return sampler.shutdown(error);
 }
 
+bool verifyAllocationContentionPolicy()
+{
+    spark::AllocationSamplerConfig config;
+    config.interval_bytes = 1;
+    config.session_seed = spark::currentNativeThreadId();
+    config.force_live_lock_contention_for_testing = true;
+
+    spark::AllocationSampler sampler;
+    std::string error;
+    if (!sampler.start(config, error)) {
+        std::fprintf(stderr, "allocation contention: start failed: %s\n", error.c_str());
+        return false;
+    }
+
+    std::atomic<bool> start{false};
+    std::vector<std::thread> workers;
+    workers.reserve(8);
+    for (int thread = 0; thread < 8; ++thread) {
+        workers.emplace_back([&start, thread]() {
+            while (!start.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            for (int i = 0; i < 1000; ++i) {
+                void *pointer = std::malloc(static_cast<std::size_t>(128 + thread + (i & 63)));
+                if (pointer == nullptr) {
+                    continue;
+                }
+                void *replacement = std::realloc(pointer, static_cast<std::size_t>(256 + (i & 127)));
+                std::free(replacement != nullptr ? replacement : pointer);
+            }
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto &worker : workers) {
+        worker.join();
+    }
+    sampler.onTick(50.0);
+    if (!sampler.stop(error) || sampler.contentionDropped() == 0 || sampler.lifecycleDropped() == 0 ||
+        !sampler.dataIncomplete()) {
+        std::fprintf(stderr,
+                     "allocation contention: bounded drop policy failed "
+                     "(contention=%llu lifecycle=%llu incomplete=%d error=%s)\n",
+                     static_cast<unsigned long long>(sampler.contentionDropped()),
+                     static_cast<unsigned long long>(sampler.lifecycleDropped()), sampler.dataIncomplete(),
+                     error.c_str());
+        return false;
+    }
+
+    config.force_live_lock_contention_for_testing = false;
+    return runAllocationSession(sampler, config, error) && sampler.shutdown(error);
+}
+
 bool verifyAllocationResourcePressure()
 {
     spark::AllocationSamplerConfig config;
@@ -2673,6 +2725,10 @@ int main(int argc, char **argv)
             std::fprintf(stderr, "allocation-only: process-wide test failed\n");
             return 1;
         }
+        if (!verifyAllocationContentionPolicy()) {
+            std::fprintf(stderr, "allocation-only: contention policy test failed\n");
+            return 1;
+        }
         if (!verifyAllocationResourcePressure()) {
             std::fprintf(stderr, "allocation-only: resource pressure test failed\n");
             return 1;
@@ -2722,11 +2778,12 @@ int main(int argc, char **argv)
         !verifyTickFiltering(g_worker_tid.load())
 #if defined(_WIN32)
         || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile() || !verifyAllocationThreadSelection() ||
-        !verifyProcessWideAllocationSampling() || !verifyAllocationResourcePressure()
+        !verifyProcessWideAllocationSampling() || !verifyAllocationContentionPolicy() ||
+        !verifyAllocationResourcePressure()
 #elif defined(__linux__)
         || !verifyLinuxImportHooks() || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile() ||
         !verifyAllocationThreadSelection() || !verifyProcessWideAllocationSampling() ||
-        !verifyAllocationResourcePressure()
+        !verifyAllocationContentionPolicy() || !verifyAllocationResourcePressure()
 #endif
     ) {
         g_run.store(false);
