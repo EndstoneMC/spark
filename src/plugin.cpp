@@ -71,6 +71,7 @@ public:
         app_->statistics().start();
         app_->statistics().recordPlayerCount(
             static_cast<long>(getServer().getOnlinePlayers().size()));
+        app_->enable();
 
         tick_task_ = getServer().getScheduler().runTaskTimer(
             *this, [this]() { onServerTick(); }, 0, 1);
@@ -121,6 +122,7 @@ public:
         if (main_tid_.load() == 0) {
             main_tid_.store(currentThreadId());
         }
+        app_->setMainThreadId(main_tid_.load());
         const double mspt = getServer().getCurrentMillisecondsPerTick();
         app_->onTick(mspt);
     }

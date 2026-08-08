@@ -28,6 +28,10 @@ ProfilerService::ProfilerService(StatisticsService &statistics,
                                  std::filesystem::path profile_storage_dir,
                                  std::string bytebin_url,
                                  std::string viewer_url,
+                                 bool background_enabled,
+                                 int background_interval,
+                                 std::string background_thread_grouper,
+                                 std::string background_thread_dumper,
                                  MainThreadDispatcher &dispatcher,
                                  ProfileMetadataProvider &metadata_provider,
                                  ResultNotifier &notifier)
@@ -38,7 +42,11 @@ ProfilerService::ProfilerService(StatisticsService &statistics,
       notifier_(notifier),
       exporter_(std::move(profile_storage_dir),
                 std::move(bytebin_url),
-                std::move(viewer_url))
+                std::move(viewer_url)),
+      background_enabled_(background_enabled),
+      background_interval_(background_interval),
+      background_thread_grouper_(std::move(background_thread_grouper)),
+      background_thread_dumper_(std::move(background_thread_dumper))
 {
 }
 
@@ -59,8 +67,15 @@ void ProfilerService::shutdown()
 void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
 {
     if (profiler_.running()) {
-        cmdInfo(sender);
-        return;
+        if (session_type_ == SessionType::Background) {
+            sender.sendMessage("Stopping the background profiler before starting... please wait");
+            std::string cancel_error;
+            profiler_.cancel(cancel_error);
+            session_type_ = SessionType::None;
+        } else {
+            cmdInfo(sender);
+            return;
+        }
     }
     if (exporting_.load()) {
         sender.sendMessage("The profiler has stopped; results are still being finalized.");
@@ -182,6 +197,7 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
     }
     start_sender_name_ = sender.getName();
     start_sender_is_player_ = sender.isPlayer();
+    session_type_ = SessionType::Foreground;
 
     if (options.alloc) {
         if (options.alloc_live_only) {
@@ -266,6 +282,9 @@ void ProfilerService::cmdStop(CommandSender &sender, const Arguments &args)
     }
     sender.sendMessage("{}Stopping the profiler and finalizing results, please wait...", kColorGold);
     finishProfiler(sender.getName(), sender.isPlayer(), save, comment);
+    if (background_enabled_) {
+        restart_background_after_export_ = true;
+    }
 }
 
 void ProfilerService::cmdInfo(CommandSender &sender)
@@ -314,6 +333,10 @@ void ProfilerService::cmdInfo(CommandSender &sender)
         sender.sendMessage("{}Profiler is already running!", kColorGold);
     }
     std::int64_t ran = (nowMs() - profiler_.startTimeMs()) / 1000;
+    if (!allocation && session_type_ == SessionType::Background) {
+        sender.sendMessage("It was started automatically when spark enabled and has been "
+                           "running in the background for {}.", spark::formatDuration(ran));
+    }
     if (allocation) {
         if (profiler_.options().alloc_live_only) {
             sender.sendMessage("So far it has profiled for {} ({} tracked sampled allocations still live process-wide, {} estimated).",
@@ -400,6 +423,7 @@ void ProfilerService::cmdCancel(CommandSender &sender)
         sender.sendMessage("{}Unable to cancel the profiler safely: {}", kColorRed, error);
         return;
     }
+    session_type_ = SessionType::None;
     if (failed) {
         sender.sendMessage("{}Failed allocation profile data was discarded: {}", kColorRed,
                            backend_error);
@@ -425,6 +449,9 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
         else {
             notifier_.notify(sender_name, "Profiler stop failed: " + stop_error);
         }
+        // The export thread will not run, so restore the background profiler
+        // here instead of leaving it permanently stopped.
+        background_started_ = false;
         return;
     }
 
@@ -497,10 +524,26 @@ void ProfilerService::announceResult()
     }
 
     exporting_.store(false);
+
+    if (restart_background_after_export_) {
+        restart_background_after_export_ = false;
+        if (!startBackgroundSession()) {
+            // Allow the onTick() retry path to pick the background profiler up
+            // again; startBackgroundSession() only clears the started flag.
+            background_started_ = false;
+        }
+    }
 }
 
 void ProfilerService::onTick(double mspt)
 {
+    if (!background_started_ && background_enabled_ && main_tid_ != 0 &&
+        !profiler_.running() && !exporting_.load()) {
+        if (startBackgroundSession()) {
+            background_started_ = true;
+        }
+    }
+
     if (!profiler_.running()) {
         return;
     }
@@ -512,8 +555,63 @@ void ProfilerService::onTick(double mspt)
     std::int64_t auto_end = profiler_.autoEndTimeMs();
     if (auto_end > 0 && nowMs() >= auto_end) {
         bool save = profiler_.options().save_to_file;
+        const bool was_foreground = (session_type_ == SessionType::Foreground);
         finishProfiler(start_sender_name_, start_sender_is_player_, save, std::string());
+        if (was_foreground && background_enabled_) {
+            restart_background_after_export_ = true;
+        }
     }
+}
+
+void ProfilerService::startBackgroundProfiler()
+{
+    if (!background_enabled_) {
+        return;
+    }
+    if (profiler_.running() || exporting_.load()) {
+        return;
+    }
+    if (startBackgroundSession()) {
+        background_started_ = true;
+    }
+    // If main_tid_ is 0, the background profiler will start on the first tick.
+}
+
+bool ProfilerService::startBackgroundSession()
+{
+    if (!background_enabled_ || profiler_.running() || exporting_.load()) {
+        return false;
+    }
+
+    if (main_tid_ == 0) {
+        return false;
+    }
+
+    spark::ProfilerOptions options;
+    options.is_background = true;
+    options.interval_ms = background_interval_;
+    options.timeout_seconds = -1;
+    options.ignore_sleeping = false;
+
+    if (background_thread_dumper_ == "all") {
+        options.threads = {"*"};
+    }
+
+    if (background_thread_grouper_ == "by-name") {
+        options.thread_grouper = spark::ThreadGrouperMode::ByName;
+    } else if (background_thread_grouper_ == "as-one") {
+        options.thread_grouper = spark::ThreadGrouperMode::AsOne;
+    } else {
+        options.thread_grouper = spark::ThreadGrouperMode::ByPool;
+    }
+
+    std::string error;
+    if (!profiler_.start(options, main_tid_, error)) {
+        return false;
+    }
+
+    session_type_ = SessionType::Background;
+    return true;
 }
 
 }  // namespace spark

@@ -43,6 +43,7 @@ public:
 
     // Lifecycle.
     void shutdown();
+    void enable();
     bool shutdownProfilerBackend(std::string &error) { return profiler_.shutdownBackend(error); }
 
     StatisticsService &statistics() { return statistics_; }

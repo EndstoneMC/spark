@@ -19,6 +19,10 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
       profiler_(statistics_, std::move(bds_executable_sha256),
                 std::move(profile_storage_dir),
                 config_.bytebin_url, config_.viewer_url,
+                config_.background_profiler_enabled,
+                config_.background_profiler_interval,
+                config_.background_profiler_thread_grouper,
+                config_.background_profiler_thread_dumper,
                 dispatcher_, metadata_provider_, notifier_),
       health_(statistics_, metadata_provider_,
               config_.bytebin_url, config_.viewer_url),
@@ -101,6 +105,11 @@ void SparkApplication::onTick(double mspt)
     }
     tick_monitor_.onTick(mspt);
     profiler_.onTick(mspt);
+}
+
+void SparkApplication::enable()
+{
+    profiler_.startBackgroundProfiler();
 }
 
 void SparkApplication::shutdown()

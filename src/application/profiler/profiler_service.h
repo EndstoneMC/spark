@@ -32,6 +32,10 @@ public:
                     std::filesystem::path profile_storage_dir,
                     std::string bytebin_url,
                     std::string viewer_url,
+                    bool background_enabled,
+                    int background_interval,
+                    std::string background_thread_grouper,
+                    std::string background_thread_dumper,
                     MainThreadDispatcher &dispatcher,
                     ProfileMetadataProvider &metadata_provider,
                     ResultNotifier &notifier);
@@ -76,13 +80,20 @@ public:
     bool shutdownBackend(std::string &error) { return profiler_.shutdown(error); }
     bool running() const { return profiler_.running(); }
     bool exporting() const { return exporting_.load(); }
+    bool isBackgroundRunning() const { return session_type_ == SessionType::Background; }
+
+    // Starts the background profiler if configured. Called on enable.
+    void startBackgroundProfiler();
 
 private:
+    enum class SessionType { None, Background, Foreground };
+    bool background_started_ = false;
     void sendAllocationHookCoverage(CommandSender &sender);
     void finishProfiler(const std::string &sender_name, bool sender_is_player,
                         bool save, const std::string &comment);
     void runExport();
     void announceResult();
+    bool startBackgroundSession();
 
     StatisticsService &statistics_;
     std::string bds_executable_sha256_;
@@ -96,6 +107,12 @@ private:
     ProfileExporter exporter_;
 
     std::atomic<bool> exporting_{false};
+    SessionType session_type_ = SessionType::None;
+    bool restart_background_after_export_ = false;
+    bool background_enabled_ = true;
+    int background_interval_ = 10;
+    std::string background_thread_grouper_ = "by-pool";
+    std::string background_thread_dumper_ = "default";
     std::string start_sender_name_ = "CONSOLE";
     bool start_sender_is_player_ = false;
     std::thread export_thread_;

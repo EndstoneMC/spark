@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with configurable `viewerUrl`, `bytebinUrl`, `bytesocksHost`, background
   profiler settings, response broadcast toggle, and trusted viewer key storage.
   Missing or malformed config falls back to safe defaults.
+- Add automatic background profiler that starts on plugin enable and runs
+  indefinitely at a configurable interval (default 10ms). A foreground
+  profiler (`/spark profiler start`) pauses the background session; stopping
+  the foreground profiler via `/spark profiler stop` restarts the background.
+  Timeout and cancel do not restart the background profiler.
 - Add `/spark ping` command with rolling 15-minute player ping RTT statistics
   (min/median/p95/max), `--player <name>` lookup, and profile metadata
   integration via `PlatformStatistics.Ping`.
