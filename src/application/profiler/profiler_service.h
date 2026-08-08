@@ -15,6 +15,7 @@
 #include "application/profiler/profile_exporter.h"
 #include "core/activity/activity_log.h"
 #include "core/command/arguments.h"
+#include "core/config/spark_config.h"
 #include "core/profiler/profiler.h"
 #include "core/stats/network_monitor.h"
 #include "core/stats/statistics_service.h"
@@ -37,6 +38,7 @@ public:
                     int background_interval,
                     std::string background_thread_grouper,
                     std::string background_thread_dumper,
+                    SparkConfig &config,
                     MainThreadDispatcher &dispatcher,
                     ProfileMetadataProvider &metadata_provider,
                     ResultNotifier &notifier);
@@ -51,6 +53,7 @@ public:
     void cmdInfo(CommandSender &sender);
     void cmdCancel(CommandSender &sender);
     void cmdOpen(CommandSender &sender);
+    void cmdTrustViewer(CommandSender &sender, const Arguments &args);
 
     // Called every server tick.
     void onTick(double mspt);
@@ -136,6 +139,7 @@ private:
     std::int64_t last_viewer_upload_ms_ = 0;
     std::string bytebin_url_;
     std::string viewer_url_;
+    SparkConfig &config_;
 };
 
 }  // namespace spark

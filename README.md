@@ -26,6 +26,7 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 | `/spark profiler info`          | Show status of the running profiler.                      |
 | `/spark profiler cancel`        | Stop profiling without generating a profile.              |
 | `/spark profiler viewer`        | Open a live, auto-updating spark viewer for the running profile. |
+| `/spark profiler trust-viewer --id <client id>` | Approve a pending live viewer client. |
 | `/spark tps`                    | Show rolling TPS, MSPT distributions, and CPU usage.      |
 | `/spark ping`                  | Show player ping RTT statistics (min/median/p95/max).    |
 | `/spark health`                 | Add process and host resources to the performance report.  |
@@ -119,6 +120,22 @@ Run `/spark tickmonitor` to establish a 120-tick baseline and report ticks whose
 duration is more than 100% above it. Use `--threshold <percent>` to change the
 relative threshold, or `--threshold-tick <ms>` to use an absolute tick duration.
 Run the command again to disable the monitor.
+
+### Live viewer
+
+`/spark profiler viewer` opens a real-time spark viewer while an execution
+profiler is running. It connects to the spark WebSocket relay, uploads sampler
+data every 10 seconds, and displays the viewer URL in chat. The viewer stays
+live until the profiler is stopped, cancelled, or times out. Allocation profiles
+do not support the live viewer.
+
+When a client connects to the live viewer, the server checks the client's
+public key against the `trustedKeys` list in `config.json`. Trusted clients
+receive immediate access to the live sampler data. Untrusted clients receive an
+UNTRUSTED response and their public key is held pending. Use
+`/spark profiler trust-viewer --id <client id>` to approve a pending client;
+the key is then persisted in `config.json` and the client receives an ACCEPTED
+response with access to the data stream.
 
 ### `/spark profiler start` flags
 

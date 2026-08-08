@@ -23,6 +23,7 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
                 config_.background_profiler_interval,
                 config_.background_profiler_thread_grouper,
                 config_.background_profiler_thread_dumper,
+                config_,
                 dispatcher_, metadata_provider_, notifier_),
       health_(statistics_, metadata_provider_,
               config_.bytebin_url, config_.viewer_url),
@@ -41,7 +42,7 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
 void SparkApplication::registerCommands()
 {
     registry_.registerCommand(
-        "profiler", "start/stop/info/cancel/viewer an execution or allocation profile",
+        "profiler", "start/stop/info/cancel/viewer/trust-viewer an execution or allocation profile",
         [this](CommandSender &sender, const Arguments &args) {
             const std::string &action = args.subCommand();
             if (action == "start") {
@@ -55,6 +56,9 @@ void SparkApplication::registerCommands()
             }
             else if (action == "viewer") {
                 profiler_.cmdOpen(sender);
+            }
+            else if (action == "trust-viewer") {
+                profiler_.cmdTrustViewer(sender, args);
             }
             else {
                 profiler_.cmdInfo(sender);

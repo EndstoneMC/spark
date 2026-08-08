@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relay with RSA2048-signed messages and uploads sampler data every 10 seconds.
   The viewer closes automatically when the profiler stops, is cancelled, or
   times out.
+- Add `/spark profiler trust-viewer --id <client id>` command to approve a
+  pending live viewer client. Untrusted clients receive an UNTRUSTED connect
+  response; trusted clients receive ACCEPTED and gain access to the live
+  sampler data stream. Trusted public keys are persisted in `config.json`.
 
 ### Fixed
 

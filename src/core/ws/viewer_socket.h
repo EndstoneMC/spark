@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -58,6 +59,12 @@ public:
     using IsKeyTrustedCallback = std::function<bool(const std::vector<std::uint8_t> &)>;
     void setIsKeyTrustedCallback(IsKeyTrustedCallback cb) { is_key_trusted_ = std::move(cb); }
 
+    // Get the pending public key for a client, or empty if not found.
+    std::vector<std::uint8_t> pendingKey(const std::string &client_id) const;
+
+    // Re-send a connect response with state=ACCEPTED for a previously-untrusted client.
+    void sendClientTrusted(const std::string &client_id);
+
 private:
     void onMessage(const std::string &data);
 
@@ -72,6 +79,9 @@ private:
     std::string channel_id_;
 
     IsKeyTrustedCallback is_key_trusted_;
+
+    // Pending client keys awaiting trust approval.
+    std::map<std::string, std::vector<std::uint8_t>> pending_keys_;
 
     // Incoming messages are queued for processing on the main thread.
     std::mutex queue_mutex_;

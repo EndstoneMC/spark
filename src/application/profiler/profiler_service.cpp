@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/util/base64.h"
 #include "core/util/format.h"
 #include "core/ws/crypto.h"
 #include "core/stats/system_stats.h"
@@ -35,6 +36,7 @@ ProfilerService::ProfilerService(StatisticsService &statistics,
                                  int background_interval,
                                  std::string background_thread_grouper,
                                  std::string background_thread_dumper,
+                                 SparkConfig &config,
                                  MainThreadDispatcher &dispatcher,
                                  ProfileMetadataProvider &metadata_provider,
                                  ResultNotifier &notifier)
@@ -51,7 +53,8 @@ ProfilerService::ProfilerService(StatisticsService &statistics,
       background_thread_grouper_(std::move(background_thread_grouper)),
       background_thread_dumper_(std::move(background_thread_dumper)),
       bytebin_url_(std::move(bytebin_url)),
-      viewer_url_(std::move(viewer_url))
+      viewer_url_(std::move(viewer_url)),
+      config_(config)
 {
 }
 
@@ -469,6 +472,13 @@ void ProfilerService::cmdOpen(CommandSender &sender)
     config.user_agent = std::string("endstone-spark/") + kVersion;
 
     viewer_socket_ = std::make_unique<ViewerSocket>(std::move(config), std::move(key_pair));
+    viewer_socket_->setIsKeyTrustedCallback([this](const std::vector<std::uint8_t> &key) {
+        std::string b64 = base64Encode(key.data(), key.size());
+        for (const auto &trusted : config_.trusted_keys) {
+            if (trusted == b64) return true;
+        }
+        return false;
+    });
 
     std::string url = viewer_socket_->open(
         [this](const std::string &channel_info_proto) { return uploadSamplerData(channel_info_proto); });
@@ -518,6 +528,38 @@ void ProfilerService::closeViewerSocket()
         viewer_socket_.reset();
     }
     last_viewer_upload_ms_ = 0;
+}
+
+void ProfilerService::cmdTrustViewer(CommandSender &sender, const Arguments &args)
+{
+    auto ids = args.stringFlag("id");
+    if (ids.empty()) {
+        sender.sendMessage("Usage: /spark profiler trust-viewer --id <client id>");
+        sender.sendMessage("Use the client id shown when a viewer connects.");
+        return;
+    }
+    if (!viewer_socket_ || !viewer_socket_->isOpen()) {
+        sender.sendMessage("No live viewer is currently open.");
+        return;
+    }
+    for (const auto &id : ids) {
+        auto key = viewer_socket_->pendingKey(id);
+        if (key.empty()) {
+            sender.sendMessage("No pending client found with id '{}'.", id);
+            continue;
+        }
+        std::string b64 = base64Encode(key.data(), key.size());
+        // Avoid duplicates.
+        if (std::find(config_.trusted_keys.begin(), config_.trusted_keys.end(), b64)
+            != config_.trusted_keys.end()) {
+            sender.sendMessage("Client '{}' is already trusted.", id);
+            continue;
+        }
+        config_.trusted_keys.push_back(b64);
+        config_.save();
+        viewer_socket_->sendClientTrusted(id);
+        sender.sendMessage("Client '{}' is now trusted.", id);
+    }
 }
 
 void ProfilerService::finishProfiler(const std::string &sender_name, bool sender_is_player,

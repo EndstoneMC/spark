@@ -136,6 +136,9 @@ bool ViewerSocket::tick()
                 if (is_key_trusted_ && !packet.public_key.empty()) {
                     trusted = is_key_trusted_(packet.public_key);
                 }
+                if (!packet.public_key.empty()) {
+                    pending_keys_[packet.connect.client_id] = packet.public_key;
+                }
                 int state = trusted ? 0 : 1;  // 0=ACCEPTED, 1=UNTRUSTED
                 ws_->send(encodeServerConnectResponse(
                     packet.connect.client_id, state,
@@ -163,6 +166,27 @@ void ViewerSocket::onMessage(const std::string &data)
 {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     incoming_queue_.push_back(data);
+}
+
+std::vector<std::uint8_t> ViewerSocket::pendingKey(const std::string &client_id) const
+{
+    auto it = pending_keys_.find(client_id);
+    if (it == pending_keys_.end()) {
+        return {};
+    }
+    return it->second;
+}
+
+void ViewerSocket::sendClientTrusted(const std::string &client_id)
+{
+    if (!open_.load() || !ws_ || !ws_->isOpen()) {
+        return;
+    }
+    ws_->send(encodeServerConnectResponse(
+        client_id, 0,  // 0=ACCEPTED
+        10, 10,
+        last_payload_id_,
+        key_pair_.private_key_pkcs8));
 }
 
 }  // namespace spark
