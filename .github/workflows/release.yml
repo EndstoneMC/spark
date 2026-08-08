@@ -161,17 +161,22 @@ jobs:
             git push --atomic origin HEAD:main HEAD:develop "refs/tags/v$VERSION"
           fi
 
-      - name: Create GitHub release
+      - name: Prepare final release notes
         if: env.DRY_RUN != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           if [ -n "$PREVIOUS_TAG" ]; then
             printf '\n\n**Full Changelog**: https://github.com/%s/compare/%s...v%s\n' \
               "${{ github.repository }}" "$PREVIOUS_TAG" "$VERSION" >> /tmp/release_body.md
           fi
-          gh release create "v$VERSION" --title "v$VERSION" --notes-file /tmp/release_body.md
+
+      - name: Upload release notes
+        if: env.DRY_RUN != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: /tmp/release_body.md
+          if-no-files-found: error
 
   windows:
     name: Windows
@@ -179,7 +184,7 @@ jobs:
     needs: release
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout
@@ -215,7 +220,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .conan2
-          key: ${{ runner.os }}-clang20-conan-${{ hashFiles('conanfile.txt', '.conan2/profiles/default') }}
+          key: ${{ runner.os }}-clang20-conan-${{ hashFiles('conanfile.py', '.conan2/profiles/default') }}
 
       - name: Install dependencies
         run: conan install . --build=missing
@@ -226,20 +231,17 @@ jobs:
       - name: Build
         run: cmake --build --preset conan-relwithdebinfo
 
-      - name: Run self-test
-        run: .\build\RelWithDebInfo\spark_selftest.exe --seconds=1
+      - name: Run tests
+        run: ctest --test-dir build/RelWithDebInfo --output-on-failure
 
       - name: Upload release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: pwsh
-        run: |
-          $dll = "build\RelWithDebInfo\endstone_spark.dll"
-          $pdb = "build\RelWithDebInfo\endstone_spark.pdb"
-          if (-not (Test-Path $dll) -or -not (Test-Path $pdb)) {
-            throw "Expected Windows release assets were not produced"
-          }
-          gh release upload "v${{ needs.release.outputs.version }}" $dll $pdb --clobber
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          path: |
+            build/RelWithDebInfo/endstone_spark.dll
+            build/RelWithDebInfo/endstone_spark.pdb
+          if-no-files-found: error
 
   linux:
     name: Linux
@@ -247,7 +249,7 @@ jobs:
     needs: release
     runs-on: ubuntu-22.04
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout
@@ -278,7 +280,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .conan2
-          key: ${{ runner.os }}-clang20-conan-${{ hashFiles('conanfile.txt', '.conan2/profiles/default') }}
+          key: ${{ runner.os }}-clang20-conan-${{ hashFiles('conanfile.py', '.conan2/profiles/default') }}
 
       - name: Install dependencies
         run: conan install . --build=missing
@@ -289,14 +291,56 @@ jobs:
       - name: Build
         run: cmake --build --preset conan-relwithdebinfo
 
-      - name: Run self-test
-        run: ./build/RelWithDebInfo/spark_selftest --seconds=1
+      - name: Run tests
+        run: ctest --test-dir build/RelWithDebInfo --output-on-failure
 
       - name: Upload release asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux
+          path: build/RelWithDebInfo/endstone_spark.so
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    if: needs.release.outputs.dry_run != 'true' && needs.release.outputs.version != ''
+    needs: [release, windows, linux]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: release-notes
+
+      - name: Download Windows assets
+        uses: actions/download-artifact@v8
+        with:
+          name: release-windows
+          path: release-windows
+
+      - name: Download Linux asset
+        uses: actions/download-artifact@v8
+        with:
+          name: release-linux
+          path: release-linux
+
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          asset=build/RelWithDebInfo/endstone_spark.so
-          test -f "$asset"
-          gh release upload "v${{ needs.release.outputs.version }}" "$asset" --clobber
+          test -f release-notes/release_body.md
+          test -f release-windows/endstone_spark.dll
+          test -f release-windows/endstone_spark.pdb
+          test -f release-linux/endstone_spark.so
+          gh release create "v${{ needs.release.outputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --title "v${{ needs.release.outputs.version }}" \
+            --notes-file release-notes/release_body.md \
+            release-windows/endstone_spark.dll \
+            release-windows/endstone_spark.pdb \
+            release-linux/endstone_spark.so
