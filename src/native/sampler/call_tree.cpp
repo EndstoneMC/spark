@@ -49,4 +49,29 @@ std::uint64_t CallTree::sampleCount() const
     return total;
 }
 
+namespace {
+
+void mergeNode(CallTree::Node &dst, const CallTree::Node &src)
+{
+    for (const auto &[window, count] : src.times) {
+        dst.times[window] += count;
+    }
+    for (const auto &[key, child] : src.children) {
+        auto it = dst.children.find(key);
+        if (it == dst.children.end()) {
+            auto inserted = std::make_unique<CallTree::Node>();
+            inserted->key = key;
+            it = dst.children.emplace(key, std::move(inserted)).first;
+        }
+        mergeNode(*it->second, *child);
+    }
+}
+
+}  // namespace
+
+void mergeCallTree(CallTree &dst, const CallTree &src)
+{
+    mergeNode(dst.root(), src.root());
+}
+
 }  // namespace spark

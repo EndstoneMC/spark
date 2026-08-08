@@ -42,6 +42,7 @@ struct ProfileMetadata {
     std::vector<std::string> thread_patterns;
     bool ticked = false;             // --only-ticks-over active
     std::int64_t tick_threshold_ms = 0;
+    ThreadGrouperMode thread_grouper = ThreadGrouperMode::ByPool;
     PlatformStats platform_stats;
     SystemStats system_stats;
     StatisticsSnapshot statistics;

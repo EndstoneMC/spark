@@ -31,6 +31,10 @@ public:
     {
         return root_;
     }
+    Node &root()
+    {
+        return root_;
+    }
 
     bool empty() const
     {
@@ -44,6 +48,9 @@ private:
     static constexpr int kMaxDepth = 300;  // spark.maxStackDepth default
     Node root_;
 };
+
+// Merge `src` into `dst`, summing weights at matching nodes.
+void mergeCallTree(CallTree &dst, const CallTree &src);
 
 }  // namespace spark
 

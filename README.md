@@ -141,6 +141,10 @@ Run the command again to disable the monitor.
 * `--regex` — interpret each `--thread <pattern>` as a case-insensitive full-match
   regular expression; at least one pattern is required. This works for execution
   and allocation profiles.
+* `--not-combined` — export each sampled thread as a separate viewer root instead of
+  grouping threads by pool name.
+* `--combine-all` — merge all sampled threads into a single viewer root instead of
+  grouping by pool name.
 * `--include-sleeping` — execution profiles only. Also sample threads while they are
   idle. Without this flag, Linux task state and Windows per-thread CPU cycle deltas
   avoid capturing threads that did not run.

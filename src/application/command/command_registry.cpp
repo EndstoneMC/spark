@@ -41,6 +41,7 @@ void CommandRegistry::sendHelp(CommandSender &sender) const
     }
     sender.sendMessage(kColorGray + "Modes: --alloc, --alloc-live-only");
     sender.sendMessage(kColorGray + "Thread selection: --thread <name|*>, --regex");
+    sender.sendMessage(kColorGray + "Thread grouping: --not-combined (separate), --combine-all (merge all)");
     sender.sendMessage(kColorGray + "Execution only: --include-sleeping");
     sender.sendMessage(kColorGray + "Flags: --interval <ms|bytes>, --timeout <seconds>, --only-ticks-over <ms>");
     sender.sendMessage(kColorGray + "       --save-to-file (plugins/spark/profiles), --comment <text>");

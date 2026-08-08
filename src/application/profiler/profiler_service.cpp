@@ -148,6 +148,15 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
     }
     options.only_ticks_over_ms = tick_threshold.value_or(-1);
     options.ignore_sleeping = !args.boolFlag("include-sleeping");
+    if (args.boolFlag("combine-all") && args.boolFlag("not-combined")) {
+        sender.sendErrorMessage("--combine-all and --not-combined cannot be used together.");
+        return;
+    }
+    if (args.boolFlag("combine-all")) {
+        options.thread_grouper = spark::ThreadGrouperMode::AsOne;
+    } else if (args.boolFlag("not-combined")) {
+        options.thread_grouper = spark::ThreadGrouperMode::ByName;
+    }
     auto comments = args.stringFlag("comment");
     if (!comments.empty()) {
         options.comment = comments.front();

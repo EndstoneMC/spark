@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `/spark activity` command with persisted activity log (profiler uploads,
   saved profiles, and health report uploads), JSON storage with atomic writes
   and corruption-safe loading, 60-day URL expiry, and `--page` pagination.
+- Add `--not-combined` and `--combine-all` profiler flags to control how sampled
+  threads appear in the viewer: separate roots per thread, a single merged root,
+  or the default pool-based grouping.
 - Preserve exact sampled native PCs and their independently validated function
   roots in forward-compatible profile fields for offline normalization metrics.
 - Resolve Linux vtable labels for shared implementations by parsing Itanium RTTI
@@ -48,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Group sampled threads by pool name by default (matching upstream spark's
+  `BY_POOL` mode) instead of emitting separate per-thread viewer roots.
 - Add deterministic Linux symbol-index timing, memory, range-quality, and batch
   diagnostics to profile metadata, and evaluate `Level::tick()` subtree
   readability separately from whole-process coverage.

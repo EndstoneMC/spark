@@ -2,9 +2,15 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <limits>
+#include <map>
+#include <regex>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 
+#include "core/profiler/thread_grouper.h"
 #include "proto/sampler_data.h"
 #include "spark_constants.h"
 #if defined(_WIN32)
@@ -88,6 +94,44 @@ std::string allocationHookSummary(const std::vector<AllocationHookCapability> &c
         }
     }
     return summary;
+}
+
+// Apply thread grouping and return the merged views plus owned storage for
+// merged trees and label strings (must outlive the views).
+struct GroupedThreads {
+    std::vector<ThreadTreeView> views;
+    std::vector<std::unique_ptr<CallTree>> owned_trees;
+    std::deque<std::string> owned_labels;
+};
+
+GroupedThreads groupThreads(
+    std::vector<std::pair<std::uint64_t, std::pair<std::string, const CallTree *>>> &&input,
+    ThreadGrouperMode mode)
+{
+    ThreadGrouper grouper(mode);
+    // std::map for deterministic group ordering.
+    std::map<std::string, std::vector<const CallTree *>> groups;
+    for (const auto &[tid, p] : input) {
+        std::string g = grouper.group(tid, p.first);
+        groups[g].push_back(p.second);
+    }
+
+    GroupedThreads result;
+    for (const auto &[g, trees] : groups) {
+        if (mode == ThreadGrouperMode::ByName || trees.size() == 1) {
+            result.owned_labels.push_back(grouper.label(g));
+            result.views.push_back({result.owned_labels.back(), trees.front()});
+        } else {
+            auto merged = std::make_unique<CallTree>();
+            for (const CallTree *tree : trees) {
+                mergeCallTree(*merged, *tree);
+            }
+            result.owned_labels.push_back(grouper.label(g));
+            result.views.push_back({result.owned_labels.back(), merged.get()});
+            result.owned_trees.push_back(std::move(merged));
+        }
+    }
+    return result;
 }
 
 void addSymbolGuessMetadata(ProfileMetadata &meta)
@@ -385,6 +429,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.all_threads = (mode_ == ProfileMode::Allocation && options_.threads.empty()) ||
                        (options_.threads.size() == 1 && options_.threads.front() == "*");
     meta.regex_threads = options_.regex;
+    meta.thread_grouper = options_.thread_grouper;
     if (meta.regex_threads) {
         meta.thread_patterns = options_.threads;
     }
@@ -557,32 +602,36 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     }
 
     if (mode_ == ProfileMode::Allocation) {
-        std::vector<ThreadTreeView> threads;
+        std::vector<std::pair<std::uint64_t, std::pair<std::string, const CallTree *>>> input;
         for (const auto &[id, thread] : allocation_sampler_.threadTrees()) {
-            threads.push_back({thread.thread_name, &thread.tree});
+            input.emplace_back(id, std::make_pair(thread.thread_name, &thread.tree));
             if (!meta.all_threads && !meta.regex_threads && id != 0) {
                 meta.thread_ids.push_back(static_cast<std::int64_t>(id));
             }
         }
-        if (threads.empty()) {
-            threads.push_back({meta.thread_name, &allocation_sampler_.tree()});
+        if (input.empty()) {
+            input.emplace_back(0, std::make_pair(meta.thread_name, &allocation_sampler_.tree()));
         }
+        auto [threads, owned_trees, owned_labels] =
+            groupThreads(std::move(input), options_.thread_grouper);
         std::vector<FrameKey> keys = collectFrameKeys(threads);
         auto resolved = resolveFrames(allocation_sampler_.modules(), keys);
         addSymbolGuessMetadata(meta);
         return buildSamplerData(meta, threads, resolved);
     }
 
-    std::vector<ThreadTreeView> threads;
+    std::vector<std::pair<std::uint64_t, std::pair<std::string, const CallTree *>>> input;
     for (const auto &[id, thread] : sampler_.threadTrees()) {
-        threads.push_back({thread.thread_name, &thread.tree});
+        input.emplace_back(id, std::make_pair(thread.thread_name, &thread.tree));
         if (!meta.all_threads && !meta.regex_threads) {
             meta.thread_ids.push_back(static_cast<std::int64_t>(id));
         }
     }
-    if (threads.empty()) {
-        threads.push_back({meta.thread_name, &sampler_.tree()});
+    if (input.empty()) {
+        input.emplace_back(0, std::make_pair(meta.thread_name, &sampler_.tree()));
     }
+    auto [threads, owned_trees, owned_labels] =
+        groupThreads(std::move(input), options_.thread_grouper);
     std::vector<FrameKey> keys = collectFrameKeys(threads);
     auto resolved = resolveFrames(sampler_.modules(), keys);
     addSymbolGuessMetadata(meta);

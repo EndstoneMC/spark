@@ -36,6 +36,12 @@ set_target_properties(spark_activity_log_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_activity_log_test COMMAND spark_activity_log_test)
 
+add_executable(spark_thread_grouper_test core/profiler/thread_grouper_test.cpp)
+target_link_libraries(spark_thread_grouper_test PRIVATE spark_core)
+set_target_properties(spark_thread_grouper_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_thread_grouper_test COMMAND spark_thread_grouper_test)
+
 add_executable(spark_symbol_guess_dwarf_test native/symbol/symbol_guess_dwarf_test.cpp)
 target_link_libraries(spark_symbol_guess_dwarf_test PRIVATE spark_core)
 set_target_properties(spark_symbol_guess_dwarf_test PROPERTIES

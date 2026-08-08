@@ -119,12 +119,12 @@ std::string buildMetadata(const ProfileMetadata &m)
         }
         w.message(4, t);
     }
-    // data_aggregator (5): { type, thread_grouper = BY_NAME, tick_length_threshold }
+    // data_aggregator (5): { type, thread_grouper, tick_length_threshold }
     {
         std::string d;
         ProtoWriter dw(d);
         dw.varint(1, m.ticked ? 1 : 0);
-        dw.varint(2, 0);
+        dw.varint(2, static_cast<std::int32_t>(m.thread_grouper));
         if (m.ticked) {
             dw.int64(3, m.tick_threshold_ms);
         }
