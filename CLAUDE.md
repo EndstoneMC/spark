@@ -81,13 +81,48 @@ Use the corresponding `.exe` paths on Windows. `spark_allocation_benchmark` is a
 
 ### C++
 
-- Use C++20 and follow the style already present in the surrounding file.
-- Types and enum classes use `CamelCase`; functions and methods use `camelCase`; private data members use a trailing underscore.
-- Prefer RAII, explicit ownership, bounded containers, and deterministic output.
-- Keep platform-specific code behind the existing compile-time platform guards.
-- Do not introduce exceptions, locks, heap allocation, logging, symbol lookup, or I/O into signal handlers or allocator-hook paths.
-- Keep comments concise and focused on invariants that are not obvious from the code.
+Endstone uses **clang-format** and **clang-tidy** for code quality enforcement.
 
+**Style Guidelines:**
+
+- Based on Microsoft style with Stroustrup braces
+- Naming conventions:
+    - Classes/Structs/Enums: `CamelCase`
+    - Methods: `camelBack`
+    - Private/protected members: `lower_case_` (trailing underscore)
+    - Local variables/parameters: `lower_case`
+    - Macros: `UPPER_CASE`
+
+### Python
+
+**Configuration:**
+
+- Line length: 120 characters
+
+## Submitting Changes
+
+### Commit Message Guidelines
+
+Follow conventional commits format:
+
+- `feat:` for new features
+- `fix:` for bug fixes
+- `docs:` for documentation changes
+- `style:` for code style changes (formatting, etc.)
+- `refactor:` for code refactoring
+- `test:` for adding or updating tests
+- `chore:` for maintenance tasks
+
+Example:
+
+```
+feat: improve labeling of unresolved BDS frames
+
+Detect function extents in stripped Windows and Linux BDS executables
+Append best-effort RTTI or string-based hints to unresolved frames
+Display guesses alongside the original module-relative address
+Leave successfully symbolicated frames and non-BDS modules untouched
+```
 ### Platform safety
 
 - Sampling must stay off the BDS tick hot path except for the minimum bounded capture operation.
@@ -100,12 +135,11 @@ Use the corresponding `.exe` paths on Windows. `spark_allocation_benchmark` is a
 
 ### Source Structure
 
-- `src/plugin.cpp` - Endstone plugin lifecycle and command registration
-- `src/command/` - profiler command parsing and validation
-- `src/sampler/` - execution sampling, call trees, thread selection, symbolization, and native symbol guessing
-- `src/alloc/` - allocation sampling and platform hook backends
-- `src/stats/` - TPS, MSPT, CPU, process, and host statistics
-- `src/proto/` - minimal spark protobuf serialization
+- `src/plugin.cpp` - Endstone plugin lifecycle and command dispatch (thin bootstrap)
+- `src/core/` - platform-independent services: profiler, stats, command parsing, util
+- `src/native/` - native backend: sampler, symbol guesser, allocation hooks
+- `src/platform/endstone/` - thin Endstone platform adapters
+- `src/proto/` - spark protobuf serialization
 - `src/net/` - gzip compression, bytebin upload, and local profile persistence
 - `proto/` - upstream spark protocol references
 - `tests/` - offline, synthetic, and platform-specific tests
