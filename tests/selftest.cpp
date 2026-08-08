@@ -6,6 +6,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +17,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -32,6 +34,7 @@
 #include <sys/syscall.h>
 #endif
 
+#include "application/health/health_command.h"
 #include "application/platform_capabilities.h"
 #include "application/profiler/profiler_service.h"
 #include "core/command/arguments.h"
@@ -73,11 +76,30 @@ struct ProfilerServiceTestAccess {
 
     static std::string buildLiveSamplerData(ProfilerService &service, std::int64_t now_ms)
     {
-        return service.buildLiveSamplerData({}, now_ms);
+        return service.buildLiveSamplerData(service.captureLiveContext(now_ms));
     }
 
     static void cancel(ProfilerService &service) { service.profiler_.cancel(); }
     static void expire(ProfilerService &service) { ProfilerTestAccess::expire(service.profiler_); }
+    static std::uint64_t sampleCount(const ProfilerService &service) { return service.profiler_.sampleCount(); }
+    static void setViewerOpenFunction(
+        ProfilerService &service,
+        std::function<std::string(ViewerSocket &, const ViewerSocket::UploadCallback &)> open_function)
+    {
+        service.viewer_open_fn_ = std::move(open_function);
+    }
+};
+
+struct HealthCommandTestAccess {
+    static void setUploadFunction(
+        HealthCommand &health,
+        std::function<UploadResult(const std::string &, const std::string &, const std::string &, const std::string &)>
+            upload_function)
+    {
+        health.upload_fn_ = std::move(upload_function);
+    }
+
+    static bool uploading(const HealthCommand &health) { return health.uploading_.load(); }
 };
 
 }  // namespace spark
@@ -206,11 +228,24 @@ public:
 
 class TestMetadataProvider : public spark::ProfileMetadataProvider {
 public:
-    void gatherServerMetadata(spark::ExportContext &, std::int64_t) override {}
-    void gatherWorldMetadata(spark::ExportContext &) override {}
+    void gatherServerMetadata(spark::ExportContext &, std::int64_t) override { checkThread(); }
+    void gatherWorldMetadata(spark::ExportContext &) override { checkThread(); }
     std::int64_t serverUptimeSeconds() override { return 0; }
     long playerCount() override { return 0; }
     spark::PlayerPingProvider *playerPingProvider() override { return nullptr; }
+
+    bool usedOffThread() const { return used_off_thread_.load(); }
+
+private:
+    void checkThread()
+    {
+        if (std::this_thread::get_id() != owner_thread_) {
+            used_off_thread_.store(true);
+        }
+    }
+
+    std::thread::id owner_thread_ = std::this_thread::get_id();
+    std::atomic<bool> used_off_thread_{false};
 };
 
 class TestNotifier : public spark::ResultNotifier {
@@ -1059,8 +1094,25 @@ bool verifyLiveProfilerWindowStatistics(std::uint64_t worker_tid)
     cpu.wall_ms = 2'000;
     statistics.recordCpuSnapshot(cpu);
 
-    const std::string live_data =
-        spark::ProfilerServiceTestAccess::buildLiveSamplerData(service, profile_start + 2'000);
+    std::string live_data;
+    for (int update = 0; update < 3; ++update) {
+        live_data = spark::ProfilerServiceTestAccess::buildLiveSamplerData(service, profile_start + 2'000 + update);
+        if (live_data.empty()) {
+            std::fprintf(stderr, "live profiler windows: repeated live export failed\n");
+            spark::ProfilerServiceTestAccess::cancel(service);
+            return false;
+        }
+    }
+    const std::uint64_t samples_after_exports = spark::ProfilerServiceTestAccess::sampleCount(service);
+    if (!waitForCondition(
+            [&service, samples_after_exports]() {
+                return spark::ProfilerServiceTestAccess::sampleCount(service) > samples_after_exports;
+            },
+            std::chrono::seconds(2))) {
+        std::fprintf(stderr, "live profiler windows: sampler did not resume after repeated exports\n");
+        spark::ProfilerServiceTestAccess::cancel(service);
+        return false;
+    }
     spark::ProfilerServiceTestAccess::cancel(service);
 
     ProtoField time_windows;
@@ -1106,6 +1158,95 @@ bool verifyLiveProfilerWindowStatistics(std::uint64_t worker_tid)
                      windows.size(), statistic_windows.size(), has_graph_fields);
         return false;
     }
+    return true;
+}
+
+bool verifyAsyncNetworkCommands(std::uint64_t worker_tid)
+{
+    spark::StatisticsService statistics;
+    spark::TrustedViewersState trusted_viewers(std::filesystem::temp_directory_path() / "spark-selftest-viewers.json");
+    TestDispatcher dispatcher;
+    TestMetadataProvider metadata_provider;
+    TestNotifier notifier;
+    TestCommandSender sender;
+
+    spark::ProfilerService service(statistics, {}, std::filesystem::temp_directory_path(), {}, {}, {}, false, 10,
+                                   "by-pool", "default", trusted_viewers, dispatcher, metadata_provider, notifier);
+    spark::ProfilerOptions options;
+    options.interval_ms = 1;
+    std::string error;
+    if (!spark::ProfilerServiceTestAccess::start(service, options, worker_tid, error)) {
+        std::fprintf(stderr, "async viewer: profiler start failed: %s\n", error.c_str());
+        return false;
+    }
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered = false;
+    bool release = false;
+    spark::ProfilerServiceTestAccess::setViewerOpenFunction(
+        service, [&mutex, &cv, &entered, &release](spark::ViewerSocket &, const spark::ViewerSocket::UploadCallback &) {
+            std::unique_lock<std::mutex> lock(mutex);
+            entered = true;
+            cv.notify_one();
+            cv.wait(lock, [&release]() { return release; });
+            return std::string();
+        });
+    service.cmdOpen(sender);
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (!cv.wait_for(lock, std::chrono::seconds(2), [&entered]() { return entered; })) {
+            std::fprintf(stderr, "async viewer: open worker did not start\n");
+            return false;
+        }
+    }
+    const bool viewer_metadata_off_thread = metadata_provider.usedOffThread();
+    service.cmdCancel(sender);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        release = true;
+    }
+    cv.notify_one();
+    service.shutdown();
+    if (viewer_metadata_off_thread) {
+        std::fprintf(stderr, "async viewer: platform metadata was captured off the owner thread\n");
+        return false;
+    }
+
+    spark::HealthCommand health(statistics, metadata_provider, {}, {}, dispatcher, notifier);
+    entered = false;
+    release = false;
+    spark::HealthCommandTestAccess::setUploadFunction(
+        health, [&mutex, &cv, &entered, &release](const std::string &, const std::string &, const std::string &,
+                                                  const std::string &) {
+            std::unique_lock<std::mutex> lock(mutex);
+            entered = true;
+            cv.notify_one();
+            cv.wait(lock, [&release]() { return release; });
+            spark::UploadResult result;
+            result.error = "controlled failure";
+            return result;
+        });
+    health.cmdHealth(sender, spark::Arguments({"health", "--upload"}));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (!cv.wait_for(lock, std::chrono::seconds(2), [&entered]() { return entered; })) {
+            std::fprintf(stderr, "async health: upload worker did not start\n");
+            return false;
+        }
+        release = true;
+    }
+    cv.notify_one();
+    if (!waitForCondition([&health]() { return !spark::HealthCommandTestAccess::uploading(health); },
+                          std::chrono::seconds(2))) {
+        std::fprintf(stderr, "async health: controlled upload did not finish\n");
+        return false;
+    }
+    if (metadata_provider.usedOffThread()) {
+        std::fprintf(stderr, "async health: platform metadata was captured off the owner thread\n");
+        return false;
+    }
+    health.shutdown();
     return true;
 }
 
@@ -2532,8 +2673,8 @@ int main(int argc, char **argv)
         !verifyStatisticsService() || !verifySystemResourceStats() || !verifyWorldGaugeStatistics() ||
         !verifyWorldGaugeAbsentWhenNotRecorded() || !verifyThreadDiscovery() || !verifyMultiThreadSerialization() ||
         !verifyStatisticsSerialization() || !verifyLiveProfilerWindowStatistics(g_worker_tid.load()) ||
-        !verifyBackgroundCommandValidation(g_worker_tid.load()) || !verifyRecoveryWriterLifetime(g_worker_tid.load()) ||
-        !verifyUploadFailure() || !verifyCaptureLifecycle() ||
+        !verifyAsyncNetworkCommands(g_worker_tid.load()) || !verifyBackgroundCommandValidation(g_worker_tid.load()) ||
+        !verifyRecoveryWriterLifetime(g_worker_tid.load()) || !verifyUploadFailure() || !verifyCaptureLifecycle() ||
 #if defined(_WIN32)
         !verifyWindowsThreadActivityDetection() ||
 #endif

@@ -21,7 +21,7 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256, std::files
                 config_.background_profiler_interval, config_.background_profiler_thread_grouper,
                 config_.background_profiler_thread_dumper, trusted_viewers_, dispatcher_, metadata_provider_,
                 notifier_),
-      health_(statistics_, metadata_provider_, config_.bytebin_url, config_.viewer_url),
+      health_(statistics_, metadata_provider_, config_.bytebin_url, config_.viewer_url, dispatcher_, notifier_),
       activity_log_(std::move(activity_log_file)), activity_command_(activity_log_), tick_monitor_(notifier_),
       watchdog_(server_heartbeat_)
 {
@@ -122,6 +122,7 @@ void SparkApplication::enable()
 void SparkApplication::shutdown()
 {
     profiler_.shutdown();
+    health_.shutdown();
     watchdog_.stop();
 }
 

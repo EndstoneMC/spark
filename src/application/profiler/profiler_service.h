@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -118,8 +119,11 @@ private:
     void startViewerWorker();
     void stopViewerWorker();
     void viewerUpdateLoop();
-    std::string buildLiveSamplerData(const std::string &channel_info_proto, std::int64_t now_ms);
-    std::string uploadSamplerData(const std::string &channel_info_proto);
+    void completeViewerOpen(std::uint64_t generation);
+    ExportContext captureLiveContext(std::int64_t now_ms);
+    std::string buildLiveSamplerData(ExportContext context);
+    std::string uploadSamplerData(ExportContext context);
+    bool viewerGenerationCurrent(std::uint64_t generation) const;
 
     StatisticsService &statistics_;
     std::string bds_executable_sha256_;
@@ -154,16 +158,34 @@ private:
     std::function<std::map<std::string, NetworkInterfaceSnapshot>()> network_snapshot_provider_;
     std::function<ActivityLog *()> activity_log_provider_;
 
-    std::unique_ptr<ViewerSocket> viewer_socket_;
+    std::shared_ptr<ViewerSocket> viewer_socket_;
     std::int64_t last_viewer_upload_ms_ = 0;
 
-    // Viewer update worker: moves live-export + gzip + HTTP upload off the
-    // main thread so 10-second viewer rotations don't stall server ticks.
+    struct ViewerWorkItem {
+        enum class Type {
+            Open,
+            Update
+        };
+        Type type = Type::Update;
+        ExportContext context;
+        std::shared_ptr<ViewerSocket> socket;
+        std::uint64_t generation = 0;
+        std::string sender_name;
+    };
+
     std::thread viewer_update_thread_;
-    std::mutex viewer_update_mutex_;
+    mutable std::mutex viewer_update_mutex_;
     std::condition_variable viewer_update_cv_;
     std::atomic<bool> viewer_worker_running_{false};
-    std::atomic<bool> viewer_update_requested_{false};
+    std::optional<ViewerWorkItem> viewer_work_;
+    bool viewer_work_active_ = false;
+    bool viewer_open_pending_ = false;
+    std::uint64_t viewer_generation_ = 0;
+    std::string pending_viewer_url_;
+    std::string pending_viewer_sender_;
+    std::shared_ptr<ViewerSocket> completed_viewer_socket_;
+    std::function<std::string(ViewerSocket &, const ViewerSocket::UploadCallback &)> viewer_open_fn_;
+    std::shared_ptr<int> lifetime_ = std::make_shared<int>(0);
 
     // Background profiler retry backoff.
     std::int64_t next_background_retry_ms_ = 0;

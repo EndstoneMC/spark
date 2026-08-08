@@ -40,10 +40,15 @@ ProfilerService::ProfilerService(StatisticsService &statistics, std::string bds_
       background_thread_dumper_(std::move(background_thread_dumper)), bytebin_url_(std::move(bytebin_url)),
       viewer_url_(std::move(viewer_url)), bytesocks_host_(std::move(bytesocks_host)), trusted_viewers_(trusted_viewers)
 {
+    viewer_open_fn_ = [](ViewerSocket &socket, const ViewerSocket::UploadCallback &upload) {
+        return socket.open(upload);
+    };
 }
 
 ProfilerService::~ProfilerService()
 {
+    lifetime_.reset();
+    closeViewerSocket();
     stopViewerWorker();
     if (export_thread_.joinable()) {
         export_thread_.join();
@@ -52,6 +57,8 @@ ProfilerService::~ProfilerService()
 
 void ProfilerService::shutdown()
 {
+    lifetime_.reset();
+    closeViewerSocket();
     stopViewerWorker();
     if (export_thread_.joinable()) {
         export_thread_.join();
@@ -425,9 +432,16 @@ void ProfilerService::cmdCancel(CommandSender &sender)
 
 void ProfilerService::cmdOpen(CommandSender &sender)
 {
-    if (viewer_socket_ && viewer_socket_->isOpen()) {
-        sender.sendMessage("A live viewer is already open.");
-        return;
+    {
+        std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+        if (viewer_open_pending_) {
+            sender.sendMessage("A live viewer is already being opened.");
+            return;
+        }
+        if (viewer_socket_ && viewer_socket_->isOpen()) {
+            sender.sendMessage("A live viewer is already open.");
+            return;
+        }
     }
     if (!profiler_.running()) {
         sender.sendMessage("The profiler isn't running! Start it first with: {}/spark profiler start", kColorGray);
@@ -450,26 +464,28 @@ void ProfilerService::cmdOpen(CommandSender &sender)
     config.viewer_url = viewer_url_;
     config.user_agent = std::string("endstone-spark/") + kVersion;
 
-    viewer_socket_ = std::make_unique<ViewerSocket>(std::move(config), std::move(key_pair));
-    viewer_socket_->setIsKeyTrustedCallback([this](const std::vector<std::uint8_t> &key) {
+    auto socket = std::make_shared<ViewerSocket>(std::move(config), std::move(key_pair));
+    socket->setIsKeyTrustedCallback([this](const std::vector<std::uint8_t> &key) {
         std::string b64 = base64Encode(key.data(), key.size());
         return trusted_viewers_.contains(b64);
     });
 
-    std::string url = viewer_socket_->open(
-        [this](const std::string &channel_info_proto) { return uploadSamplerData(channel_info_proto); });
-
-    if (url.empty()) {
-        sender.sendErrorMessage("Failed to open the live viewer. Check your network connection.");
-        viewer_socket_.reset();
-        return;
-    }
-
-    last_viewer_upload_ms_ = nowMs();
+    ExportContext context = captureLiveContext(nowMs());
     startViewerWorker();
-    sender.sendMessage("{}Live viewer opened!{}", kColorGold, kColorGray);
-    sender.sendMessage("Open it at: {}", url);
-    sender.sendMessage("The viewer updates every 10 seconds while the profiler is running.");
+    {
+        std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+        ++viewer_generation_;
+        viewer_open_pending_ = true;
+        ViewerWorkItem work;
+        work.type = ViewerWorkItem::Type::Open;
+        work.context = std::move(context);
+        work.socket = std::move(socket);
+        work.generation = viewer_generation_;
+        work.sender_name = sender.getName();
+        viewer_work_ = std::move(work);
+    }
+    viewer_update_cv_.notify_one();
+    sender.sendMessage("{}Opening the live viewer...{}", kColorGold, kColorGray);
 }
 
 void ProfilerService::startViewerWorker()
@@ -477,18 +493,18 @@ void ProfilerService::startViewerWorker()
     if (viewer_worker_running_.load()) {
         return;
     }
+    if (viewer_update_thread_.joinable()) {
+        viewer_update_thread_.join();
+    }
     viewer_worker_running_.store(true);
-    viewer_update_requested_.store(false);
     viewer_update_thread_ = std::thread([this]() { viewerUpdateLoop(); });
 }
 
 void ProfilerService::stopViewerWorker()
 {
-    if (!viewer_worker_running_.exchange(false)) {
-        return;
-    }
+    viewer_worker_running_.store(false);
     viewer_update_cv_.notify_all();
-    if (viewer_update_thread_.joinable()) {
+    if (viewer_update_thread_.joinable() && viewer_update_thread_.get_id() != std::this_thread::get_id()) {
         viewer_update_thread_.join();
     }
 }
@@ -496,36 +512,113 @@ void ProfilerService::stopViewerWorker()
 void ProfilerService::viewerUpdateLoop()
 {
     while (viewer_worker_running_.load()) {
+        ViewerWorkItem work;
         {
             std::unique_lock<std::mutex> lock(viewer_update_mutex_);
-            viewer_update_cv_.wait_for(lock, std::chrono::seconds(1), [this] {
-                return !viewer_worker_running_.load() || viewer_update_requested_.load();
-            });
-        }
-        if (!viewer_worker_running_.load()) {
-            break;
-        }
-        if (!viewer_update_requested_.exchange(false)) {
-            continue;
+            viewer_update_cv_.wait(lock, [this] { return !viewer_worker_running_.load() || viewer_work_.has_value(); });
+            if (!viewer_worker_running_.load()) {
+                break;
+            }
+            work = std::move(*viewer_work_);
+            viewer_work_.reset();
+            viewer_work_active_ = true;
         }
 
-        // Snapshot the raw pointer; stopViewerWorker() guarantees the worker
-        // is joined before viewer_socket_ is reset, so this is safe.
-        ViewerSocket *vs = viewer_socket_.get();
-        if (!vs || !vs->isOpen()) {
-            continue;
+        if (work.type == ViewerWorkItem::Type::Open) {
+            std::string url;
+            if (viewerGenerationCurrent(work.generation) && profiler_.running()) {
+                url = viewer_open_fn_(*work.socket, [this, &work](const std::string &channel_info_proto) {
+                    if (!viewerGenerationCurrent(work.generation) || !profiler_.running()) {
+                        return std::string();
+                    }
+                    work.context.socket_channel_info_proto = channel_info_proto;
+                    return uploadSamplerData(std::move(work.context));
+                });
+            }
+            {
+                std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+                viewer_work_active_ = false;
+                if (work.generation == viewer_generation_) {
+                    pending_viewer_url_ = std::move(url);
+                    pending_viewer_sender_ = std::move(work.sender_name);
+                    completed_viewer_socket_ = std::move(work.socket);
+                }
+            }
+            const std::weak_ptr<int> lifetime = lifetime_;
+            try {
+                dispatcher_.runOnMainThread([this, lifetime, generation = work.generation]() {
+                    if (lifetime.expired()) {
+                        return;
+                    }
+                    completeViewerOpen(generation);
+                });
+            }
+            catch (...) {
+                viewer_worker_running_.store(false);
+            }
         }
-
-        std::string bytebin_key = uploadSamplerData(std::string());
-        if (!bytebin_key.empty() && viewer_worker_running_.load()) {
-            vs->sendUpdate(bytebin_key);
+        else {
+            if (viewerGenerationCurrent(work.generation) && profiler_.running()) {
+                std::string bytebin_key = uploadSamplerData(std::move(work.context));
+                if (!bytebin_key.empty() && viewerGenerationCurrent(work.generation)) {
+                    work.socket->sendUpdate(bytebin_key);
+                }
+            }
+            std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+            viewer_work_active_ = false;
         }
     }
 }
 
-std::string ProfilerService::uploadSamplerData(const std::string &channel_info_proto)
+void ProfilerService::completeViewerOpen(std::uint64_t generation)
 {
-    std::string body = buildLiveSamplerData(channel_info_proto, nowMs());
+    std::shared_ptr<ViewerSocket> socket;
+    std::string url;
+    std::string sender_name;
+    {
+        std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+        if (generation != viewer_generation_) {
+            return;
+        }
+        viewer_open_pending_ = false;
+        socket = std::move(completed_viewer_socket_);
+        url = std::move(pending_viewer_url_);
+        sender_name = std::move(pending_viewer_sender_);
+    }
+    if (url.empty() || !socket || !socket->isOpen() || !profiler_.running()) {
+        if (socket) {
+            socket->close();
+        }
+        notifier_.notify(sender_name, "Failed to open the live viewer. Check your network connection.");
+        return;
+    }
+    viewer_socket_ = std::move(socket);
+    last_viewer_upload_ms_ = nowMs();
+    notifier_.notify(sender_name, "Live viewer opened! Open it at: " + url);
+    notifier_.notify(sender_name, "The viewer updates every 10 seconds while the profiler is running.");
+}
+
+ExportContext ProfilerService::captureLiveContext(std::int64_t now_ms)
+{
+    ExportContext context;
+    context.bds_executable_sha256 = bds_executable_sha256_;
+    metadata_provider_.gatherServerMetadata(context, now_ms);
+    context.statistics = statistics_.snapshot();
+    context.window_stats = statistics_.profileWindows(profiler_.startTimeMs(), now_ms);
+    context.system_stats = spark::gatherSystemStats(".");
+    metadata_provider_.gatherWorldMetadata(context);
+    if (ping_samples_provider_) {
+        context.ping_samples = ping_samples_provider_();
+    }
+    if (network_snapshot_provider_) {
+        context.net_snapshots = network_snapshot_provider_();
+    }
+    return context;
+}
+
+std::string ProfilerService::uploadSamplerData(ExportContext context)
+{
+    std::string body = buildLiveSamplerData(std::move(context));
     if (body.empty()) {
         return {};
     }
@@ -535,31 +628,31 @@ std::string ProfilerService::uploadSamplerData(const std::string &channel_info_p
     return result.ok ? result.key : std::string();
 }
 
-std::string ProfilerService::buildLiveSamplerData(const std::string &channel_info_proto, std::int64_t now_ms)
+std::string ProfilerService::buildLiveSamplerData(ExportContext context)
 {
-    ExportContext ctx;
-    ctx.bds_executable_sha256 = bds_executable_sha256_;
-    metadata_provider_.gatherServerMetadata(ctx, now_ms);
-    ctx.statistics = statistics_.snapshot();
-    ctx.window_stats = statistics_.profileWindows(profiler_.startTimeMs(), now_ms);
-    ctx.system_stats = spark::gatherSystemStats(".");
-    metadata_provider_.gatherWorldMetadata(ctx);
-    if (ping_samples_provider_) {
-        ctx.ping_samples = ping_samples_provider_();
-    }
-    if (network_snapshot_provider_) {
-        ctx.net_snapshots = network_snapshot_provider_();
-    }
-    ctx.socket_channel_info_proto = channel_info_proto;
-    return profiler_.liveExport(ctx);
+    return profiler_.liveExport(context);
+}
+
+bool ProfilerService::viewerGenerationCurrent(std::uint64_t generation) const
+{
+    std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+    return viewer_worker_running_.load() && generation == viewer_generation_;
 }
 
 void ProfilerService::closeViewerSocket()
 {
-    stopViewerWorker();
-    if (viewer_socket_) {
-        viewer_socket_->close();
-        viewer_socket_.reset();
+    std::shared_ptr<ViewerSocket> socket;
+    {
+        std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+        ++viewer_generation_;
+        viewer_open_pending_ = false;
+        viewer_work_.reset();
+        completed_viewer_socket_.reset();
+        pending_viewer_sender_.clear();
+        socket = std::move(viewer_socket_);
+    }
+    if (socket) {
+        socket->close();
     }
     last_viewer_upload_ms_ = 0;
 }
@@ -653,8 +746,14 @@ void ProfilerService::runExport()
     ProfileExporter::Result result = exporter_.exportProfile(profiler_, pending_ctx_, pending_save_);
     pending_outcome_ = result.outcome;
     pending_result_ = std::move(result.message);
+    const std::weak_ptr<int> lifetime = lifetime_;
     try {
-        dispatcher_.runOnMainThread([this]() { announceResult(); });
+        dispatcher_.runOnMainThread([this, lifetime]() {
+            if (lifetime.expired()) {
+                return;
+            }
+            announceResult();
+        });
     }
     catch (...) {
         exporting_.store(false);
@@ -731,15 +830,32 @@ void ProfilerService::onTick(double mspt)
     // Live viewer socket lifecycle.
     if (viewer_socket_) {
         if (!viewer_socket_->tick()) {
-            stopViewerWorker();
-            viewer_socket_.reset();
+            closeViewerSocket();
         }
         else if (viewer_socket_->isOpen()) {
             auto now = nowMs();
             if (now - last_viewer_upload_ms_ >= 10000) {
-                viewer_update_requested_.store(true);
-                viewer_update_cv_.notify_one();
-                last_viewer_upload_ms_ = now;
+                bool available = false;
+                std::uint64_t generation = 0;
+                {
+                    std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+                    available = !viewer_work_ && !viewer_work_active_;
+                    generation = viewer_generation_;
+                }
+                if (available) {
+                    ExportContext context = captureLiveContext(now);
+                    std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+                    if (!viewer_work_ && !viewer_work_active_ && generation == viewer_generation_ && viewer_socket_) {
+                        ViewerWorkItem work;
+                        work.type = ViewerWorkItem::Type::Update;
+                        work.context = std::move(context);
+                        work.socket = viewer_socket_;
+                        work.generation = generation;
+                        viewer_work_ = std::move(work);
+                        last_viewer_upload_ms_ = now;
+                        viewer_update_cv_.notify_one();
+                    }
+                }
             }
         }
     }

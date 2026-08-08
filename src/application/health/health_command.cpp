@@ -18,13 +18,28 @@
 namespace spark {
 
 HealthCommand::HealthCommand(StatisticsService &statistics, ProfileMetadataProvider &metadata_provider,
-                             std::string bytebin_url, std::string viewer_url)
-    : statistics_(statistics), metadata_provider_(metadata_provider), bytebin_url_(std::move(bytebin_url)),
-      viewer_url_(std::move(viewer_url))
+                             std::string bytebin_url, std::string viewer_url, MainThreadDispatcher &dispatcher,
+                             ResultNotifier &notifier)
+    : statistics_(statistics), metadata_provider_(metadata_provider), dispatcher_(dispatcher), notifier_(notifier),
+      bytebin_url_(std::move(bytebin_url)), viewer_url_(std::move(viewer_url))
 {
+    upload_fn_ = uploadToBytebin;
     // Lazily create PingStatistics if the platform provides a PlayerPingProvider.
     if (auto *ping_provider = metadata_provider_.playerPingProvider()) {
         ping_statistics_ = std::make_unique<PingStatistics>(*ping_provider);
+    }
+}
+
+HealthCommand::~HealthCommand()
+{
+    shutdown();
+}
+
+void HealthCommand::shutdown()
+{
+    lifetime_.reset();
+    if (upload_thread_.joinable() && upload_thread_.get_id() != std::this_thread::get_id()) {
+        upload_thread_.join();
     }
 }
 
@@ -197,10 +212,35 @@ void HealthCommand::cmdHealth(CommandSender &sender, const Arguments &args)
 
 void HealthCommand::uploadHealthReport(CommandSender &sender)
 {
+    if (uploading_.exchange(true)) {
+        sender.sendMessage("A health report upload is already in progress.");
+        return;
+    }
+    if (upload_thread_.joinable()) {
+        upload_thread_.join();
+    }
+
     const std::int64_t now_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
             .count();
+    try {
+        HealthData data = captureHealthData(sender, now_ms);
+        const std::string sender_name = sender.getName();
+        const bool sender_is_player = sender.isPlayer();
+        upload_thread_ = std::thread([this, data = std::move(data), sender_name, sender_is_player, now_ms]() mutable {
+            runHealthUpload(std::move(data), sender_name, sender_is_player, now_ms);
+        });
+    }
+    catch (const std::exception &error) {
+        uploading_.store(false);
+        sender.sendErrorMessage("Health report generation failed: {}", error.what());
+        return;
+    }
+    sender.sendMessage("{}Health report upload started.{}", kColorGold, kColorGray);
+}
 
+HealthData HealthCommand::captureHealthData(const CommandSender &sender, std::int64_t now_ms)
+{
     ExportContext ctx;
     metadata_provider_.gatherServerMetadata(ctx, now_ms);
     ctx.statistics = statistics_.snapshot();
@@ -256,28 +296,69 @@ void HealthCommand::uploadHealthReport(CommandSender &sender)
     }
     data.extra_platform_metadata["Statistics history available ms"] = std::to_string(ctx.statistics.history_span_ms);
 
+    return data;
+}
+
+void HealthCommand::runHealthUpload(HealthData data, std::string sender_name, bool sender_is_player,
+                                    std::int64_t now_ms)
+{
+    UploadResult result;
     try {
         std::string body = buildHealthData(data);
         std::string compressed = gzipCompress(body);
-        UploadResult result =
-            uploadToBytebin(compressed, bytebin_url_, kHealthContentType, std::string("endstone-spark/") + kVersion);
-        if (result.ok) {
-            std::string url = viewer_url_ + result.key;
-            sender.sendMessage("{}Health report uploaded!{} {}", kColorGold, kColorGray, url);
-            if (activity_log_provider_) {
-                ActivityLog *log = activity_log_provider_();
-                if (log) {
-                    log->add(Activity::url(sender.getName(), sender.isPlayer(), now_ms, "Health report", url));
-                }
-            }
-        }
-        else {
-            sender.sendErrorMessage("Health report upload failed: {}", result.error);
-        }
+        result = upload_fn_(compressed, bytebin_url_, kHealthContentType, std::string("endstone-spark/") + kVersion);
     }
     catch (const std::exception &e) {
-        sender.sendErrorMessage("Health report generation failed: {}", e.what());
+        result.error = std::string("health report generation failed: ") + e.what();
     }
+    {
+        std::lock_guard<std::mutex> lock(upload_mutex_);
+        upload_result_ = std::move(result);
+        upload_sender_ = std::move(sender_name);
+        upload_sender_is_player_ = sender_is_player;
+        upload_time_ms_ = now_ms;
+    }
+    const std::weak_ptr<int> lifetime = lifetime_;
+    try {
+        dispatcher_.runOnMainThread([this, lifetime]() {
+            if (lifetime.expired()) {
+                return;
+            }
+            announceHealthUpload();
+        });
+    }
+    catch (...) {
+        uploading_.store(false);
+    }
+}
+
+void HealthCommand::announceHealthUpload()
+{
+    UploadResult result;
+    std::string sender_name;
+    bool sender_is_player = false;
+    std::int64_t now_ms = 0;
+    {
+        std::lock_guard<std::mutex> lock(upload_mutex_);
+        result = std::move(upload_result_);
+        sender_name = std::move(upload_sender_);
+        sender_is_player = upload_sender_is_player_;
+        now_ms = upload_time_ms_;
+    }
+    if (result.ok) {
+        const std::string url = viewer_url_ + result.key;
+        notifier_.notify(sender_name, "Health report uploaded! " + url);
+        if (activity_log_provider_) {
+            ActivityLog *log = activity_log_provider_();
+            if (log) {
+                log->add(Activity::url(sender_name, sender_is_player, now_ms, "Health report", url));
+            }
+        }
+    }
+    else {
+        notifier_.notify(sender_name, "Health report upload failed: " + result.error);
+    }
+    uploading_.store(false);
 }
 
 }  // namespace spark
