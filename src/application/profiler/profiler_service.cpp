@@ -1,33 +1,20 @@
-#include "platform/endstone/profiler_controller.h"
+#include "application/profiler/profiler_service.h"
 
 #include <algorithm>
 #include <chrono>
-#include <exception>
-#include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <endstone/endstone.hpp>
-
-#include "core/command/arguments.h"
 #include "core/util/format.h"
-#include "net/bytebin.h"
-#include "net/gzip.h"
-#include "net/profile_file.h"
-#include "platform/endstone/server_info.h"
-#include "core/profiler/profiler.h"
-#include "spark_constants.h"
-#include "core/stats/statistics_service.h"
 #include "core/stats/system_stats.h"
+#include "spark_constants.h"
 
-namespace spark::endstone_adapter {
-
-using endstone::ColorFormat;
+namespace spark {
 
 namespace {
 
-std::int64_t nowMsImpl()
+std::int64_t nowMs()
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch())
@@ -36,67 +23,39 @@ std::int64_t nowMsImpl()
 
 }  // namespace
 
-ProfilerController::ProfilerController(::endstone::Plugin &plugin,
-                                       spark::StatisticsService &statistics,
-                                       const std::string &bds_executable_sha256)
-    : plugin_(plugin),
-      statistics_(statistics),
-      bds_executable_sha256_(bds_executable_sha256)
+ProfilerService::ProfilerService(StatisticsService &statistics,
+                                 std::string bds_executable_sha256,
+                                 std::filesystem::path profile_storage_dir,
+                                 MainThreadDispatcher &dispatcher,
+                                 ProfileMetadataProvider &metadata_provider,
+                                 ResultNotifier &notifier)
+    : statistics_(statistics),
+      bds_executable_sha256_(std::move(bds_executable_sha256)),
+      dispatcher_(dispatcher),
+      metadata_provider_(metadata_provider),
+      notifier_(notifier),
+      exporter_(std::move(profile_storage_dir))
 {
 }
 
-ProfilerController::~ProfilerController()
+ProfilerService::~ProfilerService()
 {
     if (export_thread_.joinable()) {
         export_thread_.join();
     }
 }
 
-void ProfilerController::shutdown()
+void ProfilerService::shutdown()
 {
     if (export_thread_.joinable()) {
         export_thread_.join();
     }
 }
 
-std::int64_t ProfilerController::nowMs()
-{
-    return nowMsImpl();
-}
-
-bool ProfilerController::commandSenderIsPlayer(const ::endstone::CommandSender &sender)
-{
-    return sender.asPlayer() != nullptr;
-}
-
-void ProfilerController::cmdProfiler(::endstone::CommandSender &sender,
-                                     const spark::Arguments &args,
-                                     std::uint64_t main_tid)
-{
-    const std::string &action = args.subCommand();
-    if (action.empty() || action == "info") {
-        profilerInfo(sender);
-    }
-    else if (action == "cancel") {
-        profilerCancel(sender);
-    }
-    else if (action == "stop") {
-        profilerStop(sender, args);
-    }
-    else if (action == "start") {
-        profilerStart(sender, args, main_tid);
-    }
-    else {
-        profilerInfo(sender);
-    }
-}
-
-void ProfilerController::profilerStart(::endstone::CommandSender &sender,
-                                       const spark::Arguments &args,
-                                       std::uint64_t main_tid)
+void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
 {
     if (profiler_.running()) {
-        profilerInfo(sender);
+        cmdInfo(sender);
         return;
     }
     if (exporting_.load()) {
@@ -195,9 +154,9 @@ void ProfilerController::profilerStart(::endstone::CommandSender &sender,
     }
     options.save_to_file = args.boolFlag("save-to-file");
     options.creator_name = sender.getName();
-    options.creator_is_player = commandSenderIsPlayer(sender);
+    options.creator_is_player = sender.isPlayer();
 
-    std::uint64_t tid = main_tid;
+    std::uint64_t tid = main_tid_;
     if (tid == 0) {
         sender.sendErrorMessage("The server thread hasn't been identified yet - try again in a moment.");
         return;
@@ -213,11 +172,11 @@ void ProfilerController::profilerStart(::endstone::CommandSender &sender,
     if (options.alloc) {
         if (options.alloc_live_only) {
             sender.sendMessage("{}Retained Allocation Profiler is now running!{} (async)",
-                               ColorFormat::Gold, ColorFormat::Gray);
+                               kColorGold, kColorGray);
         }
         else {
             sender.sendMessage("{}Allocation Profiler is now running!{} (async)",
-                               ColorFormat::Gold, ColorFormat::Gray);
+                               kColorGold, kColorGray);
         }
         if (options.threads.empty() ||
             (options.threads.size() == 1 && options.threads.front() == "*")) {
@@ -238,16 +197,16 @@ void ProfilerController::profilerStart(::endstone::CommandSender &sender,
     }
     else {
         if (options.threads.empty()) {
-            sender.sendMessage("{}Profiler is now running!{} (async, {}ms interval)", ColorFormat::Gold,
-                               ColorFormat::Gray, options.interval_ms);
+            sender.sendMessage("{}Profiler is now running!{} (async, {}ms interval)", kColorGold,
+                               kColorGray, options.interval_ms);
         }
         else if (options.threads.size() == 1 && options.threads.front() == "*") {
             sender.sendMessage("{}Profiler is now running for all process threads!{} (async, {}ms interval)",
-                               ColorFormat::Gold, ColorFormat::Gray, options.interval_ms);
+                               kColorGold, kColorGray, options.interval_ms);
         }
         else {
             sender.sendMessage("{}Profiler is now running for selected process threads!{} (async, {}ms interval)",
-                               ColorFormat::Gold, ColorFormat::Gray, options.interval_ms);
+                               kColorGold, kColorGray, options.interval_ms);
         }
     }
     if (options.only_ticks_over_ms > 0) {
@@ -255,7 +214,7 @@ void ProfilerController::profilerStart(::endstone::CommandSender &sender,
     }
     if (timeout <= 0) {
         sender.sendMessage("It runs in the background until stopped.");
-        sender.sendMessage("To stop and finalize the profile, run: {}/spark profiler stop", ColorFormat::Gray);
+        sender.sendMessage("To stop and finalize the profile, run: {}/spark profiler stop", kColorGray);
     }
     else {
         if (timeout < 30) {
@@ -265,8 +224,7 @@ void ProfilerController::profilerStart(::endstone::CommandSender &sender,
     }
 }
 
-void ProfilerController::profilerStop(::endstone::CommandSender &sender,
-                                      const spark::Arguments &args)
+void ProfilerService::cmdStop(CommandSender &sender, const Arguments &args)
 {
     if (!profiler_.running()) {
         sender.sendMessage(exporting_.load() ? "The profiler has stopped; results are still being finalized."
@@ -277,11 +235,11 @@ void ProfilerController::profilerStop(::endstone::CommandSender &sender,
     if (profiler_.backendFailure(backend_error)) {
         std::string cleanup_error;
         if (!profiler_.cancel(cleanup_error)) {
-            sender.sendMessage("{}Allocation profiler status: FAILED", ColorFormat::Red);
+            sender.sendMessage("{}Allocation profiler status: FAILED", kColorRed);
             sender.sendMessage("Unable to discard the failed session safely: {}", cleanup_error);
             return;
         }
-        sender.sendMessage("{}Allocation profiler status: FAILED", ColorFormat::Red);
+        sender.sendMessage("{}Allocation profiler status: FAILED", kColorRed);
         sender.sendMessage("Incomplete profile data was discarded: {}", backend_error);
         sender.sendMessage("The allocation profiler backend is ready for a new session.");
         return;
@@ -292,11 +250,11 @@ void ProfilerController::profilerStop(::endstone::CommandSender &sender,
     if (!comments.empty()) {
         comment = comments.front();
     }
-    sender.sendMessage("{}Stopping the profiler and finalizing results, please wait...", ColorFormat::Gold);
+    sender.sendMessage("{}Stopping the profiler and finalizing results, please wait...", kColorGold);
     finishProfiler(sender.getName(), save, comment);
 }
 
-void ProfilerController::profilerInfo(::endstone::CommandSender &sender)
+void ProfilerService::cmdInfo(CommandSender &sender)
 {
     if (!profiler_.running()) {
         if (exporting_.load()) {
@@ -304,27 +262,26 @@ void ProfilerController::profilerInfo(::endstone::CommandSender &sender)
             return;
         }
         sender.sendMessage("The profiler isn't running!");
-        sender.sendMessage("To start a new one, run: {}/spark profiler start", ColorFormat::Gray);
+        sender.sendMessage("To start a new one, run: {}/spark profiler start", kColorGray);
         return;
     }
     const bool allocation = profiler_.mode() == spark::ProfileMode::Allocation;
     std::string backend_error;
     if (allocation && profiler_.backendFailure(backend_error)) {
-        sender.sendMessage("{}Allocation Profiler status: FAILED", ColorFormat::Red);
+        sender.sendMessage("{}Allocation Profiler status: FAILED", kColorRed);
         sender.sendMessage("Backend service failure: {}", backend_error);
         sendAllocationHookCoverage(sender);
         sender.sendMessage("The incomplete profile will not be exported.");
         sender.sendMessage("Run {}/spark profiler stop{} or {}/spark profiler cancel{} to discard it.",
-                           ColorFormat::Gray, ColorFormat::Reset, ColorFormat::Gray,
-                           ColorFormat::Reset);
+                           kColorGray, kColorReset, kColorGray, kColorReset);
         return;
     }
     if (allocation) {
         if (profiler_.options().alloc_live_only) {
-            sender.sendMessage("{}Retained Allocation Profiler is already running!", ColorFormat::Gold);
+            sender.sendMessage("{}Retained Allocation Profiler is already running!", kColorGold);
         }
         else {
-            sender.sendMessage("{}Allocation Profiler is already running!", ColorFormat::Gold);
+            sender.sendMessage("{}Allocation Profiler is already running!", kColorGold);
         }
         sendAllocationHookCoverage(sender);
         const auto &threads = profiler_.options().threads;
@@ -340,7 +297,7 @@ void ProfilerController::profilerInfo(::endstone::CommandSender &sender)
         }
     }
     else {
-        sender.sendMessage("{}Profiler is already running!", ColorFormat::Gold);
+        sender.sendMessage("{}Profiler is already running!", kColorGold);
     }
     std::int64_t ran = (nowMs() - profiler_.startTimeMs()) / 1000;
     if (allocation) {
@@ -378,15 +335,15 @@ void ProfilerController::profilerInfo(::endstone::CommandSender &sender)
     }
     std::int64_t auto_end = profiler_.autoEndTimeMs();
     if (auto_end <= 0) {
-        sender.sendMessage("To stop and finalize the profile, run: {}/spark profiler stop", ColorFormat::Gray);
+        sender.sendMessage("To stop and finalize the profile, run: {}/spark profiler stop", kColorGray);
     }
     else {
         sender.sendMessage("It finishes automatically in {}.", spark::formatDuration((auto_end - nowMs()) / 1000));
     }
-    sender.sendMessage("To cancel without generating a profile, run: {}/spark profiler cancel", ColorFormat::Gray);
+    sender.sendMessage("To cancel without generating a profile, run: {}/spark profiler cancel", kColorGray);
 }
 
-void ProfilerController::sendAllocationHookCoverage(::endstone::CommandSender &sender)
+void ProfilerService::sendAllocationHookCoverage(CommandSender &sender)
 {
     const auto &capabilities = profiler_.allocationHookCapabilities();
     std::size_t active = 0;
@@ -416,7 +373,7 @@ void ProfilerController::sendAllocationHookCoverage(::endstone::CommandSender &s
     }
 }
 
-void ProfilerController::profilerCancel(::endstone::CommandSender &sender)
+void ProfilerService::cmdCancel(CommandSender &sender)
 {
     if (!profiler_.running()) {
         sender.sendMessage("There isn't an active profiler running.");
@@ -426,118 +383,62 @@ void ProfilerController::profilerCancel(::endstone::CommandSender &sender)
     const bool failed = profiler_.backendFailure(backend_error);
     std::string error;
     if (!profiler_.cancel(error)) {
-        sender.sendMessage("{}Unable to cancel the profiler safely: {}", ColorFormat::Red, error);
+        sender.sendMessage("{}Unable to cancel the profiler safely: {}", kColorRed, error);
         return;
     }
     if (failed) {
-        sender.sendMessage("{}Failed allocation profile data was discarded: {}", ColorFormat::Red,
+        sender.sendMessage("{}Failed allocation profile data was discarded: {}", kColorRed,
                            backend_error);
         sender.sendMessage("The allocation profiler backend is ready for a new session.");
     }
     else {
-        sender.sendMessage("{}Profiler has been cancelled.", ColorFormat::Gold);
+        sender.sendMessage("{}Profiler has been cancelled.", kColorGold);
     }
 }
 
-// Stop and join on the main thread; export and network upload run in the
-// background. That task and its main-thread hop capture only `this` so the
-// std::function handed to Endstone stays in libc++'s ABI-stable small-buffer form,
-// which matters when the plugin and the runtime are built with different libc++.
-void ProfilerController::finishProfiler(const std::string &sender_name, bool save,
-                                        const std::string &comment)
+void ProfilerService::finishProfiler(const std::string &sender_name, bool save,
+                                     const std::string &comment)
 {
-    // Stop before gathering metadata so spark's own world/plugin snapshot
-    // allocations do not pollute an allocation profile. Entry hooks remain
-    // disabled pass-throughs between sessions; a backend service failure
-    // blocks export of the partial data.
     std::string stop_error;
     if (!profiler_.stopSampling(stop_error)) {
         std::string backend_error;
         if (!profiler_.running() && profiler_.backendFailure(backend_error)) {
-            announce(sender_name,
+            notifier_.notify(sender_name,
                      "Allocation profiler FAILED; incomplete profile data was discarded: " +
                          backend_error);
-            announce(sender_name, "The allocation profiler backend is ready for a new session.");
+            notifier_.notify(sender_name, "The allocation profiler backend is ready for a new session.");
         }
         else {
-            announce(sender_name, "Profiler stop failed: " + stop_error);
+            notifier_.notify(sender_name, "Profiler stop failed: " + stop_error);
         }
         return;
     }
 
-    gatherServerInfo(pending_ctx_, plugin_.getServer(), bds_executable_sha256_, nowMs());
+    pending_ctx_ = ExportContext{};
+    pending_ctx_.bds_executable_sha256 = bds_executable_sha256_;
+    metadata_provider_.gatherServerMetadata(pending_ctx_, nowMs());
     pending_ctx_.comment = comment;
     pending_ctx_.statistics = statistics_.snapshot();
     pending_ctx_.window_stats = statistics_.profileWindows(
         profiler_.startTimeMs(), profiler_.endTimeMs());
     pending_ctx_.system_stats = spark::gatherSystemStats(".");
-    gatherWorldInfo(pending_ctx_, plugin_.getServer());
+    metadata_provider_.gatherWorldMetadata(pending_ctx_);
 
     pending_save_ = save;
     pending_sender_ = sender_name;
-    pending_folder_ = spark::profileStorageDirectory(plugin_.getDataFolder());
 
     exporting_.store(true);
-    // NOTE: Endstone's runTaskAsync has a use-after-free - scheduler.cpp submits
-    // `[&task]{ task->run(); }`, capturing the loop variable by reference into a
-    // detached thread. So we use std::thread directly.
     export_thread_ = std::thread([this]() { runExport(); });
 }
 
-void ProfilerController::runExport()
+void ProfilerService::runExport()
 {
-    ExportOutcome outcome = ExportOutcome::Failed;
-    std::string message;
+    ProfileExporter::Result result =
+        exporter_.exportProfile(profiler_, pending_ctx_, pending_save_);
+    pending_outcome_ = result.outcome;
+    pending_result_ = std::move(result.message);
     try {
-        std::string body = profiler_.exportData(pending_ctx_);
-        std::string compressed = spark::gzipCompress(body);
-        if (pending_save_) {
-            spark::ProfileFileResult saved =
-                spark::saveProfileToDirectory(pending_folder_, compressed, nowMs());
-            if (saved.ok) {
-                outcome = ExportOutcome::Saved;
-                message = "Saved to " + saved.path.string() + " - open it at " +
-                          spark::kViewerUrl;
-            }
-            else {
-                message = "Failed to save the profile: " + saved.error;
-            }
-        }
-        else {
-            spark::UploadResult result =
-                spark::uploadToBytebin(compressed, spark::kBytebinUrl,
-                                       spark::kSamplerContentType,
-                                       std::string("endstone-spark/") + spark::kVersion);
-            if (result.ok) {
-                outcome = ExportOutcome::Uploaded;
-                message = std::string(spark::kViewerUrl) + result.key;
-            }
-            else {
-                spark::ProfileFileResult saved =
-                    spark::saveProfileToDirectory(pending_folder_, compressed, nowMs());
-                if (saved.ok) {
-                    outcome = ExportOutcome::Saved;
-                    message = "Upload failed (" + result.error +
-                              "), so the profile was saved to " + saved.path.string() +
-                              " - open it at " + spark::kViewerUrl;
-                }
-                else {
-                    message = "Upload failed (" + result.error +
-                              ") and automatic local save failed (" + saved.error + ").";
-                }
-            }
-        }
-    }
-    catch (const std::exception &e) {
-        message = std::string("Export failed: ") + e.what();
-    }
-    catch (...) {
-        message = "Export failed with an unknown error.";
-    }
-    pending_outcome_ = outcome;
-    pending_result_ = std::move(message);
-    try {
-        plugin_.getServer().getScheduler().runTask(plugin_, [this]() { announceResult(); });
+        dispatcher_.runOnMainThread([this]() { announceResult(); });
     }
     catch (...) {
         exporting_.store(false);
@@ -545,29 +446,19 @@ void ProfilerController::runExport()
     }
 }
 
-// Back on the main thread.
-void ProfilerController::announceResult()
+void ProfilerService::announceResult()
 {
     const char *headline = pending_outcome_ == ExportOutcome::Uploaded
                                ? "Profiler stopped & upload complete!"
                            : pending_outcome_ == ExportOutcome::Saved
                                ? "Profiler stopped & saved locally!"
                                : "Profiler stopped.";
-    announce(pending_sender_, headline);
-    announce(pending_sender_, pending_result_);
+    notifier_.notify(pending_sender_, headline);
+    notifier_.notify(pending_sender_, pending_result_);
     exporting_.store(false);
 }
 
-void ProfilerController::announce(const std::string &sender_name, const std::string &text)
-{
-    plugin_.getLogger().info("{}", text);
-    auto player = plugin_.getServer().getPlayer(sender_name);
-    if (player) {
-        player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
-    }
-}
-
-void ProfilerController::onTick(double mspt)
+void ProfilerService::onTick(double mspt)
 {
     if (!profiler_.running()) {
         return;
@@ -584,4 +475,4 @@ void ProfilerController::onTick(double mspt)
     }
 }
 
-}  // namespace spark::endstone_adapter
+}  // namespace spark

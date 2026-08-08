@@ -110,15 +110,27 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Cl
     target_compile_options(spark_core PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
 endif ()
 
-# --- the Endstone plugin (links only its own static core + Endstone headers) ---
+# --- application layer: command dispatch, session orchestration, export (no Endstone) ---
+add_library(spark_application STATIC
+        src/application/command/command_registry.cpp
+        src/application/health/health_command.cpp
+        src/application/profiler/profile_exporter.cpp
+        src/application/profiler/profiler_service.cpp
+        src/application/spark_application.cpp
+        src/application/tick_monitor/tick_monitor_command.cpp)
+target_include_directories(spark_application PUBLIC src)
+target_link_libraries(spark_application PUBLIC spark_core)
+set_target_properties(spark_application PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(spark_application PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+endif ()
+
+# --- the Endstone plugin (links its application layer + Endstone adapters) ---
 endstone_add_plugin(spark
-        src/platform/endstone/health_command.cpp
-        src/platform/endstone/profiler_controller.cpp
-        src/platform/endstone/server_info.cpp
-        src/platform/endstone/tick_monitor_controller.cpp
+        src/platform/endstone/adapters.cpp
         src/plugin.cpp)
 target_include_directories(spark PRIVATE src)
-target_link_libraries(spark PRIVATE spark_core)
+target_link_libraries(spark PRIVATE spark_application)
 # Localize every symbol from the static archives (zlib, cpptrace, libunwind, libc++)
 # so they can't interpose with Endstone core's own copies in the BDS process. Only
 # init_endstone_plugin (default visibility via the macro) stays exported.

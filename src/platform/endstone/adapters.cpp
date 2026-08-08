@@ -1,4 +1,4 @@
-#include "platform/endstone/server_info.h"
+#include "platform/endstone/adapters.h"
 
 #include <chrono>
 #include <map>
@@ -6,12 +6,22 @@
 #include <utility>
 #include <vector>
 
-#include <endstone/endstone.hpp>
-
 #include "core/profiler/profiler.h"
 #include "core/stats/system_stats.h"
+#include "core/util/format.h"
 
 namespace spark::endstone_adapter {
+
+using endstone::ColorFormat;
+
+// --- EndstoneDispatcher ---
+
+void EndstoneDispatcher::runOnMainThread(std::function<void()> task)
+{
+    server_.getScheduler().runTask(plugin_, std::move(task));
+}
+
+// --- EndstoneMetadataProvider ---
 
 namespace {
 
@@ -24,24 +34,23 @@ int floorDiv(int value, int divisor)
 
 }  // namespace
 
-void gatherServerInfo(ExportContext &ctx, ::endstone::Server &server,
-                      const std::string &bds_executable_sha256,
-                      std::int64_t now_ms)
+void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx,
+                                                     std::int64_t now_ms)
 {
-    ctx.endstone_version = server.getVersion();
-    ctx.minecraft_version = server.getMinecraftVersion();
-    ctx.bds_executable_sha256 = bds_executable_sha256;
-    ctx.player_count = static_cast<long>(server.getOnlinePlayers().size());
-    ctx.online_mode = server.getOnlineMode() ? 2 : 1;
+    ctx.endstone_version = server_.getVersion();
+    ctx.minecraft_version = server_.getMinecraftVersion();
+    ctx.bds_executable_sha256 = bds_executable_sha256_;
+    ctx.player_count = static_cast<long>(server_.getOnlinePlayers().size());
+    ctx.online_mode = server_.getOnlineMode() ? 2 : 1;
     {
         std::int64_t start_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    server.getStartTime().time_since_epoch())
+                                    server_.getStartTime().time_since_epoch())
                                     .count();
         ctx.uptime_ms = now_ms - start_ms;
     }
 
     ctx.plugins.clear();
-    for (endstone::Plugin *plugin : server.getPluginManager().getPlugins()) {
+    for (endstone::Plugin *plugin : server_.getPluginManager().getPlugins()) {
         const endstone::PluginDescription &desc = plugin->getDescription();
         std::string author;
         for (const std::string &a : desc.getAuthors()) {
@@ -51,17 +60,17 @@ void gatherServerInfo(ExportContext &ctx, ::endstone::Server &server,
     }
 }
 
-void gatherWorldInfo(ExportContext &ctx, ::endstone::Server &server)
+void EndstoneMetadataProvider::gatherWorldMetadata(ExportContext &ctx)
 {
-    ctx.world = spark::WorldInfo{};
-    if (endstone::Level *level = server.getLevel()) {
+    ctx.world = WorldInfo{};
+    if (endstone::Level *level = server_.getLevel()) {
         for (endstone::Dimension *dimension : level->getDimensions()) {
-            std::map<std::pair<int, int>, spark::WorldChunk> chunks;
+            std::map<std::pair<int, int>, WorldChunk> chunks;
             for (const auto &chunk : dimension->getLoadedChunks()) {
                 if (chunk) {
                     int x = chunk->getX();
                     int z = chunk->getZ();
-                    chunks.try_emplace({x, z}, spark::WorldChunk{x, z});
+                    chunks.try_emplace({x, z}, WorldChunk{x, z});
                 }
             }
             if (chunks.empty()) {
@@ -83,13 +92,13 @@ void gatherWorldInfo(ExportContext &ctx, ::endstone::Server &server)
                 it->second.entity_counts[actor->getType()]++;
             }
 
-            spark::WorldEntry world;
+            WorldEntry world;
             world.name = dimension->getName();
-            std::map<std::pair<int, int>, spark::WorldRegion> regions;
+            std::map<std::pair<int, int>, WorldRegion> regions;
             for (auto &[coordinate, chunk] : chunks) {
                 auto region_coordinate = std::pair{floorDiv(coordinate.first, 32),
                                                    floorDiv(coordinate.second, 32)};
-                spark::WorldRegion &region = regions[region_coordinate];
+                WorldRegion &region = regions[region_coordinate];
                 region.total_entities += chunk.total_entities;
                 world.total_entities += chunk.total_entities;
                 for (const auto &[type, count] : chunk.entity_counts) {
@@ -104,6 +113,29 @@ void gatherWorldInfo(ExportContext &ctx, ::endstone::Server &server)
             ctx.world.worlds.push_back(std::move(world));
         }
         ctx.world.present = !ctx.world.worlds.empty();
+    }
+}
+
+std::int64_t EndstoneMetadataProvider::serverUptimeSeconds()
+{
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now() - server_.getStartTime())
+        .count();
+}
+
+long EndstoneMetadataProvider::playerCount()
+{
+    return static_cast<long>(server_.getOnlinePlayers().size());
+}
+
+// --- EndstoneNotifier ---
+
+void EndstoneNotifier::notify(const std::string &sender_name, const std::string &text)
+{
+    plugin_.getLogger().info("{}", text);
+    auto player = server_.getPlayer(sender_name);
+    if (player) {
+        player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
     }
 }
 

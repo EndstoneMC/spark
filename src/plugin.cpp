@@ -14,17 +14,15 @@
 #include <unistd.h>
 #endif
 
+#include "application/command/command_sender.h"
+#include "application/spark_application.h"
 #include "core/command/arguments.h"
-#include "platform/endstone/health_command.h"
-#include "platform/endstone/profiler_controller.h"
-#include "platform/endstone/tick_monitor_controller.h"
-#include "spark_constants.h"
 #include "core/stats/executable_hash.h"
-#include "core/stats/statistics_service.h"
+#include "net/profile_file.h"
+#include "platform/endstone/adapters.h"
+#include "spark_constants.h"
 
 namespace {
-
-using endstone::ColorFormat;
 
 std::uint64_t currentThreadId()
 {
@@ -41,34 +39,42 @@ class SparkPlugin : public endstone::Plugin {
 public:
     void onEnable() override
     {
-        statistics_.start();
-        statistics_.recordPlayerCount(
-            static_cast<long>(getServer().getOnlinePlayers().size()));
         std::string hash_error;
         bds_executable_sha256_ = spark::currentExecutableSha256(hash_error);
         if (bds_executable_sha256_.empty()) {
             getLogger().warning("Unable to identify the BDS executable: {}", hash_error);
         }
-        controller_ = std::make_unique<spark::endstone_adapter::ProfilerController>(
-            *this, statistics_, bds_executable_sha256_);
-        health_ = std::make_unique<spark::endstone_adapter::HealthCommands>(*this, statistics_);
-        tick_monitor_ = std::make_unique<spark::endstone_adapter::TickMonitorController>(*this);
+
+        dispatcher_ = std::make_unique<spark::endstone_adapter::EndstoneDispatcher>(*this, getServer());
+        metadata_provider_ = std::make_unique<spark::endstone_adapter::EndstoneMetadataProvider>(
+            *this, getServer(), bds_executable_sha256_);
+        notifier_ = std::make_unique<spark::endstone_adapter::EndstoneNotifier>(*this, getServer());
+
+        app_ = std::make_unique<spark::SparkApplication>(
+            bds_executable_sha256_,
+            spark::profileStorageDirectory(getDataFolder()),
+            *dispatcher_, *metadata_provider_, *notifier_);
+
+        app_->statistics().start();
+        app_->statistics().recordPlayerCount(
+            static_cast<long>(getServer().getOnlinePlayers().size()));
+
         tick_task_ = getServer().getScheduler().runTaskTimer(
             *this, [this]() { onServerTick(); }, 0, 1);
         getLogger().info("endstone-spark v{} enabled. Run {}/spark{} to get started.", spark::kVersion,
-                         ColorFormat::Gold, ColorFormat::Reset);
+                         endstone::ColorFormat::Gold, endstone::ColorFormat::Reset);
     }
 
     void onDisable() override
     {
-        if (controller_) {
-            controller_->shutdown();
+        if (app_) {
+            app_->shutdown();
         }
         getServer().getScheduler().cancelTasks(*this);
         tick_task_.reset();
 
         std::string shutdown_error;
-        if (controller_ && !controller_->shutdownProfiler(shutdown_error)) {
+        if (app_ && !app_->shutdownProfilerBackend(shutdown_error)) {
             std::fprintf(stderr, "[spark] profiler shutdown failed before plugin unload: %s\n",
                          shutdown_error.c_str());
             std::abort();
@@ -90,28 +96,10 @@ public:
             auto parsed = spark::Arguments::tokenize(arg);
             tokens.insert(tokens.end(), parsed.begin(), parsed.end());
         }
-        std::string module = tokens.empty() ? std::string() : tokens[0];
 
-        if (module.empty()) {
-            sendHelp(sender);
-        }
-        else if (module == "tps") {
-            health_->cmdTps(sender);
-        }
-        else if (module == "health") {
-            health_->cmdHealth(sender);
-        }
-        else if (module == "tickmonitor") {
-            std::vector<std::string> rest(tokens.begin() + 1, tokens.end());
-            tick_monitor_->cmdTickMonitor(sender, spark::Arguments(rest));
-        }
-        else if (module == "profiler") {
-            std::vector<std::string> rest(tokens.begin() + 1, tokens.end());
-            controller_->cmdProfiler(sender, spark::Arguments(rest), main_tid_.load());
-        }
-        else {
-            sendHelp(sender);
-        }
+        spark::endstone_adapter::EndstoneCommandSender adapter(sender);
+        app_->setMainThreadId(main_tid_.load());
+        app_->dispatchCommand(adapter, tokens);
         return true;
     }
 
@@ -121,55 +109,18 @@ public:
             main_tid_.store(currentThreadId());
         }
         const double mspt = getServer().getCurrentMillisecondsPerTick();
-        if (statistics_.onTick(mspt)) {
-            statistics_.recordPlayerCount(
-                static_cast<long>(getServer().getOnlinePlayers().size()));
-        }
-        if (tick_monitor_) {
-            tick_monitor_->onTick(mspt);
-        }
-        if (controller_) {
-            controller_->onTick(mspt);
-        }
+        app_->onTick(mspt);
     }
 
 private:
-    void sendHelp(endstone::CommandSender &sender)
-    {
-        sender.sendMessage("{}endstone-spark {}v{}", ColorFormat::Gold, ColorFormat::Gray, spark::kVersion);
-        sender.sendMessage("{}/spark profiler start [flags] {}- start an execution or allocation profile",
-                           ColorFormat::Yellow, ColorFormat::Gray);
-        sender.sendMessage("{}/spark profiler stop {}- stop profiling and finalize the profile", ColorFormat::Yellow,
-                           ColorFormat::Gray);
-        sender.sendMessage("{}/spark profiler info {}- show status of the running profiler", ColorFormat::Yellow,
-                           ColorFormat::Gray);
-        sender.sendMessage("{}/spark profiler cancel {}- stop profiling without generating a profile", ColorFormat::Yellow,
-                           ColorFormat::Gray);
-        sender.sendMessage(
-            "{}/spark tps {}- rolling TPS, MSPT percentiles, and CPU usage",
-            ColorFormat::Yellow, ColorFormat::Gray);
-        sender.sendMessage(
-            "{}/spark health {}- performance and host resource report",
-            ColorFormat::Yellow, ColorFormat::Gray);
-        sender.sendMessage("{}/spark tickmonitor {}- report unusually long ticks", ColorFormat::Yellow,
-                           ColorFormat::Gray);
-        sender.sendMessage("{}Modes: --alloc, --alloc-live-only", ColorFormat::Gray);
-        sender.sendMessage("{}Thread selection: --thread <name|*>, --regex", ColorFormat::Gray);
-        sender.sendMessage("{}Execution only: --include-sleeping", ColorFormat::Gray);
-        sender.sendMessage(
-            "{}Flags: --interval <ms|bytes>, --timeout <seconds>, --only-ticks-over <ms>",
-            ColorFormat::Gray);
-        sender.sendMessage("{}       --save-to-file (plugins/spark/profiles), --comment <text>",
-                           ColorFormat::Gray);
-    }
-
-    spark::StatisticsService statistics_;
     std::string bds_executable_sha256_;
     std::atomic<std::uint64_t> main_tid_{0};
     std::shared_ptr<endstone::Task> tick_task_;
-    std::unique_ptr<spark::endstone_adapter::ProfilerController> controller_;
-    std::unique_ptr<spark::endstone_adapter::HealthCommands> health_;
-    std::unique_ptr<spark::endstone_adapter::TickMonitorController> tick_monitor_;
+
+    std::unique_ptr<spark::endstone_adapter::EndstoneDispatcher> dispatcher_;
+    std::unique_ptr<spark::endstone_adapter::EndstoneMetadataProvider> metadata_provider_;
+    std::unique_ptr<spark::endstone_adapter::EndstoneNotifier> notifier_;
+    std::unique_ptr<spark::SparkApplication> app_;
 };
 
 ENDSTONE_PLUGIN("spark", "0.4.1", SparkPlugin)
