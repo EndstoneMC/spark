@@ -2,6 +2,8 @@
 #define SPARK_PLATFORM_ENDSTONE_ADAPTERS_H
 
 #include <cstdint>
+#include <map>
+#include <memory>
 #include <string>
 
 #include <endstone/endstone.hpp>
@@ -39,6 +41,17 @@ private:
     ::endstone::Server &server_;
 };
 
+// Polls player ping from the Endstone Server API.
+class EndstonePlayerPingProvider : public PlayerPingProvider {
+public:
+    explicit EndstonePlayerPingProvider(::endstone::Server &server) : server_(server) {}
+
+    std::map<std::string, int> poll() override;
+
+private:
+    ::endstone::Server &server_;
+};
+
 // Gathers server/world metadata from the Endstone API.
 class EndstoneMetadataProvider : public ProfileMetadataProvider {
 public:
@@ -51,11 +64,13 @@ public:
     void gatherWorldMetadata(ExportContext &ctx) override;
     std::int64_t serverUptimeSeconds() override;
     long playerCount() override;
+    PlayerPingProvider *playerPingProvider() override;
 
 private:
     ::endstone::Plugin &plugin_;
     ::endstone::Server &server_;
     std::string bds_executable_sha256_;
+    std::unique_ptr<EndstonePlayerPingProvider> ping_provider_;
 };
 
 // Notifies a player by name and logs to the plugin logger.

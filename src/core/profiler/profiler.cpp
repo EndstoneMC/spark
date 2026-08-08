@@ -536,6 +536,20 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.window_stats = ctx.window_stats;
     meta.extra_platform_metadata["Statistics history available ms"] = std::to_string(ctx.statistics.history_span_ms);
 
+    // Populate ping rolling average if samples were collected.
+    if (!ctx.ping_samples.empty()) {
+        PingRollingAverage temp(PingStatistics::kWindowSize);
+        for (int v : ctx.ping_samples) {
+            temp.add(v);
+        }
+        meta.platform_stats.ping_present = true;
+        meta.platform_stats.ping_mean = temp.mean();
+        meta.platform_stats.ping_max = static_cast<double>(temp.max());
+        meta.platform_stats.ping_min = static_cast<double>(temp.min());
+        meta.platform_stats.ping_median = static_cast<double>(temp.median());
+        meta.platform_stats.ping_p95 = static_cast<double>(temp.percentile95th());
+    }
+
     if (mode_ == ProfileMode::Allocation) {
         std::vector<ThreadTreeView> threads;
         for (const auto &[id, thread] : allocation_sampler_.threadTrees()) {

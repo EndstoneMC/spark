@@ -114,4 +114,26 @@ std::string formatMsptDistribution(const DistributionValues &values)
            formatMsptValue(values.max);
 }
 
+std::string formatPingRtts(const PingSummary &summary)
+{
+    if (summary.total() == 0) {
+        return kColorGray + std::string("n/a");
+    }
+    return kColorGreen + std::to_string(summary.min()) + kColorGray + "/" +
+           kColorGreen + std::to_string(summary.median()) + kColorGray + "/" +
+           kColorGreen + std::to_string(summary.percentile95th()) + kColorGray + "/" +
+           kColorGreen + std::to_string(summary.max()) + kColorGray + " ms";
+}
+
+std::string formatPingRtts(const PingRollingAverage &average)
+{
+    if (average.samples() == 0) {
+        return kColorGray + std::string("n/a");
+    }
+    return kColorGreen + std::to_string(average.min()) + kColorGray + "/" +
+           kColorGreen + std::to_string(average.median()) + kColorGray + "/" +
+           kColorGreen + std::to_string(average.percentile95th()) + kColorGray + "/" +
+           kColorGreen + std::to_string(average.max()) + kColorGray + " ms";
+}
+
 }  // namespace spark

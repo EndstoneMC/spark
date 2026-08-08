@@ -423,6 +423,9 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool save,
         profiler_.startTimeMs(), profiler_.endTimeMs());
     pending_ctx_.system_stats = spark::gatherSystemStats(".");
     metadata_provider_.gatherWorldMetadata(pending_ctx_);
+    if (ping_samples_provider_) {
+        pending_ctx_.ping_samples = ping_samples_provider_();
+    }
 
     pending_save_ = save;
     pending_sender_ = sender_name;

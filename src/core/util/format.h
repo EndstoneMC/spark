@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 
+#include "core/stats/ping_statistics.h"
 #include "core/stats/statistics_service.h"
 
 namespace spark {
@@ -29,6 +30,8 @@ std::string formatTpsValue(const RollingValue &value);
 std::string formatCpuValue(const RollingValue &value);
 std::string formatMsptValue(double value);
 std::string formatMsptDistribution(const DistributionValues &values);
+std::string formatPingRtts(const PingSummary &summary);
+std::string formatPingRtts(const PingRollingAverage &average);
 
 }  // namespace spark
 

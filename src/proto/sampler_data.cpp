@@ -216,6 +216,19 @@ std::string buildMetadata(const ProfileMetadata &m)
             tw.int32(3, p.max_ideal_mspt);
             pw.message(5, t);
         }
+        if (p.ping_present) {  // ping (6): Ping { last15m = RollingAverageValues }
+            std::string ping;
+            ProtoWriter pingw(ping);
+            std::string ra;
+            ProtoWriter raw(ra);
+            raw.real(1, p.ping_mean);
+            raw.real(2, p.ping_max);
+            raw.real(3, p.ping_min);
+            raw.real(4, p.ping_median);
+            raw.real(5, p.ping_p95);
+            pingw.message(1, ra);
+            pw.message(6, ping);
+        }
         if (p.player_count >= 0) {
             pw.int64(7, p.player_count);
         }

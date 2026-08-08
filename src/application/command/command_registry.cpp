@@ -44,6 +44,7 @@ void CommandRegistry::sendHelp(CommandSender &sender) const
     sender.sendMessage(kColorGray + "Execution only: --include-sleeping");
     sender.sendMessage(kColorGray + "Flags: --interval <ms|bytes>, --timeout <seconds>, --only-ticks-over <ms>");
     sender.sendMessage(kColorGray + "       --save-to-file (plugins/spark/profiles), --comment <text>");
+    sender.sendMessage(kColorGray + "Ping: --player <username>");
 }
 
 }  // namespace spark

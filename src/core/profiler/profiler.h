@@ -9,6 +9,7 @@
 
 #include "native/alloc/allocation_sampler.h"
 #include "core/profiler/profile_mode.h"
+#include "core/stats/ping_statistics.h"
 #include "native/sampler/sampler.h"
 #include "core/stats/statistics_service.h"
 #include "core/stats/system_stats.h"
@@ -50,6 +51,8 @@ struct ExportContext {
     std::map<std::int32_t, WindowStats> window_stats;
     std::vector<PluginInfo> plugins;
     WorldInfo world;
+    // Ping rolling average snapshot for profile metadata (may be empty).
+    std::vector<int> ping_samples;
 };
 
 // Owns either the execution sampler or the platform allocation sampler and turns

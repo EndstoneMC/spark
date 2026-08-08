@@ -42,6 +42,7 @@ public:
 
     StatisticsService &statistics() { return statistics_; }
     CommandRegistry &registry() { return registry_; }
+    HealthCommand &health() { return health_; }
 
 private:
     void registerCommands();
@@ -55,6 +56,7 @@ private:
     HealthCommand health_;
     TickMonitorCommand tick_monitor_;
     CommandRegistry registry_;
+    std::uint64_t tick_counter_ = 0;
 };
 
 }  // namespace spark

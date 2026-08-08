@@ -20,6 +20,7 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
       tick_monitor_(notifier_)
 {
     registerCommands();
+    profiler_.setPingSamplesProvider([this]() { return health_.pingSamples(); });
 }
 
 void SparkApplication::registerCommands()
@@ -47,6 +48,11 @@ void SparkApplication::registerCommands()
             health_.cmdTps(sender);
         });
     registry_.registerCommand(
+        "ping", "player ping RTT statistics",
+        [this](CommandSender &sender, const Arguments &args) {
+            health_.cmdPing(sender, args);
+        });
+    registry_.registerCommand(
         "health", "performance and host resource report",
         [this](CommandSender &sender, const Arguments &) {
             health_.cmdHealth(sender);
@@ -68,6 +74,10 @@ void SparkApplication::onTick(double mspt)
 {
     if (statistics_.onTick(mspt)) {
         statistics_.recordPlayerCount(metadata_provider_.playerCount());
+    }
+    // Poll ping every ~10 seconds (200 ticks at 20 TPS).
+    if (++tick_counter_ % 200 == 0) {
+        health_.pollPing();
     }
     tick_monitor_.onTick(mspt);
     profiler_.onTick(mspt);

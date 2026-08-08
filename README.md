@@ -26,6 +26,7 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 | `/spark profiler info`          | Show status of the running profiler.                      |
 | `/spark profiler cancel`        | Stop profiling without generating a profile.              |
 | `/spark tps`                    | Show rolling TPS, MSPT distributions, and CPU usage.      |
+| `/spark ping`                  | Show player ping RTT statistics (min/median/p95/max).    |
 | `/spark health`                 | Add process and host resources to the performance report. |
 | `/spark tickmonitor`            | Report ticks that exceed a duration or baseline change.   |
 
@@ -84,6 +85,14 @@ swap/page-file, disk, CPU/OS details. Resource-query failures are omitted instea
 of being displayed as zero. On Windows, the virtual-memory value is the process's
 reserved or committed address space; swap/page-file usage follows Windows commit
 limit semantics. On Linux, these values use `VmSize` and `/proc/meminfo`.
+
+### `/spark ping`
+
+`/spark ping` reports player ping RTT statistics: the current snapshot (min,
+median, p95, max) and the rolling 15-minute average of the median across all
+online players. Use `--player <name>` to query a specific player
+(case-insensitive). Ping is polled every 10 seconds and the rolling average is
+also included in exported profile metadata.
 
 ### `/spark tickmonitor`
 

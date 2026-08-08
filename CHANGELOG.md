@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `/spark ping` command with rolling 15-minute player ping RTT statistics
+  (min/median/p95/max), `--player <name>` lookup, and profile metadata
+  integration via `PlatformStatistics.Ping`.
 - Preserve exact sampled native PCs and their independently validated function
   roots in forward-compatible profile fields for offline normalization metrics.
 - Resolve Linux vtable labels for shared implementations by parsing Itanium RTTI

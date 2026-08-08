@@ -2,11 +2,13 @@
 
 #include <chrono>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "core/profiler/profiler.h"
+#include "core/stats/ping_statistics.h"
 #include "core/stats/system_stats.h"
 #include "core/util/format.h"
 
@@ -128,6 +130,14 @@ long EndstoneMetadataProvider::playerCount()
     return static_cast<long>(server_.getOnlinePlayers().size());
 }
 
+PlayerPingProvider *EndstoneMetadataProvider::playerPingProvider()
+{
+    if (!ping_provider_) {
+        ping_provider_ = std::make_unique<EndstonePlayerPingProvider>(server_);
+    }
+    return ping_provider_.get();
+}
+
 // --- EndstoneNotifier ---
 
 void EndstoneNotifier::notify(const std::string &sender_name, const std::string &text)
@@ -137,6 +147,20 @@ void EndstoneNotifier::notify(const std::string &sender_name, const std::string 
     if (player) {
         player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
     }
+}
+
+// --- EndstonePlayerPingProvider ---
+
+std::map<std::string, int> EndstonePlayerPingProvider::poll()
+{
+    std::map<std::string, int> result;
+    for (const auto &player : server_.getOnlinePlayers()) {
+        if (player) {
+            result.emplace(player->getName(),
+                           static_cast<int>(player->getPing().count()));
+        }
+    }
+    return result;
 }
 
 }  // namespace spark::endstone_adapter

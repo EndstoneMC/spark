@@ -1,7 +1,9 @@
 #include "application/health/health_command.h"
 
 #include <cstdint>
+#include <utility>
 
+#include "core/command/arguments.h"
 #include "core/stats/system_stats.h"
 #include "core/util/format.h"
 
@@ -11,11 +13,70 @@ HealthCommand::HealthCommand(StatisticsService &statistics,
                              ProfileMetadataProvider &metadata_provider)
     : statistics_(statistics), metadata_provider_(metadata_provider)
 {
+    // Lazily create PingStatistics if the platform provides a PlayerPingProvider.
+    if (auto *ping_provider = metadata_provider_.playerPingProvider()) {
+        ping_statistics_ = std::make_unique<PingStatistics>(*ping_provider);
+    }
+}
+
+void HealthCommand::pollPing()
+{
+    if (ping_statistics_) {
+        ping_statistics_->poll();
+    }
+}
+
+std::vector<int> HealthCommand::pingSamples() const
+{
+    if (!ping_statistics_) {
+        return {};
+    }
+    return ping_statistics_->rollingAverage().rawSamples();
 }
 
 void HealthCommand::cmdTps(CommandSender &sender)
 {
     sendPerformanceReport(sender, statistics_.snapshot());
+}
+
+void HealthCommand::cmdPing(CommandSender &sender, const Arguments &args)
+{
+    if (!ping_statistics_) {
+        sender.sendMessage("{}Ping data is not available on this platform.{}", kColorGold, kColorGray);
+        return;
+    }
+
+    // Query specific player
+    auto players = args.stringFlag("player");
+    if (!players.empty()) {
+        for (const std::string &player_name : players) {
+            PlayerPing ping = ping_statistics_->query(player_name);
+            if (!ping.found()) {
+                sender.sendMessage("{}Ping data is not available for '{}'.{}", kColorGold, kColorGray, kColorReset);
+                sender.sendMessage("  {}", player_name);
+            } else {
+                sender.sendMessage("{}Player {}{} {}has {}{} ms ping.{}",
+                                   kColorGold, kColorReset, ping.name,
+                                   kColorGray, kColorGreen, ping.ping, kColorReset);
+            }
+        }
+        return;
+    }
+
+    PingSummary summary = ping_statistics_->currentSummary();
+    const PingRollingAverage &average = ping_statistics_->rollingAverage();
+
+    if (summary.total() == 0 && average.samples() == 0) {
+        sender.sendMessage("{}There is not enough data to show ping averages yet. Please try again later.{}",
+                           kColorGold, kColorGray);
+        return;
+    }
+
+    sender.sendMessage("{}Average Pings {}(min/med/95%ile/max ms){} from now, last 15m:",
+                       kColorGold, kColorGray, kColorReset);
+    sender.sendMessage("  {} ;  {}",
+                       formatPingRtts(summary),
+                       formatPingRtts(average));
 }
 
 void HealthCommand::sendPerformanceReport(CommandSender &sender,

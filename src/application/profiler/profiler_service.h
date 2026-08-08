@@ -4,8 +4,10 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "application/command/command_sender.h"
 #include "application/platform_capabilities.h"
@@ -45,6 +47,12 @@ public:
     // Sets the server main thread ID (identified lazily).
     void setMainThreadId(std::uint64_t tid) { main_tid_ = tid; }
 
+    // Sets a callback that returns the current ping samples for export.
+    void setPingSamplesProvider(std::function<std::vector<int>()> provider)
+    {
+        ping_samples_provider_ = std::move(provider);
+    }
+
     // Lifecycle.
     void shutdown();
     bool shutdownBackend(std::string &error) { return profiler_.shutdown(error); }
@@ -79,6 +87,7 @@ private:
     std::string pending_sender_ = "CONSOLE";
     std::string pending_result_;
     ExportOutcome pending_outcome_ = ExportOutcome::Failed;
+    std::function<std::vector<int>()> ping_samples_provider_;
 };
 
 }  // namespace spark

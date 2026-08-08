@@ -53,6 +53,13 @@ struct PlatformStats {
     std::int64_t process_mem_bytes = 0;      // resident working set / VmRSS
     bool process_virtual_present = false;
     std::int64_t process_virtual_bytes = 0;  // reserved or committed virtual address space / VmSize
+    // Ping rolling average (PlatformStatistics.Ping field 6).
+    bool ping_present = false;
+    double ping_mean = 0.0;
+    double ping_max = 0.0;
+    double ping_min = 0.0;
+    double ping_median = 0.0;
+    double ping_p95 = 0.0;
 };
 
 // Point-in-time process resources. Availability is explicit so a failed OS query

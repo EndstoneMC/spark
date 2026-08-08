@@ -18,6 +18,12 @@ set_target_properties(spark_symbol_guess_evidence_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_symbol_guess_evidence_test COMMAND spark_symbol_guess_evidence_test)
 
+add_executable(spark_ping_statistics_test core/stats/ping_statistics_test.cpp)
+target_link_libraries(spark_ping_statistics_test PRIVATE spark_core)
+set_target_properties(spark_ping_statistics_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_ping_statistics_test COMMAND spark_ping_statistics_test)
+
 add_executable(spark_symbol_guess_dwarf_test native/symbol/symbol_guess_dwarf_test.cpp)
 target_link_libraries(spark_symbol_guess_dwarf_test PRIVATE spark_core)
 set_target_properties(spark_symbol_guess_dwarf_test PROPERTIES
