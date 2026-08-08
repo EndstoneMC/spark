@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -13,6 +14,7 @@
 #include "core/stats/system_stats.h"
 #include "core/util/format.h"
 #include "core/util/world_region.h"
+#include "core/metadata/server_properties.h"
 
 namespace spark::endstone_adapter {
 
@@ -62,6 +64,11 @@ void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx,
         }
         ctx.plugins.push_back({desc.getName(), desc.getVersion(), author, desc.getDescription()});
     }
+
+    // Parse server.properties with a strict allowlist for performance
+    // diagnostics. Sensitive fields are never included.
+    ctx.server_configurations =
+        spark::parseServerProperties(std::filesystem::current_path() / "server.properties");
 }
 
 void EndstoneMetadataProvider::gatherWorldMetadata(ExportContext &ctx)

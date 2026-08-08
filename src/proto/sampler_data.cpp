@@ -437,6 +437,15 @@ std::string buildMetadata(const ProfileMetadata &m)
         ew.string(2, value);
         w.message(14, entry);
     }
+    // server_configurations (10): map<string, string> - allowlisted
+    // server.properties entries for performance diagnostics.
+    for (const auto &[key, value] : m.server_configurations) {
+        std::string entry;
+        ProtoWriter ew(entry);
+        ew.string(1, key);
+        ew.string(2, value);
+        w.message(10, entry);
+    }
     return out;
 }
 

@@ -48,6 +48,7 @@ struct ProfileMetadata {
     StatisticsSnapshot statistics;
     std::map<std::int32_t, WindowStats> window_stats;
     std::map<std::string, std::string> extra_platform_metadata;
+    std::map<std::string, std::string> server_configurations;
     std::vector<PluginInfo> plugins;
     WorldInfo world;
     std::string socket_channel_info_proto;  // field 8: SocketChannelInfo (empty for non-live)

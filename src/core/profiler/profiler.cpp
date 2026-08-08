@@ -633,6 +633,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.system_stats.present = true;
     meta.plugins = ctx.plugins;
     meta.world = ctx.world;
+    meta.server_configurations = ctx.server_configurations;
     meta.window_stats = ctx.window_stats;
     meta.socket_channel_info_proto = ctx.socket_channel_info_proto;
     meta.extra_platform_metadata["Statistics history available ms"] = std::to_string(ctx.statistics.history_span_ms);

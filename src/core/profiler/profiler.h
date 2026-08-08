@@ -57,6 +57,7 @@ struct ExportContext {
     std::map<std::int32_t, WindowStats> window_stats;
     std::vector<PluginInfo> plugins;
     WorldInfo world;
+    std::map<std::string, std::string> server_configurations;
     // Ping rolling average snapshot for profile metadata (may be empty).
     std::vector<int> ping_samples;
     // Network interface rolling average snapshots (may be empty).
