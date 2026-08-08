@@ -102,6 +102,44 @@ struct HealthCommandTestAccess {
     static bool uploading(const HealthCommand &health) { return health.uploading_.load(); }
 };
 
+struct SamplerTestAccess {
+    static bool verifyContinuousHistory()
+    {
+        Sampler continuous;
+        continuous.config_.continuous = true;
+        Sample sample;
+        sample.thread_id = 1;
+        sample.thread_name = "Server thread";
+        sample.weight = 1;
+        sample.frames.push_back({0, 1, 1});
+        for (std::int32_t window = 0; window <= 7200; ++window) {
+            sample.window = window;
+            continuous.acceptSample(sample);
+            continuous.window_ticks_[window] = WindowTickStats{1, 1.0, 1.0};
+            continuous.maybePruneTickHistory(window);
+        }
+        for (std::uint64_t tick = 0; tick < 10000; ++tick) {
+            continuous.recordTickDecision(tick, true);
+        }
+        const auto &root = continuous.tree_.root();
+        const auto thread = continuous.thread_trees_.find(1);
+        if (root.times.size() != 3601 || root.times.begin()->first != 3600 || root.times.rbegin()->first != 7200 ||
+            continuous.window_ticks_.size() != 3601 || continuous.sampleCount() != 3601 ||
+            thread == continuous.thread_trees_.end() || thread->second.tree.root().times.size() != 3601 ||
+            continuous.tick_decisions_.size() > Sampler::kTickDecisionCapacity) {
+            return false;
+        }
+
+        Sampler foreground;
+        foreground.config_.continuous = false;
+        for (std::int32_t window = 0; window <= 7200; ++window) {
+            sample.window = window;
+            foreground.acceptSample(sample);
+        }
+        return foreground.tree_.root().times.size() == 7201 && foreground.sampleCount() == 7201;
+    }
+};
+
 }  // namespace spark
 
 namespace {
@@ -2669,12 +2707,13 @@ int main(int argc, char **argv)
         std::this_thread::sleep_for(1ms);
     }
 
-    if (!verifyArgumentParsing() || !verifyThreadSelectorSemantics() || !verifyTickMonitor() ||
-        !verifyStatisticsService() || !verifySystemResourceStats() || !verifyWorldGaugeStatistics() ||
-        !verifyWorldGaugeAbsentWhenNotRecorded() || !verifyThreadDiscovery() || !verifyMultiThreadSerialization() ||
-        !verifyStatisticsSerialization() || !verifyLiveProfilerWindowStatistics(g_worker_tid.load()) ||
-        !verifyAsyncNetworkCommands(g_worker_tid.load()) || !verifyBackgroundCommandValidation(g_worker_tid.load()) ||
-        !verifyRecoveryWriterLifetime(g_worker_tid.load()) || !verifyUploadFailure() || !verifyCaptureLifecycle() ||
+    if (!verifyArgumentParsing() || !spark::SamplerTestAccess::verifyContinuousHistory() ||
+        !verifyThreadSelectorSemantics() || !verifyTickMonitor() || !verifyStatisticsService() ||
+        !verifySystemResourceStats() || !verifyWorldGaugeStatistics() || !verifyWorldGaugeAbsentWhenNotRecorded() ||
+        !verifyThreadDiscovery() || !verifyMultiThreadSerialization() || !verifyStatisticsSerialization() ||
+        !verifyLiveProfilerWindowStatistics(g_worker_tid.load()) || !verifyAsyncNetworkCommands(g_worker_tid.load()) ||
+        !verifyBackgroundCommandValidation(g_worker_tid.load()) || !verifyRecoveryWriterLifetime(g_worker_tid.load()) ||
+        !verifyUploadFailure() || !verifyCaptureLifecycle() ||
 #if defined(_WIN32)
         !verifyWindowsThreadActivityDetection() ||
 #endif

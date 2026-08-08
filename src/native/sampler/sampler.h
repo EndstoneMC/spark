@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <mutex>
 #include <string>
@@ -23,6 +24,8 @@
 
 namespace spark {
 
+struct SamplerTestAccess;
+
 struct SamplerConfig {
     int interval_us = 4000;
     bool ignore_sleeping = false;
@@ -30,6 +33,7 @@ struct SamplerConfig {
     bool regex_threads = false;
     std::vector<std::string> thread_patterns;
     std::int64_t only_ticks_over_ms = 0;  // 0 = disabled (record every tick)
+    bool continuous = false;
 };
 
 // Per-window tick accounting, used to build the viewer's timeline overlay.
@@ -88,6 +92,8 @@ public:
     const Heartbeat &aggregatorHeartbeat() const { return aggregator_heartbeat_; }
 
 private:
+    friend struct SamplerTestAccess;
+
     struct TickEvent {
         std::uint64_t tick_id;
         double mspt_ms;
@@ -99,6 +105,9 @@ private:
     void flushOrDrop(std::uint64_t tick_id, bool keep);
     void resetSession();
     std::int32_t currentWindow() const;
+    void maybePruneHistory(std::int32_t current_window);
+    void maybePruneTickHistory(std::int32_t current_window);
+    void recordTickDecision(std::uint64_t tick_id, bool keep);
 
     SamplerConfig config_;
     ThreadSelector thread_selector_;
@@ -125,13 +134,17 @@ private:
     CallTree tree_;
     std::map<std::uint64_t, ThreadCallTree> thread_trees_;
     std::unordered_map<std::uint64_t, std::vector<Sample>> buckets_;
-    std::vector<std::uint8_t> tick_decisions_;  // 0 pending, 1 drop, 2 keep
+    std::deque<std::uint8_t> tick_decisions_;  // 0 pending, 1 drop, 2 keep
+    std::uint64_t tick_decision_base_ = 0;
+    std::map<std::int32_t, std::uint64_t> window_sample_counts_;
+    std::int32_t next_history_prune_window_ = 60;
 
     // sampler-thread state
     ModuleTable modules_;
 
     // main-thread state (written by onTick, read at export after join)
     std::map<std::int32_t, WindowTickStats> window_ticks_;
+    std::int32_t next_tick_history_prune_window_ = 60;
 
     // Heartbeats for stall-watchdog diagnostics (updated by service threads).
     Heartbeat sampler_heartbeat_;
@@ -141,6 +154,10 @@ private:
     // aggregator thread only.
     RecoverySink *recovery_sink_ = nullptr;
     std::unordered_set<std::uint64_t> journaled_threads_;
+
+    static constexpr std::int32_t kHistorySeconds = 60 * 60;
+    static constexpr std::int32_t kHistoryPruneIntervalSeconds = 60;
+    static constexpr std::size_t kTickDecisionCapacity = 60 * 60 * 20 + 1;
 };
 
 }  // namespace spark

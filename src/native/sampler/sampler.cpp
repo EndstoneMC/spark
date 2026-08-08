@@ -134,8 +134,12 @@ void Sampler::resetSession()
     thread_trees_.clear();
     buckets_.clear();
     tick_decisions_.clear();
+    tick_decision_base_ = 0;
+    window_sample_counts_.clear();
+    next_history_prune_window_ = kHistoryPruneIntervalSeconds;
     modules_ = ModuleTable{};
     window_ticks_.clear();
+    next_tick_history_prune_window_ = kHistoryPruneIntervalSeconds;
     current_tick_.store(0);
     sample_count_.store(0, std::memory_order_relaxed);
     sampler_tid_.store(0, std::memory_order_relaxed);
@@ -159,12 +163,14 @@ void Sampler::onTick(double mspt_ms)
     ticks_.enqueue(TickEvent{finished, mspt_ms});
     current_tick_.store(finished + 1);
 
-    WindowTickStats &w = window_ticks_[currentWindow()];
+    const std::int32_t window = currentWindow();
+    WindowTickStats &w = window_ticks_[window];
     w.ticks += 1;
     w.mspt_sum += mspt_ms;
     if (mspt_ms > w.mspt_max) {
         w.mspt_max = mspt_ms;
     }
+    maybePruneTickHistory(window);
 }
 
 void Sampler::samplerLoop()
@@ -333,7 +339,9 @@ void Sampler::acceptSample(const Sample &sample)
         thread.thread_name = sample.thread_name;
     }
     thread.tree.log(sample.frames, sample.window, sample.weight);
+    ++window_sample_counts_[sample.window];
     sample_count_.fetch_add(1, std::memory_order_relaxed);
+    maybePruneHistory(sample.window);
 
     if (recovery_sink_) {
         if (journaled_threads_.insert(sample.thread_id).second) {
@@ -341,6 +349,61 @@ void Sampler::acceptSample(const Sample &sample)
         }
         recovery_sink_->journalSample(sample);
     }
+}
+
+void Sampler::maybePruneHistory(std::int32_t current_window)
+{
+    if (!config_.continuous || current_window < next_history_prune_window_) {
+        return;
+    }
+    const std::int32_t minimum_window = current_window - kHistorySeconds;
+    tree_.pruneBefore(minimum_window);
+    for (auto &[thread_id, thread] : thread_trees_) {
+        thread.tree.pruneBefore(minimum_window);
+    }
+    std::uint64_t removed_samples = 0;
+    auto end = window_sample_counts_.lower_bound(minimum_window);
+    for (auto it = window_sample_counts_.begin(); it != end; ++it) {
+        removed_samples += it->second;
+    }
+    window_sample_counts_.erase(window_sample_counts_.begin(), end);
+    sample_count_.fetch_sub(removed_samples, std::memory_order_relaxed);
+    next_history_prune_window_ = current_window + kHistoryPruneIntervalSeconds;
+}
+
+void Sampler::maybePruneTickHistory(std::int32_t current_window)
+{
+    if (!config_.continuous || current_window < next_tick_history_prune_window_) {
+        return;
+    }
+    const std::int32_t minimum_window = current_window - kHistorySeconds;
+    window_ticks_.erase(window_ticks_.begin(), window_ticks_.lower_bound(minimum_window));
+    next_tick_history_prune_window_ = current_window + kHistoryPruneIntervalSeconds;
+}
+
+void Sampler::recordTickDecision(std::uint64_t tick_id, bool keep)
+{
+    if (tick_id < tick_decision_base_) {
+        return;
+    }
+    if (tick_id - tick_decision_base_ >= kTickDecisionCapacity) {
+        const std::uint64_t new_base = tick_id - kTickDecisionCapacity + 1;
+        const std::uint64_t remove_count = new_base - tick_decision_base_;
+        if (remove_count >= tick_decisions_.size()) {
+            tick_decisions_.clear();
+        }
+        else {
+            tick_decisions_.erase(tick_decisions_.begin(),
+                                  tick_decisions_.begin() + static_cast<std::ptrdiff_t>(remove_count));
+        }
+        tick_decision_base_ = new_base;
+    }
+    const std::size_t offset = static_cast<std::size_t>(tick_id - tick_decision_base_);
+    if (tick_decisions_.size() <= offset) {
+        tick_decisions_.resize(offset + 1, 0);
+    }
+    tick_decisions_[offset] = keep ? 2 : 1;
+    std::erase_if(buckets_, [this](const auto &entry) { return entry.first < tick_decision_base_; });
 }
 
 void Sampler::flushOrDrop(std::uint64_t tick_id, bool keep)
@@ -368,10 +431,7 @@ void Sampler::aggregatorLoop()
         while (ticks_.try_dequeue(ev)) {
             bool keep = !ticked || ev.mspt_ms > threshold;
             if (ticked) {
-                if (tick_decisions_.size() <= ev.tick_id) {
-                    tick_decisions_.resize(static_cast<std::size_t>(ev.tick_id + 1), 0);
-                }
-                tick_decisions_[static_cast<std::size_t>(ev.tick_id)] = keep ? 2 : 1;
+                recordTickDecision(ev.tick_id, keep);
             }
             if (recovery_sink_) {
                 recovery_sink_->journalTickEvent(ev.tick_id, ev.mspt_ms);
@@ -383,8 +443,12 @@ void Sampler::aggregatorLoop()
             if (!ticked) {
                 acceptSample(s);
             }
-            else if (s.tick_id < tick_decisions_.size() && tick_decisions_[static_cast<std::size_t>(s.tick_id)] != 0) {
-                if (tick_decisions_[static_cast<std::size_t>(s.tick_id)] == 2) {
+            else if (s.tick_id < tick_decision_base_) {
+                continue;
+            }
+            else if (const std::size_t offset = static_cast<std::size_t>(s.tick_id - tick_decision_base_);
+                     offset < tick_decisions_.size() && tick_decisions_[offset] != 0) {
+                if (tick_decisions_[offset] == 2) {
                     acceptSample(s);
                 }
             }

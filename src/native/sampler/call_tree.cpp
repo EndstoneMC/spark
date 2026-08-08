@@ -50,6 +50,23 @@ std::uint64_t CallTree::sampleCount() const
 
 namespace {
 
+void pruneNode(CallTree::Node &node, std::int32_t minimum_window)
+{
+    node.times.erase(node.times.begin(), node.times.lower_bound(minimum_window));
+    for (auto &[key, child] : node.children) {
+        pruneNode(*child, minimum_window);
+    }
+}
+
+}  // namespace
+
+void CallTree::pruneBefore(std::int32_t minimum_window)
+{
+    pruneNode(root_, minimum_window);
+}
+
+namespace {
+
 void mergeNode(CallTree::Node &dst, const CallTree::Node &src)
 {
     for (const auto &[window, count] : src.times) {
