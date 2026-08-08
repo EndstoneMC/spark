@@ -206,6 +206,57 @@ int main()
         std::filesystem::remove(path);
     }
 
+    // --- serverPropertiesToJsonString tests ---
+
+    // Empty map -> "{}"
+    {
+        std::map<std::string, std::string> empty;
+        assert(serverPropertiesToJsonString(empty) == "{}");
+    }
+
+    // Boolean values become JSON booleans
+    {
+        std::map<std::string, std::string> props = {{"flag", "true"}, {"other", "false"}};
+        std::string json = serverPropertiesToJsonString(props);
+        assert(json == "{\"flag\":true,\"other\":false}");
+    }
+
+    // Numeric values become JSON numbers
+    {
+        std::map<std::string, std::string> props = {{"max-players", "20"}, {"port", "19132"}};
+        std::string json = serverPropertiesToJsonString(props);
+        assert(json == "{\"max-players\":20,\"port\":19132}");
+    }
+
+    // String values become JSON strings
+    {
+        std::map<std::string, std::string> props = {{"level", "info"}, {"algo", "snappy"}};
+        std::string json = serverPropertiesToJsonString(props);
+        assert(json == "{\"algo\":\"snappy\",\"level\":\"info\"}");
+    }
+
+    // Mixed types
+    {
+        std::map<std::string, std::string> props = {
+            {"max-players", "20"},
+            {"client-side-chunk-generation-enabled", "true"},
+            {"compression-algorithm", "snappy"},
+            {"server-build-radius-ratio", "Disabled"},
+        };
+        std::string json = serverPropertiesToJsonString(props);
+        assert(json == "{\"client-side-chunk-generation-enabled\":true,"
+                         "\"compression-algorithm\":\"snappy\","
+                         "\"max-players\":20,"
+                         "\"server-build-radius-ratio\":\"Disabled\"}");
+    }
+
+    // String values with special characters are escaped
+    {
+        std::map<std::string, std::string> props = {{"key", "a\"b\\c"}};
+        std::string json = serverPropertiesToJsonString(props);
+        assert(json == "{\"key\":\"a\\\"b\\\\c\"}");
+    }
+
     std::printf("All server.properties parser tests passed.\n");
     return 0;
 }

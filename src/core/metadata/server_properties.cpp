@@ -1,6 +1,7 @@
 #include "core/metadata/server_properties.h"
 
 #include <array>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -65,6 +66,45 @@ std::string trim(std::string_view s)
     return std::string(s.substr(start, end - start));
 }
 
+bool isAllDigits(std::string_view s)
+{
+    if (s.empty()) {
+        return false;
+    }
+    for (char c : s) {
+        if (c < '0' || c > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+void appendJsonString(std::string &out, std::string_view value)
+{
+    out += '"';
+    for (char c : value) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\b': out += "\\b"; break;
+        case '\f': out += "\\f"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20) {
+                char buf[8];
+                std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                out += buf;
+            } else {
+                out += c;
+            }
+            break;
+        }
+    }
+    out += '"';
+}
+
 }  // namespace
 
 std::map<std::string, std::string> parseServerProperties(
@@ -109,6 +149,31 @@ std::map<std::string, std::string> parseServerProperties(
     }
 
     return result;
+}
+
+std::string serverPropertiesToJsonString(
+    const std::map<std::string, std::string> &properties)
+{
+    std::string out;
+    out += '{';
+    bool first = true;
+    for (const auto &[key, value] : properties) {
+        if (!first) {
+            out += ',';
+        }
+        first = false;
+        appendJsonString(out, key);
+        out += ':';
+        if (value == "true" || value == "false") {
+            out += value;
+        } else if (isAllDigits(value)) {
+            out += value;
+        } else {
+            appendJsonString(out, value);
+        }
+    }
+    out += '}';
+    return out;
 }
 
 }  // namespace spark

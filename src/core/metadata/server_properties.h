@@ -14,6 +14,14 @@ namespace spark {
 std::map<std::string, std::string> parseServerProperties(
     const std::filesystem::path &file);
 
+// Serializes a properties map into the JSON object string format expected by
+// the spark viewer's server_configurations field. Boolean strings ("true"/
+// "false") become JSON booleans, all-digit strings become JSON numbers, and
+// everything else becomes a JSON string. This matches the upstream Java
+// spark PropertiesConfigParser + Gson.toJsonTree pipeline.
+std::string serverPropertiesToJsonString(
+    const std::map<std::string, std::string> &properties);
+
 }  // namespace spark
 
 #endif  // SPARK_CORE_METADATA_SERVER_PROPERTIES_H

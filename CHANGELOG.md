@@ -98,6 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every function to the next unwind-table start.
 - Keep addresses in unwind gaps and PLT entries out of adjacent functions while
   normalizing sampled PCs inside exact half-open function ranges.
+- Serialize `server.properties` metadata as a single JSON object string under the
+  `"server.properties"` key in `server_configurations`, matching the upstream
+  spark viewer's expected format. Previously, individual property key-value pairs
+  were sent as separate map entries, which caused the spark viewer to crash with
+  "An unexpected error occurred".
 
 ### Changed
 

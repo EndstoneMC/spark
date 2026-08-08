@@ -66,9 +66,18 @@ void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx,
     }
 
     // Parse server.properties with a strict allowlist for performance
-    // diagnostics. Sensitive fields are never included.
-    ctx.server_configurations =
-        spark::parseServerProperties(std::filesystem::current_path() / "server.properties");
+    // diagnostics. Sensitive fields are never included. The upstream Java
+    // spark viewer expects server_configurations to be a map of config file
+    // names to JSON object strings (not individual key-value pairs), so the
+    // parsed properties are serialized as a single JSON object under the
+    // "server.properties" key.
+    auto properties = spark::parseServerProperties(
+        std::filesystem::current_path() / "server.properties");
+    if (!properties.empty()) {
+        ctx.server_configurations.clear();
+        ctx.server_configurations["server.properties"] =
+            spark::serverPropertiesToJsonString(properties);
+    }
 }
 
 void EndstoneMetadataProvider::gatherWorldMetadata(ExportContext &ctx)
