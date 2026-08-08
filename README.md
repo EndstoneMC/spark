@@ -145,9 +145,9 @@ Run the command again to disable the monitor.
   grouping threads by pool name.
 * `--combine-all` — merge all sampled threads into a single viewer root instead of
   grouping by pool name.
-* `--include-sleeping` — execution profiles only. Also sample threads while they are
-  idle. Without this flag, Linux task state and Windows per-thread CPU cycle deltas
-  avoid capturing threads that did not run.
+* `--ignore-sleeping` — execution profiles only. Skip threads that are idle
+  (Linux task state or Windows per-thread CPU cycle deltas). Without this flag,
+  sleeping threads are included in the sample set.
 * `--alloc` — record sampled native allocation call stacks instead of execution time.
 * `--alloc-live-only` — record only sampled allocations retained at stop for leak
   analysis; this implies `--alloc`.

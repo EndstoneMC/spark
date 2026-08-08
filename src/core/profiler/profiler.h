@@ -24,7 +24,7 @@ struct ProfilerOptions {
     std::int32_t allocation_interval_bytes = kDefaultAllocationIntervalBytes;
     long timeout_seconds = -1;
     long only_ticks_over_ms = -1;  // -1 = disabled
-    bool ignore_sleeping = true;
+    bool ignore_sleeping = false;
     bool regex = false;
     std::vector<std::string> threads;
     bool alloc = false;

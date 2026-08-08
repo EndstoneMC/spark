@@ -22,7 +22,7 @@ namespace spark {
 
 struct SamplerConfig {
     int interval_us = 4000;
-    bool ignore_sleeping = true;
+    bool ignore_sleeping = false;
     bool all_threads = false;
     bool regex_threads = false;
     std::vector<std::string> thread_patterns;

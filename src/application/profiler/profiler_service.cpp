@@ -147,7 +147,7 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
         return;
     }
     options.only_ticks_over_ms = tick_threshold.value_or(-1);
-    options.ignore_sleeping = !args.boolFlag("include-sleeping");
+    options.ignore_sleeping = args.boolFlag("ignore-sleeping");
     if (args.boolFlag("combine-all") && args.boolFlag("not-combined")) {
         sender.sendErrorMessage("--combine-all and --not-combined cannot be used together.");
         return;

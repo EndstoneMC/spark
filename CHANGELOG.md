@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING**: Include sleeping threads in execution profiles by default,
+  replacing `--include-sleeping` with `--ignore-sleeping` to opt out.
 - Group sampled threads by pool name by default (matching upstream spark's
   `BY_POOL` mode) instead of emitting separate per-thread viewer roots.
 - Add deterministic Linux symbol-index timing, memory, range-quality, and batch
