@@ -48,6 +48,7 @@ jobs:
         run: |
           python tests/test_release_changelog.py
           python tests/test_profile_evaluator.py
+          python tests/test_architecture_boundaries.py
 
       - name: Cache Conan packages
         uses: actions/cache@v5
@@ -64,8 +65,8 @@ jobs:
       - name: Build
         run: cmake --build --preset conan-relwithdebinfo
 
-      - name: Run self-test
-        run: ./build/RelWithDebInfo/spark_selftest --seconds=1
+      - name: Run tests
+        run: ctest --test-dir build/RelWithDebInfo --output-on-failure
 
       - name: Upload test artifact
         uses: actions/upload-artifact@v7
@@ -124,8 +125,8 @@ jobs:
       - name: Build
         run: cmake --build --preset conan-relwithdebinfo
 
-      - name: Run self-test
-        run: .\build\RelWithDebInfo\spark_selftest.exe --seconds=1
+      - name: Run tests
+        run: ctest --test-dir build/RelWithDebInfo --output-on-failure
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v7

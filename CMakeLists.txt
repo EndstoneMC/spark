@@ -7,6 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(ENDSTONE_SPARK_BUILD_SELFTEST "Build the offline sampler self-test tool" ON)
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
 # --- dependencies (from conan) ---
 find_package(cpptrace REQUIRED)
 find_package(concurrentqueue REQUIRED)

@@ -58,3 +58,13 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x
 endif ()
 
 add_test(NAME spark_selftest COMMAND spark_selftest --seconds=1)
+
+# --- Python tests (no compilation needed) ---
+add_test(NAME spark_architecture_boundaries_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_architecture_boundaries.py)
+
+add_test(NAME spark_release_changelog_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_release_changelog.py)
+
+add_test(NAME spark_profile_evaluator_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_profile_evaluator.py)
