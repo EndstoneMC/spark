@@ -15,6 +15,7 @@
 #include <moodycamel/concurrentqueue.h>
 
 #include "native/sampler/call_tree.h"
+#include "native/sampler/heartbeat.h"
 #include "native/sampler/thread_selector.h"
 #include "native/sampler/types.h"
 
@@ -99,6 +100,10 @@ public:
         return last_error_;
     }
 
+    // Heartbeats updated by the sampler and aggregator threads.
+    const Heartbeat &samplerHeartbeat() const { return sampler_heartbeat_; }
+    const Heartbeat &aggregatorHeartbeat() const { return aggregator_heartbeat_; }
+
 private:
     struct TickEvent {
         std::uint64_t tick_id;
@@ -144,6 +149,10 @@ private:
 
     // main-thread state (written by onTick, read at export after join)
     std::map<std::int32_t, WindowTickStats> window_ticks_;
+
+    // Heartbeats for stall-watchdog diagnostics (updated by service threads).
+    Heartbeat sampler_heartbeat_;
+    Heartbeat aggregator_heartbeat_;
 };
 
 }  // namespace spark

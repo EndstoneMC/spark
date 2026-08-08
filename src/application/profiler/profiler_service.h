@@ -89,6 +89,10 @@ public:
     bool exporting() const { return exporting_.load(); }
     bool isBackgroundRunning() const { return session_type_ == SessionType::Background; }
 
+    // Heartbeats from the execution sampler's service threads.
+    const Heartbeat &samplerHeartbeat() const { return profiler_.samplerHeartbeat(); }
+    const Heartbeat &aggregatorHeartbeat() const { return profiler_.aggregatorHeartbeat(); }
+
     // Starts the background profiler if configured. Called on enable.
     void startBackgroundProfiler();
 

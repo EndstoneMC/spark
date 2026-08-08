@@ -29,7 +29,8 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
               config_.bytebin_url, config_.viewer_url),
       activity_log_(std::move(activity_log_file)),
       activity_command_(activity_log_),
-      tick_monitor_(notifier_)
+      tick_monitor_(notifier_),
+      watchdog_(server_heartbeat_)
 {
     activity_log_.load();
     registerCommands();
@@ -37,6 +38,8 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
     profiler_.setNetworkSnapshotProvider([this]() { return health_.networkSnapshots(); });
     profiler_.setActivityLogProvider([this]() -> ActivityLog * { return &activity_log_; });
     health_.setActivityLogProvider([this]() -> ActivityLog * { return &activity_log_; });
+    watchdog_.setSamplerHeartbeat(&profiler_.samplerHeartbeat());
+    watchdog_.setAggregatorHeartbeat(&profiler_.aggregatorHeartbeat());
 }
 
 void SparkApplication::registerCommands()
@@ -105,6 +108,7 @@ bool SparkApplication::dispatchCommand(CommandSender &sender,
 
 void SparkApplication::onTick(double mspt)
 {
+    server_heartbeat_.beat();
     if (statistics_.onTick(mspt)) {
         statistics_.recordPlayerCount(metadata_provider_.playerCount());
     }
@@ -122,12 +126,14 @@ void SparkApplication::onTick(double mspt)
 
 void SparkApplication::enable()
 {
+    watchdog_.start();
     profiler_.startBackgroundProfiler();
 }
 
 void SparkApplication::shutdown()
 {
     profiler_.shutdown();
+    watchdog_.stop();
 }
 
 }  // namespace spark

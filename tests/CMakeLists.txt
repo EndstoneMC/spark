@@ -54,6 +54,12 @@ set_target_properties(spark_crypto_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_crypto_test COMMAND spark_crypto_test)
 
+add_executable(spark_stall_watchdog_test core/recovery/stall_watchdog_test.cpp)
+target_link_libraries(spark_stall_watchdog_test PRIVATE spark_core)
+set_target_properties(spark_stall_watchdog_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_stall_watchdog_test COMMAND spark_stall_watchdog_test)
+
 add_executable(spark_symbol_guess_dwarf_test native/symbol/symbol_guess_dwarf_test.cpp)
 target_link_libraries(spark_symbol_guess_dwarf_test PRIVATE spark_core)
 set_target_properties(spark_symbol_guess_dwarf_test PROPERTIES

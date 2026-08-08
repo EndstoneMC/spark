@@ -144,6 +144,10 @@ void Sampler::resetSession()
     sample_count_.store(0, std::memory_order_relaxed);
     sampler_tid_.store(0, std::memory_order_relaxed);
     aggregator_tid_.store(0, std::memory_order_relaxed);
+    sampler_heartbeat_.sequence.store(0, std::memory_order_relaxed);
+    sampler_heartbeat_.last_ns.store(0, std::memory_order_relaxed);
+    aggregator_heartbeat_.sequence.store(0, std::memory_order_relaxed);
+    aggregator_heartbeat_.last_ns.store(0, std::memory_order_relaxed);
 }
 
 std::int32_t Sampler::currentWindow() const
@@ -315,6 +319,7 @@ void Sampler::samplerLoop()
             samples_.enqueue(std::move(sample));
             break;
         }
+        sampler_heartbeat_.beat();
     }
     sampler_tid_.store(0, std::memory_order_release);
 }
@@ -383,9 +388,11 @@ void Sampler::aggregatorLoop()
 
     while (agg_running_.load()) {
         drain();
+        aggregator_heartbeat_.beat();
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     drain();  // final: sampler has stopped, so this empties the queues
+    aggregator_heartbeat_.beat();
 
     if (!ticked) {  // disabled => keep everything still buffered
         for (auto &[tick_id, samples] : buckets_) {

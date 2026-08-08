@@ -15,6 +15,7 @@
 #include "application/tick_monitor/tick_monitor_command.h"
 #include "core/activity/activity_log.h"
 #include "core/config/spark_config.h"
+#include "core/recovery/stall_watchdog.h"
 #include "core/stats/statistics_service.h"
 
 namespace spark {
@@ -69,6 +70,11 @@ private:
     TickMonitorCommand tick_monitor_;
     CommandRegistry registry_;
     std::uint64_t tick_counter_ = 0;
+
+    // Stall detection: server heartbeat updated every tick, watchdog runs
+    // on its own thread and never calls Endstone APIs.
+    Heartbeat server_heartbeat_;
+    StallWatchdog watchdog_;
 };
 
 }  // namespace spark

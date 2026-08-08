@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "native/alloc/allocation_sampler.h"
+#include "native/sampler/heartbeat.h"
 #include "core/profiler/profile_mode.h"
 #include "core/stats/ping_statistics.h"
 #include "native/sampler/sampler.h"
@@ -122,6 +123,10 @@ public:
     std::string stop(const ExportContext &ctx);
     bool cancel(std::string &error);
     void cancel();  // compatibility helper
+
+    // Heartbeats from the execution sampler's service threads.
+    const Heartbeat &samplerHeartbeat() const { return sampler_.samplerHeartbeat(); }
+    const Heartbeat &aggregatorHeartbeat() const { return sampler_.aggregatorHeartbeat(); }
 
     // Unconditionally closes the active backend and destroys native hook
     // trampolines. Must run before the plugin module is unloaded.
