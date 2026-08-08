@@ -42,7 +42,7 @@ ProfileExporter::Result ProfileExporter::exportProfile(const Profiler &profiler,
         std::string compressed = gzipCompress(body);
         if (save_to_file) {
             ProfileFileResult saved =
-                saveProfileToDirectory(storage_dir_, compressed, nowMs());
+                saveProfileToDirectory(storage_dir_, body, nowMs());
             if (saved.ok) {
                 result.outcome = ExportOutcome::Saved;
                 result.message = "Saved to " + saved.path.string() +
@@ -59,7 +59,7 @@ ProfileExporter::Result ProfileExporter::exportProfile(const Profiler &profiler,
                 result.message = viewer_url_ + upload_result.key;
             } else {
                 ProfileFileResult saved =
-                    saveProfileToDirectory(storage_dir_, compressed, nowMs());
+                    saveProfileToDirectory(storage_dir_, body, nowMs());
                 if (saved.ok) {
                     result.outcome = ExportOutcome::Saved;
                     result.message = "Upload failed (" + upload_result.error +

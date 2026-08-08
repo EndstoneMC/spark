@@ -17,10 +17,10 @@ struct ProfileFileResult {
 // Returns the dedicated local-profile directory below the plugin data folder.
 std::filesystem::path profileStorageDirectory(const std::filesystem::path &data_folder);
 
-// Atomically writes an already-compressed spark profile to a unique file in
-// `folder`. Existing profiles are never overwritten.
+// Atomically writes a spark profile (raw uncompressed protobuf) to a unique
+// file in `folder`. Existing profiles are never overwritten.
 ProfileFileResult saveProfileToDirectory(const std::filesystem::path &folder,
-                                         std::string_view compressed_profile,
+                                         std::string_view profile_data,
                                          std::int64_t timestamp_ms);
 
 }  // namespace spark

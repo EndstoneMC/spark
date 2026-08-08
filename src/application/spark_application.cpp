@@ -6,7 +6,6 @@
 #include <utility>
 
 #include "native/sampler/heartbeat.h"
-#include "net/gzip.h"
 #include "net/profile_file.h"
 
 namespace spark {
@@ -198,9 +197,8 @@ void SparkApplication::recoverPreviousSession()
 
     // Compress and save.
     try {
-        std::string compressed = gzipCompress(profile.serialized_proto);
         ProfileFileResult saved = saveProfileToDirectory(
-            fs::path(recovery_dir_).parent_path(), compressed, profile.session_start_ms);
+            fs::path(recovery_dir_).parent_path(), profile.serialized_proto, profile.session_start_ms);
         if (saved.ok) {
             notifier_.notify("crash recovery",
                              "Recovered profile saved to " + saved.path.string() +

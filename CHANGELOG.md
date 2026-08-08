@@ -67,6 +67,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Save `.sparkprofile` files as raw uncompressed protobuf instead of gzip-compressed
+  data. The spark viewer's file upload expects uncompressed protobuf; gzip-wrapped
+  files could not be opened when manually uploaded to spark.lucko.me. Bytebin uploads
+  remain gzip-compressed as before.
+- Skip crash recovery for sessions that ended cleanly. Normal profiler stop,
+  plugin unload, and BDS shutdown all write a CLEAN_END marker to the recovery
+  journal; on the next startup, these journals are cleaned up without generating
+  a duplicate `.sparkprofile`. Only journals without CLEAN_END (crash or forced
+  termination) trigger recovery.
+- Refuse recovery for allocation live-only (`--alloc-live-only`) sessions.
+  The recovery journal records allocation requests but not free/realloc events,
+  so retained-allocation lifecycle state cannot be reconstructed. The recovery
+  player returns an error instead of producing a semantically incorrect profile.
+- Stop the recovery journal writer when the profiler is shut down in allocation
+  mode, preventing the writer thread from outliving the plugin during unload.
+- Prevent BDS crash when running `/spark health` after ~5 minutes of uptime.
+  The network interface display loop used `std::vformat` with 8 `std::string`
+  arguments, which threw a non-standard exception on Linux/libc++ once network
+  monitoring data became available. Replaced with direct string concatenation.
+- Catch any uncaught C++ exception in command dispatch and report it as an
+  error message instead of letting it propagate to `MinecraftCommands` and
+  trigger `std::terminate`.
 - Recover Linux function extents from validated CIE/FDE records, including
   unindexed records in a safely terminated `.eh_frame`, instead of extending
   every function to the next unwind-table start.
