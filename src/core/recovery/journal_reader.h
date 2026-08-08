@@ -22,6 +22,7 @@ struct SessionConfig {
     bool ignore_sleeping = false;
     std::uint8_t thread_grouper = 1;  // ByPool
     std::uint8_t profile_type = 0;    // 0=execution, 1=allocation
+    bool live_only = false;           // allocation live-only mode
     std::string creator_name = "Console";
     bool creator_is_player = false;
     std::string comment;

@@ -311,7 +311,7 @@ void testSessionConfigRoundTrip()
 {
     std::vector<std::string> patterns = {"Server thread", "Worker-*"};
     JournalBuffer payload = buildSessionConfigPayload(
-        8000, 50, true, false, true, 2, 1, "Console", false, "test profile", patterns);
+        8000, 50, true, false, true, 2, 1, true, "Console", false, "test profile", patterns);
     auto record = serializeRecord(RecordType::SessionConfig, 0, payload);
 
     JournalRecord rec;
@@ -328,6 +328,7 @@ void testSessionConfigRoundTrip()
     assert(sc.ignore_sleeping);
     assert(sc.thread_grouper == 2);
     assert(sc.profile_type == 1);
+    assert(sc.live_only);
     assert(sc.creator_name == "Console");
     assert(!sc.creator_is_player);
     assert(sc.comment == "test profile");
@@ -352,7 +353,7 @@ void testRecoveryPlayerReplay()
         std::exit(1);
     }
 
-    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0,
+    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false,
                                 "Console", false, "replay test", {"Server thread"});
     writer.journalModuleDef(0, "bedrock_server");
     writer.journalThreadDef(100, 200, "Server thread");
@@ -403,6 +404,113 @@ void testRecoveryPlayerEmptyJournal()
     std::cout << "testRecoveryPlayerEmptyJournal: PASS\n";
 }
 
+void testCleanEndDetected()
+{
+    auto dir = makeTempDir();
+    RecoveryWriter::Config cfg;
+    cfg.directory = dir / "clean-session";
+    cfg.session_id = 200000;
+    cfg.flush_interval_ms = 50;
+    cfg.sync_interval_ms = 50;
+
+    RecoveryWriter writer(cfg);
+    assert(writer.start());
+
+    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false,
+                                "Console", false, "clean stop", {});
+    writer.journalModuleDef(0, "bedrock_server");
+    writer.journalThreadDef(1, 100, "Server thread");
+
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 0;
+    sample.window = 0;
+    sample.weight = 4000;
+    sample.frames.push_back({0, 0x1000, 0});
+    writer.journalSample(sample);
+    writer.journalTickEvent(0, 5.0);
+    writer.journalCleanEnd();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    writer.stop();
+
+    auto result = RecoveryPlayer::replay(cfg.directory);
+    assert(result.valid);
+    assert(result.has_clean_end);
+    assert(result.sample_count == 1);
+    std::cout << "testCleanEndDetected: PASS\n";
+}
+
+void testNoCleanEndRecovered()
+{
+    auto dir = makeTempDir();
+    RecoveryWriter::Config cfg;
+    cfg.directory = dir / "crash-session";
+    cfg.session_id = 300000;
+    cfg.flush_interval_ms = 50;
+    cfg.sync_interval_ms = 50;
+
+    RecoveryWriter writer(cfg);
+    assert(writer.start());
+
+    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false,
+                                "Console", false, "crashed", {});
+    writer.journalModuleDef(0, "bedrock_server");
+    writer.journalThreadDef(1, 100, "Server thread");
+
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 0;
+    sample.window = 0;
+    sample.weight = 4000;
+    sample.frames.push_back({0, 0x1000, 0});
+    writer.journalSample(sample);
+    // No journalCleanEnd() - simulate crash.
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    writer.stop();
+
+    auto result = RecoveryPlayer::replay(cfg.directory);
+    assert(result.valid);
+    assert(!result.has_clean_end);
+    assert(result.sample_count == 1);
+    std::cout << "testNoCleanEndRecovered: PASS\n";
+}
+
+void testLiveOnlyRefused()
+{
+    auto dir = makeTempDir();
+    RecoveryWriter::Config cfg;
+    cfg.directory = dir / "live-only-session";
+    cfg.session_id = 400000;
+    cfg.flush_interval_ms = 50;
+    cfg.sync_interval_ms = 50;
+
+    RecoveryWriter writer(cfg);
+    assert(writer.start());
+
+    writer.journalSessionConfig(524287, 0, true, false, false, 1, 1, true,
+                                "Console", false, "live-only", {});
+    writer.journalModuleDef(0, "bedrock_server");
+    writer.journalThreadDef(1, 100, "Server thread");
+
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 0;
+    sample.window = 0;
+    sample.weight = 524287;
+    sample.frames.push_back({0, 0x1000, 0});
+    writer.journalSample(sample);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    writer.stop();
+
+    auto result = RecoveryPlayer::replay(cfg.directory);
+    assert(!result.valid);
+    assert(result.error.find("live-only") != std::string::npos);
+    std::cout << "testLiveOnlyRefused: PASS\n";
+}
+
 }  // namespace
 
 int main()
@@ -419,6 +527,9 @@ int main()
     testSessionConfigRoundTrip();
     testRecoveryPlayerReplay();
     testRecoveryPlayerEmptyJournal();
+    testCleanEndDetected();
+    testNoCleanEndRecovered();
+    testLiveOnlyRefused();
     std::cout << "All journal tests passed.\n";
     return 0;
 }

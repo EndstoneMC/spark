@@ -72,7 +72,7 @@ public:
     void journalSessionConfig(
         std::uint32_t interval_us, std::int32_t only_ticks_over_ms,
         bool all_threads, bool regex_threads, bool ignore_sleeping,
-        std::uint8_t thread_grouper, std::uint8_t profile_type,
+        std::uint8_t thread_grouper, std::uint8_t profile_type, bool live_only,
         std::string_view creator_name,
         bool creator_is_player, std::string_view comment,
         const std::vector<std::string> &thread_patterns);

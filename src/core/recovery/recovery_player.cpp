@@ -173,6 +173,10 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
 
     // Build profile metadata from the session config record.
     const SessionConfig &sc = journal.session_config;
+    if (sc.present && sc.live_only) {
+        result.error = "allocation live-only recovery is not supported";
+        return result;
+    }
     ProfileMetadata meta;
     meta.start_time_ms = result.session_start_ms;
     meta.end_time_ms = nowMs();

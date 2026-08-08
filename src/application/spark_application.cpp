@@ -187,6 +187,15 @@ void SparkApplication::recoverPreviousSession()
         return;
     }
 
+    // Skip recovery for sessions that ended cleanly.  The profiler already
+    // exported the profile through the normal path; the journal is just
+    // leftover state that should be cleaned up.
+    if (profile.has_clean_end) {
+        fs::remove_all(recovery_dir_, ec);
+        fs::create_directories(recovery_dir_, ec);
+        return;
+    }
+
     // Compress and save.
     try {
         std::string compressed = gzipCompress(profile.serialized_proto);

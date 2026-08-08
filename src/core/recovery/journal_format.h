@@ -15,7 +15,7 @@ namespace spark {
 
 // Journal format constants.
 inline constexpr char kJournalMagic[8] = {'S', 'P', 'R', 'K', 'J', 'N', 'R', 'L'};
-inline constexpr std::uint16_t kJournalVersion = 1;
+inline constexpr std::uint16_t kJournalVersion = 2;
 
 // File header size: 8 (magic) + 2 (version) + 2 (reserved) + 8 (session_id) + 8 (created_ns) + 4 (segment) = 32
 inline constexpr std::size_t kFileHeaderSize = 32;
@@ -169,7 +169,7 @@ inline JournalBuffer buildCleanEndPayload(std::uint64_t timestamp_ns)
 inline JournalBuffer buildSessionConfigPayload(
     std::uint32_t interval_us, std::int32_t only_ticks_over_ms,
     bool all_threads, bool regex_threads, bool ignore_sleeping,
-    std::uint8_t thread_grouper, std::uint8_t profile_type,
+    std::uint8_t thread_grouper, std::uint8_t profile_type, bool live_only,
     std::string_view creator_name,
     bool creator_is_player, std::string_view comment,
     const std::vector<std::string> &thread_patterns)
@@ -182,6 +182,7 @@ inline JournalBuffer buildSessionConfigPayload(
     p.u8(ignore_sleeping ? 1 : 0);
     p.u8(thread_grouper);
     p.u8(profile_type);
+    p.u8(live_only ? 1 : 0);
     p.str(creator_name);
     p.u8(creator_is_player ? 1 : 0);
     p.str(comment);

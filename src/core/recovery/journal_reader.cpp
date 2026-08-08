@@ -149,6 +149,9 @@ bool JournalRecord::asSessionConfig(SessionConfig &config) const
     config.ignore_sleeping = b != 0;
     if (!c.u8(config.thread_grouper)) return false;
     if (!c.u8(config.profile_type)) return false;
+    std::uint8_t lo;
+    if (!c.u8(lo)) return false;
+    config.live_only = lo != 0;
     std::uint16_t len;
     if (!c.u16(len)) return false;
     std::string_view sv;

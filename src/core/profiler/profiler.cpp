@@ -317,7 +317,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
                     options.only_ticks_over_ms > 0 ? static_cast<std::int32_t>(options.only_ticks_over_ms) : 0,
                     config.all_threads, config.regex_threads, false,
                     static_cast<std::uint8_t>(options.thread_grouper),
-                    1,
+                    1, config.live_only,
                     options.creator_name, options.creator_is_player,
                     options.comment, options.threads);
                 recovery_writer_->requestFlush();
@@ -358,7 +358,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
                     options.only_ticks_over_ms > 0 ? static_cast<std::int32_t>(options.only_ticks_over_ms) : 0,
                     config.all_threads, config.regex_threads, config.ignore_sleeping,
                     static_cast<std::uint8_t>(options.thread_grouper),
-                    0,
+                    0, false,
                     options.creator_name, options.creator_is_player,
                     options.comment, options.threads);
                 recovery_writer_->requestFlush();
