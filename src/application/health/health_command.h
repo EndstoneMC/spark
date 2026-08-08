@@ -20,7 +20,7 @@ public:
 
     void cmdTps(CommandSender &sender);
     void cmdPing(CommandSender &sender, const Arguments &args);
-    void cmdHealth(CommandSender &sender);
+    void cmdHealth(CommandSender &sender, const Arguments &args);
 
     // Called periodically (every ~10 seconds) to poll ping data.
     void pollPing();
@@ -37,6 +37,7 @@ public:
 
 private:
     void sendPerformanceReport(CommandSender &sender, const StatisticsSnapshot &stats);
+    void uploadHealthReport(CommandSender &sender);
 
     StatisticsService &statistics_;
     ProfileMetadataProvider &metadata_provider_;

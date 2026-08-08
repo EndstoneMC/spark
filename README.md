@@ -27,7 +27,8 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 | `/spark profiler cancel`        | Stop profiling without generating a profile.              |
 | `/spark tps`                    | Show rolling TPS, MSPT distributions, and CPU usage.      |
 | `/spark ping`                  | Show player ping RTT statistics (min/median/p95/max).    |
-| `/spark health`                 | Add process and host resources to the performance report. |
+| `/spark health`                 | Add process and host resources to the performance report.  |
+| `/spark health --upload`        | Upload a health report to the spark viewer.                |
 | `/spark tickmonitor`            | Report ticks that exceed a duration or baseline change.   |
 
 By default, stopping a profiler uploads the generated profile to spark's bytebin
@@ -87,6 +88,11 @@ omitted instead of being displayed as zero. On Windows, the virtual-memory value
 is the process's reserved or committed address space; swap/page-file usage
 follows Windows commit limit semantics. On Linux, these values use `VmSize` and
 `/proc/meminfo`.
+
+`/spark health --upload` generates a spark `HealthData` protobuf containing the
+same statistics, platform metadata, system resources, 15-minute time-window
+history, and plugin list, then uploads it to the spark viewer. The viewer link
+is printed in chat.
 
 ### `/spark ping`
 

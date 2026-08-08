@@ -14,6 +14,7 @@ inline constexpr int kSparkFormatVersion = 400;
 inline constexpr const char *kBytebinUrl = "https://spark-usercontent.lucko.me/";
 inline constexpr const char *kViewerUrl = "https://spark.lucko.me/";
 inline constexpr const char *kSamplerContentType = "application/x-spark-sampler";
+inline constexpr const char *kHealthContentType = "application/x-spark-health";
 
 }  // namespace spark
 

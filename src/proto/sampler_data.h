@@ -61,6 +61,24 @@ std::string buildSamplerData(const ProfileMetadata &meta, const CallTree &tree,
 std::string buildSamplerData(const ProfileMetadata &meta, const std::vector<ThreadTreeView> &threads,
                              const std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> &resolved);
 
+// Data needed to build a spark `HealthData` protobuf message.
+struct HealthData {
+    std::string creator_name = "Console";
+    bool creator_is_player = false;
+    std::string endstone_version;
+    std::string minecraft_version;
+    PlatformStats platform_stats;
+    SystemStats system_stats;
+    StatisticsSnapshot statistics;
+    std::int64_t generated_time_ms = 0;
+    std::vector<PluginInfo> plugins;
+    std::map<std::string, std::string> extra_platform_metadata;
+    std::map<std::int32_t, WindowStats> window_stats;
+};
+
+// Serialize a spark `HealthData` protobuf message (uncompressed bytes).
+std::string buildHealthData(const HealthData &data);
+
 }  // namespace spark
 
 #endif  // ENDSTONE_SPARK_SAMPLER_DATA_H

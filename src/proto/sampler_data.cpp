@@ -572,4 +572,319 @@ std::string buildSamplerData(const ProfileMetadata &meta, const std::vector<Thre
     return out;
 }
 
+std::string buildHealthData(const HealthData &data)
+{
+    std::string out;
+    ProtoWriter w(out);
+
+    // HealthMetadata (1)
+    {
+        std::string meta;
+        ProtoWriter mw(meta);
+
+        // creator (1): CommandSenderMetadata
+        {
+            std::string c;
+            ProtoWriter cw(c);
+            cw.varint(1, data.creator_is_player ? 1 : 0);
+            cw.string(2, data.creator_name);
+            mw.message(1, c);
+        }
+
+        // platform_metadata (2): PlatformMetadata
+        {
+            std::string p;
+            ProtoWriter pw(p);
+            pw.varint(1, 0);  // type = SERVER
+            pw.string(2, "Endstone");
+            pw.string(3, data.endstone_version);
+            if (!data.minecraft_version.empty()) {
+                pw.string(4, data.minecraft_version);
+            }
+            pw.int32(7, kSparkFormatVersion);
+            pw.string(8, "Endstone");
+            mw.message(2, p);
+        }
+
+        // platform_statistics (3): PlatformStatistics
+        if (data.platform_stats.present) {
+            const PlatformStats &p = data.platform_stats;
+            std::string ps;
+            ProtoWriter pw(ps);
+            if (p.process_mem_present || p.process_virtual_present) {
+                std::string heap;
+                ProtoWriter hw(heap);
+                if (p.process_mem_present) {
+                    hw.int64(1, p.process_mem_bytes);
+                }
+                if (p.process_virtual_present) {
+                    hw.int64(2, p.process_virtual_bytes);
+                }
+                std::string mem;
+                ProtoWriter mw2(mem);
+                mw2.message(1, heap);
+                pw.message(1, mem);
+            }
+            pw.int64(3, p.uptime_ms);
+            if (data.statistics.tps.last_1m.present ||
+                data.statistics.tps.last_5m.present ||
+                data.statistics.tps.last_15m.present) {
+                std::string t;
+                ProtoWriter tw(t);
+                if (data.statistics.tps.last_1m.present) {
+                    tw.real(1, data.statistics.tps.last_1m.value);
+                }
+                if (data.statistics.tps.last_5m.present) {
+                    tw.real(2, data.statistics.tps.last_5m.value);
+                }
+                if (data.statistics.tps.last_15m.present) {
+                    tw.real(3, data.statistics.tps.last_15m.value);
+                }
+                tw.int32(4, p.target_tps);
+                pw.message(4, t);
+            }
+            if (data.statistics.mspt.last_1m.present ||
+                data.statistics.mspt.last_5m.present) {
+                std::string t;
+                ProtoWriter tw(t);
+                auto write_distribution =
+                    [&](int field, const DistributionValues &distribution) {
+                        if (!distribution.present) {
+                            return;
+                        }
+                        std::string values;
+                        ProtoWriter values_writer(values);
+                        values_writer.real(1, distribution.mean);
+                        values_writer.real(2, distribution.max);
+                        values_writer.real(3, distribution.min);
+                        values_writer.real(4, distribution.median);
+                        values_writer.real(5, distribution.percentile95);
+                        tw.message(field, values);
+                    };
+                write_distribution(1, data.statistics.mspt.last_1m);
+                write_distribution(2, data.statistics.mspt.last_5m);
+                tw.int32(3, p.max_ideal_mspt);
+                pw.message(5, t);
+            }
+            if (p.ping_present) {
+                std::string ping;
+                ProtoWriter pingw(ping);
+                std::string ra;
+                ProtoWriter raw(ra);
+                raw.real(1, p.ping_mean);
+                raw.real(2, p.ping_max);
+                raw.real(3, p.ping_min);
+                raw.real(4, p.ping_median);
+                raw.real(5, p.ping_p95);
+                pingw.message(1, ra);
+                pw.message(6, ping);
+            }
+            if (p.player_count >= 0) {
+                pw.int64(7, p.player_count);
+            }
+            if (p.online_mode > 0) {
+                pw.varint(9, static_cast<std::uint64_t>(p.online_mode));
+            }
+            mw.message(3, ps);
+        }
+
+        // system_statistics (4): SystemStatistics
+        if (data.system_stats.present) {
+            const SystemStats &s = data.system_stats;
+            std::string ss;
+            ProtoWriter sw(ss);
+            if (s.cpu_present ||
+                data.statistics.cpu.process_last_1m.present ||
+                data.statistics.cpu.process_last_15m.present ||
+                data.statistics.cpu.system_last_1m.present ||
+                data.statistics.cpu.system_last_15m.present) {
+                std::string c;
+                ProtoWriter cw(c);
+                if (s.cpu_present && s.cpu_threads > 0) {
+                    cw.int32(1, s.cpu_threads);
+                }
+                if (data.statistics.cpu.process_last_1m.present ||
+                    data.statistics.cpu.process_last_15m.present) {
+                    std::string usage;
+                    ProtoWriter usage_writer(usage);
+                    if (data.statistics.cpu.process_last_1m.present) {
+                        usage_writer.real(1, data.statistics.cpu.process_last_1m.value);
+                    }
+                    if (data.statistics.cpu.process_last_15m.present) {
+                        usage_writer.real(2, data.statistics.cpu.process_last_15m.value);
+                    }
+                    cw.message(2, usage);
+                }
+                if (data.statistics.cpu.system_last_1m.present ||
+                    data.statistics.cpu.system_last_15m.present) {
+                    std::string usage;
+                    ProtoWriter usage_writer(usage);
+                    if (data.statistics.cpu.system_last_1m.present) {
+                        usage_writer.real(1, data.statistics.cpu.system_last_1m.value);
+                    }
+                    if (data.statistics.cpu.system_last_15m.present) {
+                        usage_writer.real(2, data.statistics.cpu.system_last_15m.value);
+                    }
+                    cw.message(3, usage);
+                }
+                if (!s.cpu_model.empty()) {
+                    cw.string(4, s.cpu_model);
+                }
+                sw.message(1, c);
+            }
+            if (s.memory_present || s.swap_present) {
+                std::string mem;
+                ProtoWriter mw2(mem);
+                if (s.memory_present) {
+                    std::string phys;
+                    ProtoWriter pp(phys);
+                    pp.int64(1, s.mem_used);
+                    pp.int64(2, s.mem_total);
+                    mw2.message(1, phys);
+                }
+                if (s.swap_present) {
+                    std::string sw2;
+                    ProtoWriter sp(sw2);
+                    sp.int64(1, s.swap_used);
+                    sp.int64(2, s.swap_total);
+                    mw2.message(2, sw2);
+                }
+                sw.message(2, mem);
+            }
+            if (s.disk_present) {
+                std::string d;
+                ProtoWriter dw(d);
+                dw.int64(1, s.disk_used);
+                dw.int64(2, s.disk_total);
+                sw.message(4, d);
+            }
+            if (s.os_present) {
+                std::string o;
+                ProtoWriter ow(o);
+                if (!s.os_arch.empty()) {
+                    ow.string(1, s.os_arch);
+                }
+                if (!s.os_name.empty()) {
+                    ow.string(2, s.os_name);
+                }
+                if (!s.os_version.empty()) {
+                    ow.string(3, s.os_version);
+                }
+                sw.message(5, o);
+            }
+            sw.message(6, std::string());  // java: empty-but-present (no JVM)
+            if (s.uptime_present) {
+                sw.int64(7, s.uptime_ms);
+            }
+            if (s.net_present) {
+                for (const auto &[name, snap] : s.net_averages) {
+                    std::string netif;
+                    ProtoWriter nw(netif);
+                    auto writeRate = [&nw](int field, const NetworkRateValues &rate) {
+                        if (!rate.present) {
+                            return;
+                        }
+                        std::string ra;
+                        ProtoWriter raw(ra);
+                        raw.real(1, rate.mean);
+                        raw.real(2, rate.max);
+                        raw.real(3, rate.min);
+                        raw.real(4, rate.median);
+                        raw.real(5, rate.percentile95);
+                        nw.message(field, ra);
+                    };
+                    writeRate(1, snap.rx_bytes_per_second);
+                    writeRate(2, snap.tx_bytes_per_second);
+                    writeRate(3, snap.rx_packets_per_second);
+                    writeRate(4, snap.tx_packets_per_second);
+                    std::string entry;
+                    ProtoWriter ew(entry);
+                    ew.string(1, name);
+                    ew.message(2, netif);
+                    sw.message(8, entry);
+                }
+            }
+            mw.message(4, ss);
+        }
+
+        // generated_time (5)
+        mw.int64(5, data.generated_time_ms);
+
+        // sources (7): map<string, PluginOrModMetadata>
+        for (const PluginInfo &pl : data.plugins) {
+            std::string pm;
+            ProtoWriter pmw(pm);
+            pmw.string(1, pl.name);
+            if (!pl.version.empty()) {
+                pmw.string(2, pl.version);
+            }
+            if (!pl.author.empty()) {
+                pmw.string(3, pl.author);
+            }
+            if (!pl.description.empty()) {
+                pmw.string(4, pl.description);
+            }
+            std::string entry;
+            ProtoWriter ew(entry);
+            ew.string(1, pl.name);
+            ew.message(2, pm);
+            mw.message(7, entry);
+        }
+
+        // extra_platform_metadata (8): map<string, string>
+        for (const auto &[key, value] : data.extra_platform_metadata) {
+            std::string entry;
+            ProtoWriter ew(entry);
+            ew.string(1, key);
+            ew.string(2, value);
+            mw.message(8, entry);
+        }
+
+        w.message(1, meta);
+    }
+
+    // time_window_statistics (2): map<int32, WindowStatistics>
+    for (const auto &[window, ws] : data.window_stats) {
+        std::string wstat;
+        ProtoWriter ww(wstat);
+        if (ws.ticks_present) {
+            ww.int32(1, ws.ticks);
+        }
+        if (ws.cpu_process_present) {
+            ww.real(2, ws.cpu_process);
+        }
+        if (ws.cpu_system_present) {
+            ww.real(3, ws.cpu_system);
+        }
+        if (ws.tps_present) {
+            ww.real(4, ws.tps);
+        }
+        if (ws.mspt_present) {
+            ww.real(5, ws.mspt_median);
+            ww.real(6, ws.mspt_max);
+        }
+        if (ws.players_present) {
+            ww.int32(7, ws.players);
+        }
+        if (ws.entities_present) {
+            ww.int32(8, ws.entities);
+        }
+        if (ws.chunks_present) {
+            ww.int32(10, ws.chunks);
+        }
+        if (ws.duration_ms > 0) {
+            ww.int64(11, ws.start_time_ms);
+            ww.int64(12, ws.end_time_ms);
+            ww.int32(13, ws.duration_ms);
+        }
+        std::string entry;
+        ProtoWriter ew(entry);
+        ew.int32(1, window);
+        ew.message(2, wstat);
+        w.message(2, entry);
+    }
+
+    return out;
+}
+
 }  // namespace spark

@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add per-interface network throughput monitoring (RX/TX bytes and packets per
   second) with 15-minute rolling averages, displayed in `/spark health` and
   exported in profile metadata via `SystemStatistics.NetInterface`.
+- Add `/spark health --upload` to generate and upload a spark `HealthData`
+  report (platform metadata, system resources, 15-minute time-window history,
+  and plugin list) to the spark viewer.
 - Preserve exact sampled native PCs and their independently validated function
   roots in forward-compatible profile fields for offline normalization metrics.
 - Resolve Linux vtable labels for shared implementations by parsing Itanium RTTI

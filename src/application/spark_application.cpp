@@ -55,8 +55,8 @@ void SparkApplication::registerCommands()
         });
     registry_.registerCommand(
         "health", "performance and host resource report",
-        [this](CommandSender &sender, const Arguments &) {
-            health_.cmdHealth(sender);
+        [this](CommandSender &sender, const Arguments &args) {
+            health_.cmdHealth(sender, args);
         });
     registry_.registerCommand(
         "tickmonitor", "report unusually long ticks",

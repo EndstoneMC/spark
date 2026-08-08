@@ -132,7 +132,8 @@ ENDSTONE_PLUGIN("spark", "0.4.1", SparkPlugin)
 
     command("spark")
         .description("spark profiler")
-        .usages("/spark", "/spark (tps|ping|health|tickmonitor)<module: SparkStatusModule>",
+        .usages("/spark",
+                "/spark (tps|ping|health|activity|tickmonitor)<module: SparkStatusModule> [flags: message]",
                 "/spark (profiler)<module: SparkProfilerModule> "
                 "(start|stop|info|cancel)[action: SparkProfilerAction] [flags: message]")
         .permissions("endstone.command.spark");

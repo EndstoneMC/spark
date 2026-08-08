@@ -1,11 +1,19 @@
 #include "application/health/health_command.h"
 
+#include <chrono>
 #include <cstdint>
+#include <string>
 #include <utility>
 
 #include "core/command/arguments.h"
+#include "core/profiler/profiler.h"
+#include "core/stats/ping_statistics.h"
 #include "core/stats/system_stats.h"
 #include "core/util/format.h"
+#include "net/bytebin.h"
+#include "net/gzip.h"
+#include "proto/sampler_data.h"
+#include "spark_constants.h"
 
 namespace spark {
 
@@ -135,7 +143,7 @@ void HealthCommand::sendPerformanceReport(CommandSender &sender,
     }
 }
 
-void HealthCommand::cmdHealth(CommandSender &sender)
+void HealthCommand::cmdHealth(CommandSender &sender, const Arguments &args)
 {
     const StatisticsSnapshot statistics = statistics_.snapshot();
     sendPerformanceReport(sender, statistics);
@@ -213,6 +221,91 @@ void HealthCommand::cmdHealth(CommandSender &sender)
                                formatBytes(static_cast<std::uint64_t>(snap.tx_bytes_per_second.mean)),
                                kColorGray);
         }
+    }
+
+    if (args.boolFlag("upload")) {
+        uploadHealthReport(sender);
+    }
+}
+
+void HealthCommand::uploadHealthReport(CommandSender &sender)
+{
+    const std::int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::system_clock::now().time_since_epoch())
+                                   .count();
+
+    ExportContext ctx;
+    metadata_provider_.gatherServerMetadata(ctx, now_ms);
+    ctx.statistics = statistics_.snapshot();
+    ctx.system_stats = gatherSystemStats(".");
+    ctx.system_stats.uptime_present = true;
+    ctx.system_stats.uptime_ms = ctx.uptime_ms;
+    ctx.system_stats.present = true;
+    ctx.window_stats = statistics_.profileWindows(0, now_ms);
+    ctx.ping_samples = pingSamples();
+    ctx.net_snapshots = networkSnapshots();
+
+    HealthData data;
+    data.creator_name = sender.getName();
+    data.creator_is_player = sender.isPlayer();
+    data.endstone_version = ctx.endstone_version;
+    data.minecraft_version = ctx.minecraft_version;
+    data.generated_time_ms = now_ms;
+
+    data.platform_stats.present = true;
+    data.platform_stats.player_count = ctx.player_count;
+    data.platform_stats.online_mode = ctx.online_mode;
+    data.platform_stats.uptime_ms = ctx.uptime_ms;
+    const ProcessStats process = gatherProcessStats();
+    data.platform_stats.process_mem_present = process.rss_present;
+    data.platform_stats.process_mem_bytes = process.rss_bytes;
+    data.platform_stats.process_virtual_present = process.virtual_present;
+    data.platform_stats.process_virtual_bytes = process.virtual_bytes;
+    if (!ctx.ping_samples.empty()) {
+        PingRollingAverage temp(PingStatistics::kWindowSize);
+        for (int v : ctx.ping_samples) {
+            temp.add(v);
+        }
+        data.platform_stats.ping_present = true;
+        data.platform_stats.ping_mean = temp.mean();
+        data.platform_stats.ping_max = static_cast<double>(temp.max());
+        data.platform_stats.ping_min = static_cast<double>(temp.min());
+        data.platform_stats.ping_median = static_cast<double>(temp.median());
+        data.platform_stats.ping_p95 = static_cast<double>(temp.percentile95th());
+    }
+
+    data.system_stats = ctx.system_stats;
+    if (!ctx.net_snapshots.empty()) {
+        data.system_stats.net_present = true;
+        data.system_stats.net_averages = ctx.net_snapshots;
+    }
+
+    data.statistics = ctx.statistics;
+    data.plugins = ctx.plugins;
+    data.window_stats = ctx.window_stats;
+
+    if (!ctx.bds_executable_sha256.empty()) {
+        data.extra_platform_metadata["BDS executable SHA-256"] = "\"" + ctx.bds_executable_sha256 + "\"";
+    }
+    data.extra_platform_metadata["Statistics history available ms"] =
+        std::to_string(ctx.statistics.history_span_ms);
+
+    try {
+        std::string body = buildHealthData(data);
+        std::string compressed = gzipCompress(body);
+        UploadResult result = uploadToBytebin(compressed, kBytebinUrl,
+                                              kHealthContentType,
+                                              std::string("endstone-spark/") + kVersion);
+        if (result.ok) {
+            sender.sendMessage("{}Health report uploaded!{} {}",
+                               kColorGold, kColorGray,
+                               std::string(kViewerUrl) + result.key);
+        } else {
+            sender.sendErrorMessage("Health report upload failed: {}", result.error);
+        }
+    }
+    catch (const std::exception &e) {
+        sender.sendErrorMessage("Health report generation failed: {}", e.what());
     }
 }
 
