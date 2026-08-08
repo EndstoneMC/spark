@@ -93,6 +93,12 @@ public:
     const Heartbeat &samplerHeartbeat() const { return profiler_.samplerHeartbeat(); }
     const Heartbeat &aggregatorHeartbeat() const { return profiler_.aggregatorHeartbeat(); }
 
+    // Sets the directory for crash-safe recovery journals.
+    void setRecoveryDirectory(std::filesystem::path dir) { profiler_.setRecoveryDirectory(std::move(dir)); }
+
+    // Returns the active recovery writer, or nullptr if no execution session is running.
+    RecoveryWriter *recoveryWriter() const { return profiler_.recoveryWriter(); }
+
     // Starts the background profiler if configured. Called on enable.
     void startBackgroundProfiler();
 

@@ -325,6 +325,18 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         }
         config.only_ticks_over_ms = options.only_ticks_over_ms > 0 ? options.only_ticks_over_ms : 0;
         sampler_.setTarget(main_tid);
+        if (!recovery_dir_.empty()) {
+            RecoveryWriter::Config wc;
+            wc.directory = recovery_dir_;
+            wc.session_id = static_cast<std::uint64_t>(session_start_ms);
+            recovery_writer_ = std::make_unique<RecoveryWriter>(std::move(wc));
+            if (recovery_writer_->start()) {
+                sampler_.setRecoverySink(recovery_writer_.get());
+            } else {
+                sampler_.setRecoverySink(nullptr);
+                recovery_writer_.reset();
+            }
+        }
         started = sampler_.start(config);
         if (!started) {
             error = sampler_.lastError().empty() ? "the platform stack-capture backend could not be initialized"
@@ -374,6 +386,7 @@ bool Profiler::stopSampling(std::string &error)
     }
     else {
         sampler_.stop();
+        stopRecoveryWriter();
     }
     running_.store(false);
     end_time_ms_ = requested_end_time_ms;
@@ -384,6 +397,16 @@ void Profiler::stopSampling()
 {
     std::string ignored;
     stopSampling(ignored);
+}
+
+void Profiler::stopRecoveryWriter()
+{
+    if (!recovery_writer_) return;
+    recovery_writer_->journalCleanEnd();
+    recovery_writer_->requestFlush();
+    recovery_writer_->stop();
+    sampler_.setRecoverySink(nullptr);
+    recovery_writer_.reset();
 }
 
 const CallTree &Profiler::activeTree() const
@@ -706,6 +729,7 @@ bool Profiler::shutdown(std::string &error)
     }
     if (running_.load()) {
         sampler_.stop();
+        stopRecoveryWriter();
         running_.store(false);
     }
     return allocation_sampler_.shutdown(error);

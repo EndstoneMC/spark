@@ -1,6 +1,9 @@
 #include "application/spark_application.h"
 
+#include <chrono>
 #include <utility>
+
+#include "native/sampler/heartbeat.h"
 
 namespace spark {
 
@@ -17,7 +20,7 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
       metadata_provider_(metadata_provider),
       notifier_(notifier),
       profiler_(statistics_, std::move(bds_executable_sha256),
-                std::move(profile_storage_dir),
+                profile_storage_dir,
                 config_.bytebin_url, config_.viewer_url,
                 config_.background_profiler_enabled,
                 config_.background_profiler_interval,
@@ -32,14 +35,29 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
       tick_monitor_(notifier_),
       watchdog_(server_heartbeat_)
 {
+    recovery_dir_ = profile_storage_dir / "recovery";
     activity_log_.load();
     registerCommands();
     profiler_.setPingSamplesProvider([this]() { return health_.pingSamples(); });
     profiler_.setNetworkSnapshotProvider([this]() { return health_.networkSnapshots(); });
     profiler_.setActivityLogProvider([this]() -> ActivityLog * { return &activity_log_; });
     health_.setActivityLogProvider([this]() -> ActivityLog * { return &activity_log_; });
+    profiler_.setRecoveryDirectory(recovery_dir_);
     watchdog_.setSamplerHeartbeat(&profiler_.samplerHeartbeat());
     watchdog_.setAggregatorHeartbeat(&profiler_.aggregatorHeartbeat());
+    watchdog_.setStallCallback([this](bool stalled) {
+        RecoveryWriter *writer = profiler_.recoveryWriter();
+        if (!writer) return;
+        const std::uint64_t now = Heartbeat::monotonicNowNs();
+        if (stalled) {
+            stall_begin_ns_ = now;
+            writer->journalStallBegin(now, server_heartbeat_.last_ns.load(std::memory_order_acquire));
+            writer->requestFlush();
+        } else {
+            writer->journalStallEnd(stall_begin_ns_, now);
+            writer->requestFlush();
+        }
+    });
 }
 
 void SparkApplication::registerCommands()

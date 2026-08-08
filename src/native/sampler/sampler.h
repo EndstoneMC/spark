@@ -10,12 +10,14 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <moodycamel/concurrentqueue.h>
 
 #include "native/sampler/call_tree.h"
 #include "native/sampler/heartbeat.h"
+#include "native/sampler/recovery_sink.h"
 #include "native/sampler/thread_selector.h"
 #include "native/sampler/types.h"
 
@@ -65,6 +67,12 @@ public:
         target_tid_.store(tid);
         target_name_ = std::move(name);
     }
+
+    // Sets the recovery sink for crash-safe journaling.  Must be called
+    // before start().  The sampler thread journals MODULE_DEF records;
+    // the aggregator thread journals THREAD_DEF, SAMPLE, and TICK_EVENT
+    // records.  All RecoverySink methods are non-blocking.
+    void setRecoverySink(RecoverySink *sink) { recovery_sink_ = sink; }
 
     // Called once per server tick from the main thread: `mspt_ms` is the duration
     // of the tick that just finished.
@@ -153,6 +161,11 @@ private:
     // Heartbeats for stall-watchdog diagnostics (updated by service threads).
     Heartbeat sampler_heartbeat_;
     Heartbeat aggregator_heartbeat_;
+
+    // Recovery journal sink (nullptr = no journaling).  Used by the
+    // aggregator thread only.
+    RecoverySink *recovery_sink_ = nullptr;
+    std::unordered_set<std::uint64_t> journaled_threads_;
 };
 
 }  // namespace spark

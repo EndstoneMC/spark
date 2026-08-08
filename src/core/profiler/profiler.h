@@ -3,13 +3,16 @@
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "native/alloc/allocation_sampler.h"
 #include "native/sampler/heartbeat.h"
 #include "core/profiler/profile_mode.h"
+#include "core/recovery/recovery_writer.h"
 #include "core/stats/ping_statistics.h"
 #include "native/sampler/sampler.h"
 #include "core/stats/statistics_service.h"
@@ -128,6 +131,15 @@ public:
     const Heartbeat &samplerHeartbeat() const { return sampler_.samplerHeartbeat(); }
     const Heartbeat &aggregatorHeartbeat() const { return sampler_.aggregatorHeartbeat(); }
 
+    // Sets the directory for crash-safe recovery journals.  Must be called
+    // before start().  When set, an execution profiling session creates a
+    // RecoveryWriter that journals module/thread/sample/tick records.
+    void setRecoveryDirectory(std::filesystem::path dir) { recovery_dir_ = std::move(dir); }
+
+    // Returns the active recovery writer, or nullptr if no session is running
+    // or the session is not execution mode.
+    RecoveryWriter *recoveryWriter() const { return recovery_writer_.get(); }
+
     // Unconditionally closes the active backend and destroys native hook
     // trampolines. Must run before the plugin module is unloaded.
     bool shutdown(std::string &error);
@@ -136,6 +148,7 @@ private:
     const CallTree &activeTree() const;
     const ModuleTable &activeModules() const;
     std::uint64_t activeNumberOfTicks() const;
+    void stopRecoveryWriter();
 
     Sampler sampler_;
     AllocationSampler allocation_sampler_;
@@ -146,6 +159,8 @@ private:
     std::int64_t end_time_ms_ = 0;
     std::int64_t auto_end_time_ms_ = -1;
     std::int32_t interval_ = 4000;  // execution: microseconds; allocation: bytes
+    std::filesystem::path recovery_dir_;
+    std::unique_ptr<RecoveryWriter> recovery_writer_;
 };
 
 }  // namespace spark

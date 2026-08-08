@@ -75,6 +75,8 @@ private:
     // on its own thread and never calls Endstone APIs.
     Heartbeat server_heartbeat_;
     StallWatchdog watchdog_;
+    std::uint64_t stall_begin_ns_ = 0;
+    std::filesystem::path recovery_dir_;
 };
 
 }  // namespace spark

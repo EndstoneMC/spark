@@ -148,6 +148,7 @@ void Sampler::resetSession()
     sampler_heartbeat_.last_ns.store(0, std::memory_order_relaxed);
     aggregator_heartbeat_.sequence.store(0, std::memory_order_relaxed);
     aggregator_heartbeat_.last_ns.store(0, std::memory_order_relaxed);
+    journaled_threads_.clear();
 }
 
 std::int32_t Sampler::currentWindow() const
@@ -292,7 +293,11 @@ void Sampler::samplerLoop()
                 }
 
                 FrameKey key;
+                const std::size_t prev_module_count = modules_.size();
                 key.module = modules_.intern(path);
+                if (recovery_sink_ && modules_.size() > prev_module_count) {
+                    recovery_sink_->journalModuleDef(key.module, path);
+                }
                 key.rva = module_base != 0 ? raw_address - module_base : raw_address;
                 key.raw_address = raw_address;
 #else
@@ -302,7 +307,11 @@ void Sampler::samplerLoop()
                                             ? std::string_view(frame.object_path)
                                             : std::string_view("unknown");
                 FrameKey key;
+                const std::size_t prev_module_count = modules_.size();
                 key.module = modules_.intern(path);
+                if (recovery_sink_ && modules_.size() > prev_module_count) {
+                    recovery_sink_->journalModuleDef(key.module, path);
+                }
                 key.rva = static_cast<std::uint64_t>(frame.address_relative_to_object_start);
                 key.raw_address = static_cast<std::uint64_t>(frame.raw_address);
 #endif
@@ -335,6 +344,13 @@ void Sampler::acceptSample(const Sample &sample)
     }
     thread.tree.log(sample.frames, sample.window, sample.weight);
     sample_count_.fetch_add(1, std::memory_order_relaxed);
+
+    if (recovery_sink_) {
+        if (journaled_threads_.insert(sample.thread_id).second) {
+            recovery_sink_->journalThreadDef(sample.thread_id, sample.thread_id, sample.thread_name);
+        }
+        recovery_sink_->journalSample(sample);
+    }
 }
 
 void Sampler::flushOrDrop(std::uint64_t tick_id, bool keep)
@@ -366,6 +382,9 @@ void Sampler::aggregatorLoop()
                     tick_decisions_.resize(static_cast<std::size_t>(ev.tick_id + 1), 0);
                 }
                 tick_decisions_[static_cast<std::size_t>(ev.tick_id)] = keep ? 2 : 1;
+            }
+            if (recovery_sink_) {
+                recovery_sink_->journalTickEvent(ev.tick_id, ev.mspt_ms);
             }
             flushOrDrop(ev.tick_id, keep);
         }
