@@ -12,6 +12,7 @@
 #include "core/stats/ping_statistics.h"
 #include "core/stats/system_stats.h"
 #include "core/util/format.h"
+#include "core/util/world_region.h"
 
 namespace spark::endstone_adapter {
 
@@ -97,20 +98,15 @@ void EndstoneMetadataProvider::gatherWorldMetadata(ExportContext &ctx)
 
             WorldEntry world;
             world.name = dimension->getName();
-            std::map<std::pair<int, int>, WorldRegion> regions;
-            for (auto &[coordinate, chunk] : chunks) {
-                auto region_coordinate = std::pair{floorDiv(coordinate.first, 32),
-                                                   floorDiv(coordinate.second, 32)};
-                WorldRegion &region = regions[region_coordinate];
-                region.total_entities += chunk.total_entities;
-                world.total_entities += chunk.total_entities;
-                for (const auto &[type, count] : chunk.entity_counts) {
-                    ctx.world.entity_counts[type] += count;
+            auto regions = groupChunksIntoRegions(chunks);
+            for (const auto &region : regions) {
+                world.total_entities += region.total_entities;
+                for (const auto &chunk : region.chunks) {
+                    for (const auto &[type, count] : chunk.entity_counts) {
+                        ctx.world.entity_counts[type] += count;
+                    }
                 }
-                region.chunks.push_back(std::move(chunk));
-            }
-            for (auto &entry : regions) {
-                world.regions.push_back(std::move(entry.second));
+                world.regions.push_back(std::move(region));
             }
             ctx.world.total_entities += world.total_entities;
             ctx.world.worlds.push_back(std::move(world));

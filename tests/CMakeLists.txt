@@ -66,6 +66,12 @@ set_target_properties(spark_journal_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_journal_test COMMAND spark_journal_test)
 
+add_executable(spark_world_region_test core/util/world_region_test.cpp)
+target_link_libraries(spark_world_region_test PRIVATE spark_core)
+set_target_properties(spark_world_region_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_world_region_test COMMAND spark_world_region_test)
+
 add_executable(spark_symbol_guess_dwarf_test native/symbol/symbol_guess_dwarf_test.cpp)
 target_link_libraries(spark_symbol_guess_dwarf_test PRIVATE spark_core)
 set_target_properties(spark_symbol_guess_dwarf_test PROPERTIES

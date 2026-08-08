@@ -104,6 +104,7 @@ add_library(spark_core STATIC
         src/core/recovery/stall_watchdog.cpp
         src/core/util/base64.cpp
         src/core/util/format.cpp
+        src/core/util/world_region.cpp
         src/core/activity/activity_log.cpp
         src/core/command/arguments.cpp
         src/core/profiler/profiler.cpp
