@@ -49,7 +49,6 @@ public:
         dispatcher_ = std::make_unique<spark::endstone_adapter::EndstoneDispatcher>(*this, getServer());
         metadata_provider_ = std::make_unique<spark::endstone_adapter::EndstoneMetadataProvider>(
             *this, getServer(), bds_executable_sha256_);
-        notifier_ = std::make_unique<spark::endstone_adapter::EndstoneNotifier>(*this, getServer());
 
         spark::SparkConfig config(getDataFolder() / "config.json");
         if (!config.load()) {
@@ -60,6 +59,9 @@ public:
                 getLogger().warning("Failed to write default spark config: {}", config.lastError());
             }
         }
+
+        notifier_ = std::make_unique<spark::endstone_adapter::EndstoneNotifier>(
+            *this, getServer(), config.disable_response_broadcast);
 
         app_ = std::make_unique<spark::SparkApplication>(
             bds_executable_sha256_,
@@ -150,7 +152,7 @@ ENDSTONE_PLUGIN("spark", "0.4.1", SparkPlugin)
         .usages("/spark",
                 "/spark (tps|cpu|ping|health|healthreport|ht|activity|activitylog|log|tickmonitor|tickmonitoring)<module: SparkStatusModule> [flags: message]",
                 "/spark (profiler|sampler)<module: SparkProfilerModule> "
-                "(start|stop|info|cancel|viewer|trust-viewer)[action: SparkProfilerAction] [flags: message]")
+                "(start|stop|info|cancel|open|trust-viewer)[action: SparkProfilerAction] [flags: message]")
         .permissions("endstone.command.spark");
 
     permission("endstone.command.spark")

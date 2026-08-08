@@ -14,7 +14,9 @@ find_package(cpptrace REQUIRED)
 find_package(concurrentqueue REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(CURL REQUIRED)
-find_package(OpenSSL REQUIRED)
+if (NOT WIN32)
+    find_package(OpenSSL REQUIRED)
+endif ()
 find_package(Threads REQUIRED)
 
 include(FetchContent)
@@ -107,7 +109,6 @@ add_library(spark_core STATIC
         src/core/stats/network_monitor.cpp
         src/core/stats/tick_monitor.cpp
         src/core/stats/system_stats.cpp
-        src/core/ws/crypto.cpp
         src/core/ws/ws_proto.cpp
         src/core/ws/viewer_socket.cpp
         src/proto/sampler_data.cpp
@@ -116,7 +117,13 @@ add_library(spark_core STATIC
         src/net/profile_file.cpp
         src/net/websocket.cpp)
 target_include_directories(spark_core PUBLIC src)
-target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl OpenSSL::Crypto)
+if (WIN32)
+    target_sources(spark_core PRIVATE src/core/ws/crypto_cng.cpp)
+    target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl bcrypt)
+else ()
+    target_sources(spark_core PRIVATE src/core/ws/crypto.cpp)
+    target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl OpenSSL::Crypto)
+endif ()
 if (WIN32)
     target_compile_definitions(spark_core PUBLIC NOMINMAX)
     target_link_libraries(spark_core PUBLIC iphlpapi)

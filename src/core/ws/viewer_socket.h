@@ -16,7 +16,7 @@
 namespace spark {
 
 // Manages a live viewer WebSocket connection.
-// Created by ProfilerService when the user runs `profiler viewer`.
+// Created by ProfilerService when the user runs `profiler open`.
 // Uploads initial sampler data to bytebin with SocketChannelInfo embedded,
 // then pushes payload IDs on window rotation so the viewer can fetch updates.
 class ViewerSocket {

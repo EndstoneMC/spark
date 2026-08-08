@@ -143,9 +143,17 @@ PlayerPingProvider *EndstoneMetadataProvider::playerPingProvider()
 void EndstoneNotifier::notify(const std::string &sender_name, const std::string &text)
 {
     plugin_.getLogger().info("{}", text);
-    auto player = server_.getPlayer(sender_name);
-    if (player) {
-        player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
+    if (disable_broadcast_) {
+        auto player = server_.getPlayer(sender_name);
+        if (player) {
+            player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
+        }
+    } else {
+        for (auto *player : server_.getOnlinePlayers()) {
+            if (player && player->hasPermission("endstone.command.spark")) {
+                player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
+            }
+        }
     }
 }
 

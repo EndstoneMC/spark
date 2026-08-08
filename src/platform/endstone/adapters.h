@@ -77,14 +77,16 @@ private:
 // Notifies a player by name and logs to the plugin logger.
 class EndstoneNotifier : public ResultNotifier {
 public:
-    EndstoneNotifier(::endstone::Plugin &plugin, ::endstone::Server &server)
-        : plugin_(plugin), server_(server) {}
+    EndstoneNotifier(::endstone::Plugin &plugin, ::endstone::Server &server,
+                     bool disable_broadcast)
+        : plugin_(plugin), server_(server), disable_broadcast_(disable_broadcast) {}
 
     void notify(const std::string &sender_name, const std::string &text) override;
 
 private:
     ::endstone::Plugin &plugin_;
     ::endstone::Server &server_;
+    bool disable_broadcast_;
 };
 
 }  // namespace spark::endstone_adapter

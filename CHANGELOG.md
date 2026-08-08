@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   patterns (Knuth multiplicative hash, 64-bit hash multiplier, atomic
   `lock cmpxchg`/`lock xadd`, binary search range-halving) with low-confidence
   `type?` behavior hints.
-- Add `/spark profiler viewer` command to open a live, auto-updating spark
+- Add `/spark profiler open` command to open a live, auto-updating spark
   viewer during an active execution profile. Connects to the spark WebSocket
   relay with RSA2048-signed messages and uploads sampler data every 10 seconds.
   The viewer closes automatically when the profiler stops, is cancelled, or
@@ -75,6 +75,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replace OpenSSL with Windows CNG/BCrypt for RSA2048 key generation,
+  SHA256withRSA signing, and signature verification. Windows builds no longer
+  depend on or compile OpenSSL; Linux continues to use OpenSSL.
+- Implement `disableResponseBroadcast` config option: when false (default),
+  profiler and health responses are broadcast to all online operators with
+  spark permission; when true, only the command sender receives the response.
+- **BREAKING**: Rename `/spark profiler viewer` to `/spark profiler open` to
+  match upstream spark command naming.
 - **BREAKING**: Include sleeping threads in execution profiles by default,
   replacing `--include-sleeping` with `--ignore-sleeping` to opt out.
 - Group sampled threads by pool name by default (matching upstream spark's

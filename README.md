@@ -25,7 +25,7 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 | `/spark profiler stop`          | Stop profiling and finalize the profile.                  |
 | `/spark profiler info`          | Show status of the running profiler.                      |
 | `/spark profiler cancel`        | Stop profiling without generating a profile.              |
-| `/spark profiler viewer`        | Open a live, auto-updating spark viewer for the running profile. |
+| `/spark profiler open`         | Open a live, auto-updating spark viewer for the running profile. |
 | `/spark profiler trust-viewer --id <client id>` | Approve a pending live viewer client. |
 | `/spark tps`                    | Show rolling TPS, MSPT distributions, and CPU usage.      |
 | `/spark ping`                  | Show player ping RTT statistics (min/median/p95/max).    |
@@ -126,7 +126,7 @@ Run the command again to disable the monitor.
 
 ### Live viewer
 
-`/spark profiler viewer` opens a real-time spark viewer while an execution
+`/spark profiler open` opens a real-time spark viewer while an execution
 profiler is running. It connects to the spark WebSocket relay, uploads sampler
 data every 10 seconds, and displays the viewer URL in chat. The viewer stays
 live until the profiler is stopped, cancelled, or times out. Allocation profiles

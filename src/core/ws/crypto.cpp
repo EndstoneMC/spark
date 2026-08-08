@@ -55,11 +55,8 @@ EVP_PKEY *x509ToPkey(const std::uint8_t *data, std::size_t len)
 // Helper: load an EVP_PKEY from PKCS#8 DER.
 EVP_PKEY *pkcs8ToPkey(const std::uint8_t *data, std::size_t len)
 {
-    auto *bio = BIO_new_mem_buf(data, static_cast<int>(len));
-    if (!bio) return nullptr;
-    EVP_PKEY *key = d2i_PKCS8PrivateKey_bio(bio, nullptr, nullptr, nullptr);
-    BIO_free(bio);
-    return key;
+    const unsigned char *p = data;
+    return d2i_AutoPrivateKey(nullptr, &p, static_cast<long>(len));
 }
 
 }  // namespace
