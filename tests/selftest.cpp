@@ -32,7 +32,10 @@
 #include <sys/syscall.h>
 #endif
 
+#include "application/platform_capabilities.h"
+#include "application/profiler/profiler_service.h"
 #include "core/command/arguments.h"
+#include "core/config/trusted_viewers.h"
 #include "native/alloc/allocation_sampler.h"
 #include "native/alloc/allocation_thread_filter.h"
 #include "native/alloc/byte_sampler.h"
@@ -52,6 +55,27 @@
 #include "net/profile_file.h"
 #include "proto/sampler_data.h"
 #include "spark_constants.h"
+
+namespace spark {
+
+struct ProfilerServiceTestAccess {
+    static bool start(ProfilerService &service, const ProfilerOptions &options, std::uint64_t main_tid,
+                      std::string &error)
+    {
+        return service.profiler_.start(options, main_tid, error);
+    }
+
+    static std::int64_t startTimeMs(const ProfilerService &service) { return service.profiler_.startTimeMs(); }
+
+    static std::string buildLiveSamplerData(ProfilerService &service, std::int64_t now_ms)
+    {
+        return service.buildLiveSamplerData({}, now_ms);
+    }
+
+    static void cancel(ProfilerService &service) { service.profiler_.cancel(); }
+};
+
+}  // namespace spark
 
 namespace {
 
@@ -169,6 +193,25 @@ bool protoVarintEquals(std::string_view bytes, std::initializer_list<int> path, 
     ProtoField field;
     return findProtoPath(bytes, path, field) && field.wire_type == 0 && field.varint == expected;
 }
+
+class TestDispatcher : public spark::MainThreadDispatcher {
+public:
+    void runOnMainThread(std::function<void()> task) override { task(); }
+};
+
+class TestMetadataProvider : public spark::ProfileMetadataProvider {
+public:
+    void gatherServerMetadata(spark::ExportContext &, std::int64_t) override {}
+    void gatherWorldMetadata(spark::ExportContext &) override {}
+    std::int64_t serverUptimeSeconds() override { return 0; }
+    long playerCount() override { return 0; }
+    spark::PlayerPingProvider *playerPingProvider() override { return nullptr; }
+};
+
+class TestNotifier : public spark::ResultNotifier {
+public:
+    void notify(const std::string &, const std::string &) override {}
+};
 
 #if defined(_WIN32)
 void __cdecl ignoreInvalidParameter(const wchar_t *, const wchar_t *, const wchar_t *, unsigned int, std::uintptr_t) {}
@@ -954,6 +997,96 @@ bool verifyStatisticsSerialization()
         findProtoField(system.bytes, 4, omitted) || findProtoField(system.bytes, 5, omitted)) {
         std::fprintf(stderr, "statistics serialization: unavailable resource fields "
                              "were serialized as real observations\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifyLiveProfilerWindowStatistics(std::uint64_t worker_tid)
+{
+    spark::StatisticsService statistics;
+    spark::TrustedViewersState trusted_viewers(std::filesystem::temp_directory_path() / "spark-selftest-viewers.json");
+    TestDispatcher dispatcher;
+    TestMetadataProvider metadata_provider;
+    TestNotifier notifier;
+    spark::ProfilerService service(statistics, {}, std::filesystem::temp_directory_path(), {}, {}, {}, false, 10,
+                                   "by-pool", "default", trusted_viewers, dispatcher, metadata_provider, notifier);
+
+    spark::ProfilerOptions options;
+    options.interval_ms = 1;
+    options.ignore_sleeping = false;
+    std::string error;
+    if (!spark::ProfilerServiceTestAccess::start(service, options, worker_tid, error)) {
+        std::fprintf(stderr, "live profiler windows: profiler start failed: %s\n", error.c_str());
+        return false;
+    }
+
+    const std::int64_t profile_start = spark::ProfilerServiceTestAccess::startTimeMs(service);
+    spark::CpuSnapshot cpu;
+    cpu.valid = true;
+    cpu.process_ticks_per_second = 100.0;
+    cpu.cpu_threads = 2;
+    statistics.startAt(0, profile_start, cpu);
+    statistics.recordTickAt(5.0, 100);
+    statistics.recordTickAt(7.0, 600);
+    cpu.process_ticks += 20;
+    cpu.system_busy += 20;
+    cpu.system_total += 100;
+    cpu.wall_ms = 1'000;
+    statistics.recordCpuSnapshot(cpu);
+    statistics.recordTickAt(6.0, 1'100);
+    statistics.recordTickAt(8.0, 1'600);
+    cpu.process_ticks += 40;
+    cpu.system_busy += 40;
+    cpu.system_total += 100;
+    cpu.wall_ms = 2'000;
+    statistics.recordCpuSnapshot(cpu);
+
+    const std::string live_data =
+        spark::ProfilerServiceTestAccess::buildLiveSamplerData(service, profile_start + 2'000);
+    spark::ProfilerServiceTestAccess::cancel(service);
+
+    ProtoField time_windows;
+    if (!findProtoField(live_data, 6, time_windows) || time_windows.wire_type != 2) {
+        std::fprintf(stderr, "live profiler windows: time_windows was absent\n");
+        return false;
+    }
+    std::size_t windows_offset = 0;
+    std::vector<std::uint64_t> windows;
+    std::uint64_t window = 0;
+    while (windows_offset < time_windows.bytes.size() && readProtoVarint(time_windows.bytes, windows_offset, window)) {
+        windows.push_back(window);
+    }
+
+    std::vector<std::uint64_t> statistic_windows;
+    bool has_graph_fields = false;
+    for (std::size_t occurrence = 0;; ++occurrence) {
+        ProtoField entry;
+        if (!findProtoField(live_data, 7, entry, occurrence)) {
+            break;
+        }
+        ProtoField key;
+        ProtoField value;
+        if (entry.wire_type != 2 || !findProtoField(entry.bytes, 1, key) || !findProtoField(entry.bytes, 2, value) ||
+            value.wire_type != 2) {
+            std::fprintf(stderr, "live profiler windows: malformed time_window_statistics entry\n");
+            return false;
+        }
+        statistic_windows.push_back(key.varint);
+        ProtoField tps;
+        ProtoField mspt;
+        ProtoField cpu_process;
+        ProtoField cpu_system;
+        has_graph_fields = has_graph_fields ||
+                           (findProtoField(value.bytes, 4, tps) && findProtoField(value.bytes, 5, mspt) &&
+                            findProtoField(value.bytes, 2, cpu_process) && findProtoField(value.bytes, 3, cpu_system));
+    }
+
+    if (windows.size() < 2 || statistic_windows != windows || !has_graph_fields) {
+        std::fprintf(stderr,
+                     "live profiler windows: expected matching drawable windows "
+                     "(windows=%zu statistics=%zu graph-fields=%d)\n",
+                     windows.size(), statistic_windows.size(), has_graph_fields);
         return false;
     }
     return true;
@@ -2280,7 +2413,8 @@ int main(int argc, char **argv)
     if (!verifyArgumentParsing() || !verifyThreadSelectorSemantics() || !verifyTickMonitor() ||
         !verifyStatisticsService() || !verifySystemResourceStats() || !verifyWorldGaugeStatistics() ||
         !verifyWorldGaugeAbsentWhenNotRecorded() || !verifyThreadDiscovery() || !verifyMultiThreadSerialization() ||
-        !verifyStatisticsSerialization() || !verifyUploadFailure() || !verifyCaptureLifecycle() ||
+        !verifyStatisticsSerialization() || !verifyLiveProfilerWindowStatistics(g_worker_tid.load()) ||
+        !verifyUploadFailure() || !verifyCaptureLifecycle() ||
 #if defined(_WIN32)
         !verifyWindowsThreadActivityDetection() ||
 #endif

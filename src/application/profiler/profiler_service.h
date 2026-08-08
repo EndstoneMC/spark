@@ -25,6 +25,8 @@
 
 namespace spark {
 
+struct ProfilerServiceTestAccess;
+
 // Manages the profiling session lifecycle and background export. No Endstone dependency.
 class ProfilerService {
 public:
@@ -92,6 +94,8 @@ public:
     void startBackgroundProfiler();
 
 private:
+    friend struct ProfilerServiceTestAccess;
+
     enum class SessionType {
         None,
         Background,
@@ -107,6 +111,7 @@ private:
     void startViewerWorker();
     void stopViewerWorker();
     void viewerUpdateLoop();
+    std::string buildLiveSamplerData(const std::string &channel_info_proto, std::int64_t now_ms);
     std::string uploadSamplerData(const std::string &channel_info_proto);
 
     StatisticsService &statistics_;

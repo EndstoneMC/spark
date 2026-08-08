@@ -519,10 +519,23 @@ void ProfilerService::viewerUpdateLoop()
 
 std::string ProfilerService::uploadSamplerData(const std::string &channel_info_proto)
 {
+    std::string body = buildLiveSamplerData(channel_info_proto, nowMs());
+    if (body.empty()) {
+        return {};
+    }
+    std::string compressed = gzipCompress(body);
+    UploadResult result =
+        uploadToBytebin(compressed, bytebin_url_, kSamplerContentType, std::string("endstone-spark/") + kVersion);
+    return result.ok ? result.key : std::string();
+}
+
+std::string ProfilerService::buildLiveSamplerData(const std::string &channel_info_proto, std::int64_t now_ms)
+{
     ExportContext ctx;
     ctx.bds_executable_sha256 = bds_executable_sha256_;
-    metadata_provider_.gatherServerMetadata(ctx, nowMs());
+    metadata_provider_.gatherServerMetadata(ctx, now_ms);
     ctx.statistics = statistics_.snapshot();
+    ctx.window_stats = statistics_.profileWindows(profiler_.startTimeMs(), now_ms);
     ctx.system_stats = spark::gatherSystemStats(".");
     metadata_provider_.gatherWorldMetadata(ctx);
     if (ping_samples_provider_) {
@@ -532,15 +545,7 @@ std::string ProfilerService::uploadSamplerData(const std::string &channel_info_p
         ctx.net_snapshots = network_snapshot_provider_();
     }
     ctx.socket_channel_info_proto = channel_info_proto;
-
-    std::string body = profiler_.liveExport(ctx);
-    if (body.empty()) {
-        return {};
-    }
-    std::string compressed = gzipCompress(body);
-    UploadResult result =
-        uploadToBytebin(compressed, bytebin_url_, kSamplerContentType, std::string("endstone-spark/") + kVersion);
-    return result.ok ? result.key : std::string();
+    return profiler_.liveExport(ctx);
 }
 
 void ProfilerService::closeViewerSocket()
