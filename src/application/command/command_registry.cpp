@@ -11,7 +11,10 @@ namespace spark {
 void CommandRegistry::registerCommand(std::vector<std::string> aliases, std::string description, std::string permission,
                                       Handler handler)
 {
-    commands_.push_back({std::move(aliases), std::move(description), std::move(permission), std::move(handler)});
+    commands_.push_back({.aliases = std::move(aliases),
+                         .description = std::move(description),
+                         .permission = std::move(permission),
+                         .handler = std::move(handler)});
 }
 
 bool CommandRegistry::dispatch(CommandSender &sender, const std::vector<std::string> &tokens) const
@@ -50,7 +53,9 @@ void CommandRegistry::sendHelp(CommandSender &sender) const
 {
     sender.sendMessage(kColorGold + "endstone-spark " + kColorGray + "v" + spark::kVersion);
     for (const auto &cmd : commands_) {
-        sender.sendMessage(kColorYellow + "/spark " + cmd.aliases[0] + " " + kColorGray + "- " + cmd.description);
+        std::string message = kColorYellow + "/spark ";
+        message += cmd.aliases[0] + " " + kColorGray + "- " + cmd.description;
+        sender.sendMessage(message);
     }
     sender.sendMessage(kColorGray + "Modes: --alloc, --alloc-live-only");
     sender.sendMessage(kColorGray + "Thread selection: --thread <name|*>, --regex");

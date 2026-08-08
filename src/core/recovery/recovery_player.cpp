@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-#if defined(_WIN32)
+#ifdef _WIN32
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -38,7 +38,7 @@ std::int64_t nowMs()
         .count();
 }
 
-#if defined(_WIN32)
+#ifdef _WIN32
 
 std::uint64_t moduleBaseForPath(const std::string &path)
 {
@@ -153,9 +153,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
             }
             it->second.tree.log(frames, window, weight);
             ++sample_count;
-            if (tick_id > max_tick_id) {
-                max_tick_id = tick_id;
-            }
+            max_tick_id = std::max(tick_id, max_tick_id);
         }
         else if (rec.type == RecordType::ThreadDef) {
             std::uint64_t thread_id, os_thread_id;
@@ -172,10 +170,8 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
             std::uint64_t tick_id;
             double mspt;
             if (rec.asTickEvent(tick_id, mspt)) {
-                if (tick_id > max_tick_id) {
-                    max_tick_id = tick_id;
-                }
-                tick_events.push_back({tick_id, mspt});
+                max_tick_id = std::max(tick_id, max_tick_id);
+                tick_events.push_back({.tick_id = tick_id, .mspt = mspt});
             }
         }
     }
@@ -207,9 +203,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
         WindowAccumulator &acc = window_acc[window];
         acc.ticks += 1;
         acc.mspts.push_back(te.mspt);
-        if (te.mspt > acc.mspt_max) {
-            acc.mspt_max = te.mspt;
-        }
+        acc.mspt_max = std::max(te.mspt, acc.mspt_max);
     }
 
     std::map<std::int32_t, WindowStats> window_stats;
@@ -221,7 +215,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
         ws.mspt_max = acc.mspt_max;
         if (!acc.mspts.empty()) {
             std::vector<double> sorted = acc.mspts;
-            std::sort(sorted.begin(), sorted.end());
+            std::ranges::sort(sorted);
             ws.mspt_median = sorted[sorted.size() / 2];
         }
         ws.start_time_ms = result.session_start_ms + static_cast<std::int64_t>(window) * 1000;
@@ -290,7 +284,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     for (const auto &[g, trees] : groups) {
         if (meta.thread_grouper == ThreadGrouperMode::ByName || trees.size() == 1) {
             owned_labels.push_back(grouper.label(g));
-            views.push_back({owned_labels.back(), trees.front()});
+            views.push_back({.name = owned_labels.back(), .tree = trees.front()});
         }
         else {
             auto merged = std::make_unique<CallTree>();
@@ -298,7 +292,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
                 mergeCallTree(*merged, *tree);
             }
             owned_labels.push_back(grouper.label(g));
-            views.push_back({owned_labels.back(), merged.get()});
+            views.push_back({.name = owned_labels.back(), .tree = merged.get()});
             owned_trees.push_back(std::move(merged));
         }
     }

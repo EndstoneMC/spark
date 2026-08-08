@@ -6,9 +6,10 @@
 
 #include "core/metadata/server_properties.h"
 
-using namespace spark;
+using namespace spark;  // NOLINT(google-build-using-namespace)
 
-static std::filesystem::path writeTempFile(const std::string &name, const std::string &content)
+static std::filesystem::path writeTempFile(  // NOLINT(misc-use-anonymous-namespace)
+    const std::string &name, const std::string &content)
 {
     auto path = std::filesystem::temp_directory_path() / name;
     std::ofstream out(path, std::ios::binary);
@@ -71,7 +72,7 @@ int main()
                                                      "max-players=20\n");
         auto result = parseServerProperties(path);
         assert(result.size() == 1);
-        assert(result.count("level-seed") == 0);
+        assert(!result.contains("level-seed"));
         assert(result.at("max-players") == "20");
         std::filesystem::remove(path);
     }
@@ -83,8 +84,8 @@ int main()
                                                      "max-players=20\n");
         auto result = parseServerProperties(path);
         assert(result.size() == 1);
-        assert(result.count("server-port") == 0);
-        assert(result.count("server-portv6") == 0);
+        assert(!result.contains("server-port"));
+        assert(!result.contains("server-portv6"));
         std::filesystem::remove(path);
     }
 
@@ -95,8 +96,8 @@ int main()
                                                          "max-players=20\n");
         auto result = parseServerProperties(path);
         assert(result.size() == 1);
-        assert(result.count("script-debugger-passcode") == 0);
-        assert(result.count("script-debugger-auto-attach-connect-address") == 0);
+        assert(!result.contains("script-debugger-passcode"));
+        assert(!result.contains("script-debugger-auto-attach-connect-address"));
         std::filesystem::remove(path);
     }
 
@@ -142,9 +143,9 @@ int main()
                                                         "max-players=20\n");
         auto result = parseServerProperties(path);
         assert(result.size() == 1);
-        assert(result.count("unknown-key") == 0);
-        assert(result.count("server-name") == 0);
-        assert(result.count("gamemode") == 0);
+        assert(!result.contains("unknown-key"));
+        assert(!result.contains("server-name"));
+        assert(!result.contains("gamemode"));
         assert(result.at("max-players") == "20");
         std::filesystem::remove(path);
     }

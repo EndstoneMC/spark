@@ -7,7 +7,7 @@
 
 #include "core/config/spark_config.h"
 
-using namespace spark;
+using namespace spark;  // NOLINT(google-build-using-namespace)
 
 namespace {
 

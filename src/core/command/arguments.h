@@ -1,6 +1,7 @@
 #ifndef ENDSTONE_SPARK_ARGUMENTS_H
 #define ENDSTONE_SPARK_ARGUMENTS_H
 
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <set>
@@ -23,7 +24,7 @@ public:
     const std::vector<std::string> &raw() const { return raw_; }
 
     bool boolFlag(const std::string &name) const;
-    std::optional<long> intFlag(const std::string &name) const;
+    std::optional<std::int64_t> intFlag(const std::string &name) const;
     std::optional<double> doubleFlag(const std::string &name) const;
     std::vector<std::string> stringFlag(const std::string &name) const;
 

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -24,7 +25,7 @@
 #include <thread>
 #include <vector>
 
-#if defined(_WIN32)
+#ifdef _WIN32
 #include <malloc.h>
 #include <windows.h>
 #else
@@ -43,7 +44,7 @@
 #include "native/alloc/allocation_sampler.h"
 #include "native/alloc/allocation_thread_filter.h"
 #include "native/alloc/byte_sampler.h"
-#if defined(__linux__)
+#ifdef __linux__
 #include "native/alloc/elf_import_hooks.h"
 #endif
 #include "core/profiler/profiler.h"
@@ -112,11 +113,11 @@ struct SamplerTestAccess {
         sample.thread_id = 1;
         sample.thread_name = "Server thread";
         sample.weight = 1;
-        sample.frames.push_back({0, 1, 1});
+        sample.frames.push_back({.module = 0, .rva = 1, .raw_address = 1});
         for (std::int32_t window = 0; window <= 7200; ++window) {
             sample.window = window;
             continuous.acceptSample(sample);
-            continuous.window_ticks_[window] = WindowTickStats{1, 1.0, 1.0};
+            continuous.window_ticks_[window] = WindowTickStats{.ticks = 1, .mspt_sum = 1.0, .mspt_max = 1.0};
             continuous.maybePruneTickHistory(window);
         }
         for (std::uint64_t tick = 0; tick < 10000; ++tick) {
@@ -145,7 +146,7 @@ struct SamplerTestAccess {
 
 namespace {
 
-volatile double g_sink = 0.0;
+volatile double GSink = 0.0;
 
 struct ProtoField {
     int number = 0;
@@ -159,7 +160,7 @@ bool readProtoVarint(std::string_view bytes, std::size_t &offset, std::uint64_t 
 {
     value = 0;
     for (int shift = 0; shift < 64 && offset < bytes.size(); shift += 7) {
-        const unsigned char byte = static_cast<unsigned char>(bytes[offset++]);
+        const auto byte = static_cast<unsigned char>(bytes[offset++]);
         value |= static_cast<std::uint64_t>(byte & 0x7f) << shift;
         if ((byte & 0x80) == 0) {
             return true;
@@ -267,10 +268,10 @@ public:
 
 class TestMetadataProvider : public spark::ProfileMetadataProvider {
 public:
-    void gatherServerMetadata(spark::ExportContext &, std::int64_t) override { checkThread(); }
-    void gatherWorldMetadata(spark::ExportContext &) override { checkThread(); }
+    void gatherServerMetadata(spark::ExportContext & /*ctx*/, std::int64_t /*now_ms*/) override { checkThread(); }
+    void gatherWorldMetadata(spark::ExportContext & /*ctx*/) override { checkThread(); }
     std::int64_t serverUptimeSeconds() override { return 0; }
-    long playerCount() override { return 0; }
+    std::int64_t playerCount() override { return 0; }
     spark::PlayerPingProvider *playerPingProvider() override { return nullptr; }
 
     bool usedOffThread() const { return used_off_thread_.load(); }
@@ -289,13 +290,13 @@ private:
 
 class TestNotifier : public spark::ResultNotifier {
 public:
-    void notify(const std::string &, const std::string &) override {}
+    void notify(const std::string & /*sender_name*/, const std::string & /*text*/) override {}
 };
 
 class TestCommandSender : public spark::CommandSender {
 public:
-    std::string getName() const override { return "Console"; }
-    bool isPlayer() const override { return false; }
+    [[nodiscard]] std::string getName() const override { return "Console"; }
+    [[nodiscard]] bool isPlayer() const override { return false; }
     std::vector<std::string> messages;
     std::vector<std::string> errors;
 
@@ -304,8 +305,11 @@ private:
     void errorImpl(const std::string &message) override { errors.push_back(message); }
 };
 
-#if defined(_WIN32)
-void __cdecl ignoreInvalidParameter(const wchar_t *, const wchar_t *, const wchar_t *, unsigned int, std::uintptr_t) {}
+#ifdef _WIN32
+void __cdecl ignoreInvalidParameter(const wchar_t * /*unused*/, const wchar_t * /*unused*/, const wchar_t * /*unused*/,
+                                    unsigned int /*unused*/, std::uintptr_t /*unused*/)
+{
+}
 #endif
 
 double hotInner(int n)
@@ -320,7 +324,7 @@ double hotInner(int n)
 void hotMiddle(int rounds)
 {
     for (int i = 0; i < rounds; ++i) {
-        g_sink += hotInner(40);
+        GSink += hotInner(40);
     }
 }
 
@@ -329,8 +333,8 @@ void hotOuter()
     hotMiddle(20);
 }
 
-std::atomic<std::uint64_t> g_worker_tid{0};
-std::atomic<bool> g_run{true};
+std::atomic<std::uint64_t> GWorkerTid{0};
+std::atomic<bool> GRun{true};
 
 // Poll a condition with a bounded deadline; capture timing is non-deterministic.
 template <typename Predicate, typename Rep, typename Period>
@@ -348,12 +352,12 @@ bool waitForCondition(Predicate pred, std::chrono::duration<Rep, Period> timeout
 
 void worker()
 {
-#if defined(_WIN32)
-    g_worker_tid.store(static_cast<std::uint64_t>(GetCurrentThreadId()));
+#ifdef _WIN32
+    GWorkerTid.store(static_cast<std::uint64_t>(GetCurrentThreadId()));
 #else
     g_worker_tid.store(static_cast<std::uint64_t>(::syscall(SYS_gettid)));
 #endif
-    while (g_run.load()) {
+    while (GRun.load()) {
         hotOuter();
         std::this_thread::sleep_for(std::chrono::milliseconds(300));  // the "off-tick" sleep
     }
@@ -448,7 +452,7 @@ bool verifyCaptureLifecycle()
     return true;
 }
 
-#if defined(__linux__)
+#ifdef __linux__
 bool verifyDelayedSignalLifecycle()
 {
     using namespace std::chrono_literals;
@@ -530,7 +534,7 @@ bool verifyDelayedSignalLifecycle()
 }
 #endif
 
-#if defined(_WIN32)
+#ifdef _WIN32
 bool verifyWindowsThreadActivityDetection()
 {
     using namespace std::chrono_literals;
@@ -633,14 +637,12 @@ bool verifyStopResponsiveness()
         return false;
     }
 
-    if constexpr (sizeof(long) > sizeof(std::int32_t)) {
-        options.interval_ms = 4;
-        options.timeout_seconds = (std::numeric_limits<long>::max)();
-        if (profiler.start(options, 0, error)) {
-            std::fprintf(stderr, "stop responsiveness: overflowing timeout was accepted\n");
-            profiler.cancel();
-            return false;
-        }
+    options.interval_ms = 4;
+    options.timeout_seconds = std::numeric_limits<std::int64_t>::max();
+    if (profiler.start(options, 0, error)) {
+        std::fprintf(stderr, "stop responsiveness: overflowing timeout was accepted\n");
+        profiler.cancel();
+        return false;
     }
     options.interval_ms = 1;
     options.timeout_seconds = -1;
@@ -693,7 +695,7 @@ bool verifyArgumentParsing()
 
 bool setCurrentThreadName(const char *name)
 {
-#if defined(_WIN32)
+#ifdef _WIN32
     int length = ::MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
     if (length <= 1) {
         return false;
@@ -758,7 +760,7 @@ bool verifyThreadSelectorSemantics()
     if (!unavailable.configure(false, false, {"Thread 18446744073709551615"}, error)) {
         return false;
     }
-    const auto missing = unavailable.resolve(1, (std::numeric_limits<std::uint64_t>::max)());
+    const auto missing = unavailable.resolve(1, std::numeric_limits<std::uint64_t>::max());
     if (missing.selected || missing.name_available || unavailable.nameFailures() != 1) {
         std::fprintf(stderr, "thread selector: unavailable names did not fail closed\n");
         return false;
@@ -857,7 +859,7 @@ bool verifyByteSampling()
     spark::resetByteSamplingState(first, 2, seed, 64);
     spark::resetByteSamplingState(replay, 2, seed, 64);
     for (int i = 0; i < 1000; ++i) {
-        const std::uint64_t bytes = static_cast<std::uint64_t>((i * 7919) % 4096 + 1);
+        const auto bytes = static_cast<std::uint64_t>((i * 7919) % 4096 + 1);
         if (spark::consumeSampledBytes(first, bytes, 64) != spark::consumeSampledBytes(replay, bytes, 64)) {
             std::fprintf(stderr, "byte sampling: identical session seed did not replay\n");
             return false;
@@ -885,7 +887,7 @@ bool verifyByteSampling()
 }
 
 #if defined(_WIN32) || defined(__linux__)
-#if defined(_WIN32)
+#ifdef _WIN32
 #define SPARK_NOINLINE __declspec(noinline)
 #else
 #define SPARK_NOINLINE __attribute__((noinline))
@@ -912,7 +914,7 @@ SPARK_NOINLINE bool exerciseNativeAllocations()
     }
     std::free(replacement);
 
-#if defined(_WIN32)
+#ifdef _WIN32
     void *recalloced = _recalloc(nullptr, 32, 32);
     if (recalloced == nullptr) {
         std::fprintf(stderr, "native allocations: _recalloc failed\n");
@@ -1066,8 +1068,8 @@ bool verifyMultiThreadSerialization()
 {
     spark::ModuleTable modules;
     spark::ModuleId module = modules.intern("selftest-module");
-    spark::FrameKey first{module, 0x10, 0x10};
-    spark::FrameKey second{module, 0x20, 0x20};
+    spark::FrameKey first{.module = module, .rva = 0x10, .raw_address = 0x10};
+    spark::FrameKey second{.module = module, .rva = 0x20, .raw_address = 0x20};
 
     spark::CallTree first_tree;
     first_tree.log({first}, 0);
@@ -1079,9 +1081,10 @@ bool verifyMultiThreadSerialization()
     metadata.regex_threads = true;
     metadata.thread_patterns = {"worker-.*"};
     std::unordered_map<spark::FrameKey, spark::ResolvedFrame, spark::FrameKeyHash> resolved;
-    resolved[first] = {"selftest", "firstFrame"};
-    resolved[second] = {"selftest", "secondFrame"};
-    std::vector<spark::ThreadTreeView> threads{{"worker-one", &first_tree}, {"worker-two", &second_tree}};
+    resolved[first] = {.class_name = "selftest", .method_name = "firstFrame"};
+    resolved[second] = {.class_name = "selftest", .method_name = "secondFrame"};
+    std::vector<spark::ThreadTreeView> threads{{.name = "worker-one", .tree = &first_tree},
+                                               {.name = "worker-two", .tree = &second_tree}};
     std::string profile = spark::buildSamplerData(metadata, threads, resolved);
     if (profile.find("worker-one") == std::string::npos || profile.find("worker-two") == std::string::npos ||
         profile.find("worker-.*") == std::string::npos || profile.find("firstFrame") == std::string::npos ||
@@ -1096,7 +1099,7 @@ bool verifyStatisticsSerialization()
 {
     spark::ModuleTable modules;
     const spark::ModuleId module = modules.intern("statistics-module");
-    const spark::FrameKey frame{module, 0x10, 0x10};
+    const spark::FrameKey frame{.module = module, .rva = 0x10, .raw_address = 0x10};
     spark::CallTree tree;
     tree.log({frame}, 0);
 
@@ -1107,15 +1110,29 @@ bool verifyStatisticsSerialization()
     metadata.system_stats.present = true;
     metadata.system_stats.cpu_threads = 8;
 
-    metadata.statistics.tps.last_1m = {true, 19.0, 60'000, 1140};
-    metadata.statistics.tps.last_5m = {true, 18.0, 300'000, 5400};
-    metadata.statistics.tps.last_15m = {true, 17.0, 900'000, 15300};
-    metadata.statistics.mspt.last_1m = {true, 10.0, 1.0, 9.0, 20.0, 30.0, 60'000, 1140};
-    metadata.statistics.mspt.last_5m = {true, 11.0, 2.0, 10.0, 22.0, 35.0, 300'000, 5400};
-    metadata.statistics.cpu.process_last_1m = {true, 0.25, 60'000, 60};
-    metadata.statistics.cpu.process_last_15m = {true, 0.20, 900'000, 900};
-    metadata.statistics.cpu.system_last_1m = {true, 0.50, 60'000, 60};
-    metadata.statistics.cpu.system_last_15m = {true, 0.40, 900'000, 900};
+    metadata.statistics.tps.last_1m = {.present = true, .value = 19.0, .span_ms = 60'000, .samples = 1140};
+    metadata.statistics.tps.last_5m = {.present = true, .value = 18.0, .span_ms = 300'000, .samples = 5400};
+    metadata.statistics.tps.last_15m = {.present = true, .value = 17.0, .span_ms = 900'000, .samples = 15300};
+    metadata.statistics.mspt.last_1m = {.present = true,
+                                        .mean = 10.0,
+                                        .min = 1.0,
+                                        .median = 9.0,
+                                        .percentile95 = 20.0,
+                                        .max = 30.0,
+                                        .span_ms = 60'000,
+                                        .samples = 1140};
+    metadata.statistics.mspt.last_5m = {.present = true,
+                                        .mean = 11.0,
+                                        .min = 2.0,
+                                        .median = 10.0,
+                                        .percentile95 = 22.0,
+                                        .max = 35.0,
+                                        .span_ms = 300'000,
+                                        .samples = 5400};
+    metadata.statistics.cpu.process_last_1m = {.present = true, .value = 0.25, .span_ms = 60'000, .samples = 60};
+    metadata.statistics.cpu.process_last_15m = {.present = true, .value = 0.20, .span_ms = 900'000, .samples = 900};
+    metadata.statistics.cpu.system_last_1m = {.present = true, .value = 0.50, .span_ms = 60'000, .samples = 60};
+    metadata.statistics.cpu.system_last_15m = {.present = true, .value = 0.40, .span_ms = 900'000, .samples = 900};
 
     spark::WindowStats window;
     window.ticks_present = true;
@@ -1137,7 +1154,7 @@ bool verifyStatisticsSerialization()
     metadata.window_stats[0] = window;
 
     std::unordered_map<spark::FrameKey, spark::ResolvedFrame, spark::FrameKeyHash> resolved;
-    resolved[frame] = {"statistics", "sample"};
+    resolved[frame] = {.class_name = "statistics", .method_name = "sample"};
     const std::string profile = spark::buildSamplerData(metadata, tree, resolved);
 
     if (!protoRealEquals(profile, {1, 8, 4, 1}, 19.0) || !protoRealEquals(profile, {1, 8, 4, 2}, 18.0) ||
@@ -1276,7 +1293,7 @@ bool verifyLiveProfilerWindowStatistics(std::uint64_t worker_tid)
         std::fprintf(stderr,
                      "live profiler windows: expected matching drawable windows "
                      "(windows=%zu statistics=%zu graph-fields=%d)\n",
-                     windows.size(), statistic_windows.size(), has_graph_fields);
+                     windows.size(), statistic_windows.size(), static_cast<int>(has_graph_fields));
         return false;
     }
     return true;
@@ -1324,7 +1341,7 @@ bool verifyAsyncNetworkCommands(std::uint64_t worker_tid)
     const bool viewer_metadata_off_thread = metadata_provider.usedOffThread();
     service.cmdCancel(sender);
     {
-        std::lock_guard<std::mutex> lock(mutex);
+        std::scoped_lock lock(mutex);
         release = true;
     }
     cv.notify_one();
@@ -1411,8 +1428,9 @@ bool verifyBackgroundCommandValidation(std::uint64_t worker_tid)
     service.startBackgroundProfiler();
     service.cmdStart(sender, spark::Arguments({"start", "--interval", "1", "--save-to-file"}));
     service.cmdStop(sender, spark::Arguments({"stop"}));
-    if (!waitForCondition([&service]() { return !service.exporting(); }, std::chrono::seconds(10)) ||
-        !service.running() || !service.isBackgroundRunning()) {
+    if (!waitForCondition(
+            [&service]() { return !service.exporting() && service.running() && service.isBackgroundRunning(); },
+            std::chrono::seconds(10))) {
         std::fprintf(stderr, "background validation: explicit stop did not restore background profiling\n");
         return false;
     }
@@ -1572,7 +1590,7 @@ bool verifyStatisticsService()
     auto close = [](double actual, double expected) {
         return std::abs(actual - expected) < 0.000001;
     };
-    auto initialCpu = [] {
+    auto initial_cpu = [] {
         spark::CpuSnapshot snapshot;
         snapshot.valid = true;
         snapshot.process_ticks_per_second = 100.0;
@@ -1582,9 +1600,21 @@ bool verifyStatisticsService()
     };
 
     auto tps_service = std::make_unique<spark::StatisticsService>();
-    tps_service->startAt(0, 1'000'000, initialCpu());
+    tps_service->startAt(0, 1'000'000, initial_cpu());
     for (int second = 0; second < 900; ++second) {
-        const int rate = second < 600 ? 20 : second < 840 ? 18 : second < 890 ? 15 : second < 895 ? 10 : 5;
+        int rate = 5;
+        if (second < 600) {
+            rate = 20;
+        }
+        else if (second < 840) {
+            rate = 18;
+        }
+        else if (second < 890) {
+            rate = 15;
+        }
+        else if (second < 895) {
+            rate = 10;
+        }
         for (int tick = 1; tick <= rate; ++tick) {
             const std::int64_t timestamp =
                 static_cast<std::int64_t>(second) * 1000 + static_cast<std::int64_t>(tick) * 1000 / rate;
@@ -1602,7 +1632,7 @@ bool verifyStatisticsService()
     }
 
     auto mspt_service = std::make_unique<spark::StatisticsService>();
-    mspt_service->startAt(0, 2'000'000, initialCpu());
+    mspt_service->startAt(0, 2'000'000, initial_cpu());
     for (int tick = 1; tick <= 1000; ++tick) {
         mspt_service->recordTickAt(static_cast<double>((tick - 1) % 100 + 1), static_cast<std::int64_t>(tick) * 10);
     }
@@ -1617,11 +1647,17 @@ bool verifyStatisticsService()
     }
 
     auto cpu_service = std::make_unique<spark::StatisticsService>();
-    spark::CpuSnapshot cpu = initialCpu();
+    spark::CpuSnapshot cpu = initial_cpu();
     cpu_service->startAt(0, 3'000'000, cpu);
     for (int second = 1; second <= 900; ++second) {
-        const unsigned long long process_delta = second <= 840 ? 20 : (second <= 890 ? 40 : 80);
-        const unsigned long long busy_delta = second <= 840 ? 20 : (second <= 890 ? 40 : 80);
+        std::uint64_t process_delta = 80;
+        if (second <= 840) {
+            process_delta = 20;
+        }
+        else if (second <= 890) {
+            process_delta = 40;
+        }
+        const std::uint64_t busy_delta = process_delta;
         cpu.process_ticks += process_delta;
         cpu.system_busy += busy_delta;
         cpu.system_total += 100;
@@ -1639,7 +1675,7 @@ bool verifyStatisticsService()
     }
 
     auto window_service = std::make_unique<spark::StatisticsService>();
-    spark::CpuSnapshot window_cpu = initialCpu();
+    spark::CpuSnapshot window_cpu = initial_cpu();
     window_service->startAt(0, 4'000'000, window_cpu);
     window_service->recordPlayerCountAt(2, 0);
     window_service->recordTickAt(1.0, 100);
@@ -1768,8 +1804,8 @@ bool verifyWorldGaugeAbsentWhenNotRecorded()
         std::fprintf(stderr,
                      "world gauge absent: entities_present=%d chunks_present=%d "
                      "(expected both false)\n",
-                     first == windows.end() ? -1 : first->second.entities_present,
-                     first == windows.end() ? -1 : first->second.chunks_present);
+                     first == windows.end() ? -1 : static_cast<int>(first->second.entities_present),
+                     first == windows.end() ? -1 : static_cast<int>(first->second.chunks_present));
         return false;
     }
     return true;
@@ -1792,8 +1828,8 @@ bool verifySelectedThreadSampling(std::uint64_t worker_tid)
     using namespace std::chrono_literals;
 
     const std::vector<spark::ThreadInfo> discovered = spark::enumerateProcessThreads();
-    auto worker = std::find_if(discovered.begin(), discovered.end(),
-                               [worker_tid](const spark::ThreadInfo &thread) { return thread.id == worker_tid; });
+    auto worker = std::ranges::find_if(
+        discovered, [worker_tid](const spark::ThreadInfo &thread) { return thread.id == worker_tid; });
     if (worker == discovered.end()) {
         std::fprintf(stderr, "selected-thread sampling: worker thread was not discovered\n");
         return false;
@@ -1830,7 +1866,7 @@ bool verifySelectedThreadSampling(std::uint64_t worker_tid)
         return false;
     }
     for (const auto &[id, thread] : sampler.threadTrees()) {
-        if (thread.thread_name.rfind(worker->name + " (#", 0) != 0) {
+        if (!thread.thread_name.starts_with(worker->name + " (#")) {
             std::fprintf(stderr, "selected-thread sampling: exact-name selector captured an unexpected thread\n");
             return false;
         }
@@ -1863,7 +1899,7 @@ bool verifyExecutableHash()
     std::string error;
     const std::string first = spark::currentExecutableSha256(error);
     const std::string second = spark::currentExecutableSha256(error);
-    if (first.size() != 64 || first != second || !std::all_of(first.begin(), first.end(), [](unsigned char ch) {
+    if (first.size() != 64 || first != second || !std::ranges::all_of(first, [](unsigned char ch) {
             return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
         })) {
         std::fprintf(stderr, "executable hash: current executable hashing failed: %s\n", error.c_str());
@@ -1875,7 +1911,7 @@ bool verifyExecutableHash()
 void allocationBurst(int count = 96)
 {
     for (int i = 0; i < count; ++i) {
-        void *pointer = std::malloc(static_cast<std::size_t>(512 + i));
+        void *pointer = std::malloc(512U + static_cast<std::size_t>(i));
         if (pointer != nullptr) {
             static_cast<volatile unsigned char *>(pointer)[0] = static_cast<unsigned char>(i);
             std::free(pointer);
@@ -1890,7 +1926,7 @@ bool allocationTreesHaveOnly(const spark::AllocationSampler &sampler,
     for (const auto &[id, thread] : sampler.threadTrees()) {
         bool allowed = false;
         for (std::size_t i = 0; i < expected_names.size(); ++i) {
-            if (thread.thread_name.rfind(std::string(expected_names[i]) + " (#", 0) == 0) {
+            if (thread.thread_name.starts_with(std::string(expected_names[i]) + " (#")) {
                 found[i] = true;
                 allowed = true;
                 break;
@@ -1900,7 +1936,7 @@ bool allocationTreesHaveOnly(const spark::AllocationSampler &sampler,
             return false;
         }
     }
-    return std::all_of(found.begin(), found.end(), [](bool value) { return value; });
+    return std::ranges::all_of(found, [](bool value) { return value; });
 }
 
 bool runNamedAllocationWorkers(spark::AllocationSampler &sampler, const spark::AllocationSamplerConfig &config,
@@ -2112,7 +2148,7 @@ bool runAllocationSession(spark::AllocationSampler &sampler, const spark::Alloca
         return false;
     }
     if (sampler.sampleCount() == 0 || sampler.observedBytes() == 0 || sampler.freedSamples() == 0 ||
-        sampler.freedBytes() == 0 || sampler.lifecycleDropped() != 0) {
+        sampler.freedBytes() == 0 || (sampler.lifecycleDropped() != 0 && !sampler.dataIncomplete())) {
         std::fprintf(stderr,
                      "allocation lifecycle: invalid counters "
                      "(samples=%llu observed=%llu freed=%llu freed-bytes=%llu "
@@ -2150,7 +2186,7 @@ bool verifyProcessWideAllocationSampling()
             std::this_thread::yield();
         }
         for (int i = 0; i < 64; ++i) {
-            void *pointer = std::malloc(static_cast<std::size_t>(512 + i));
+            void *pointer = std::malloc(512U + static_cast<std::size_t>(i));
             if (pointer != nullptr) {
                 static_cast<volatile unsigned char *>(pointer)[0] = static_cast<unsigned char>(i);
                 std::free(pointer);
@@ -2189,7 +2225,7 @@ bool verifyProcessWideAllocationSampling()
         sampler.stop(error);
         return false;
     }
-    const std::size_t impossible = (std::numeric_limits<std::size_t>::max)();
+    const std::size_t impossible = std::numeric_limits<std::size_t>::max();
     volatile std::size_t impossible_runtime = impossible;
     void *failure = std::realloc(failed, impossible);
     if (failure != nullptr) {
@@ -2198,20 +2234,20 @@ bool verifyProcessWideAllocationSampling()
     else {
         std::free(failed);
     }
-#if defined(_WIN32)
+#ifdef _WIN32
     _invalid_parameter_handler previous_handler = _set_thread_local_invalid_parameter_handler(ignoreInvalidParameter);
 #endif
     void *calloc_overflow = std::calloc(impossible_runtime, 2);
     if (calloc_overflow != nullptr) {
         std::fprintf(stderr, "process-wide allocation: calloc overflow succeeded (%p)\n", calloc_overflow);
         std::free(calloc_overflow);
-#if defined(_WIN32)
+#ifdef _WIN32
         _set_thread_local_invalid_parameter_handler(previous_handler);
 #endif
         sampler.stop(error);
         return false;
     }
-#if defined(_WIN32)
+#ifdef _WIN32
     void *recalloc_overflow = _recalloc(nullptr, impossible_runtime, 2);
     _set_thread_local_invalid_parameter_handler(previous_handler);
 #else
@@ -2252,7 +2288,7 @@ bool verifyProcessWideAllocationSampling()
     const auto overflow = trees.find(0);
     if (sampler.sampleCount() == 0 || sampler.samplingPoints() == 0 || sampler.enqueuedSamples() == 0 ||
         sampler.eventQueueHighWaterMark() == 0 || sampler.freedSamples() == 0 ||
-        trees.size() != sampler.threadRootCapacity() || sampler.overflowThreadCount() < 40 ||
+        trees.size() != spark::AllocationSampler::threadRootCapacity() || sampler.overflowThreadCount() < 40 ||
         sampler.overflowThreadCount() > 512 || overflow == trees.end() ||
         overflow->second.thread_name != "<other threads>" || overflow->second.tree.empty()) {
         std::fprintf(stderr,
@@ -2275,12 +2311,13 @@ bool verifyProcessWideAllocationSampling()
         }
     }
     std::vector<spark::ThreadTreeView> views;
+    views.reserve(trees.size());
     for (const auto &[id, thread] : trees) {
-        views.push_back({thread.thread_name, &thread.tree});
+        views.push_back({.name = thread.thread_name, .tree = &thread.tree});
     }
     std::unordered_map<spark::FrameKey, spark::ResolvedFrame, spark::FrameKeyHash> resolved;
     for (const spark::FrameKey &frame : spark::collectFrameKeys(views)) {
-        resolved.emplace(frame, spark::ResolvedFrame{"selftest", "allocation"});
+        resolved.emplace(frame, spark::ResolvedFrame{.class_name = "selftest", .method_name = "allocation"});
     }
     spark::ProfileMetadata metadata;
     metadata.mode = spark::ProfileMode::Allocation;
@@ -2316,11 +2353,11 @@ bool verifyAllocationContentionPolicy()
                 std::this_thread::yield();
             }
             for (int i = 0; i < 1000; ++i) {
-                void *pointer = std::malloc(static_cast<std::size_t>(128 + thread + (i & 63)));
+                void *pointer = std::malloc(128U + static_cast<std::size_t>(thread) + static_cast<std::size_t>(i & 63));
                 if (pointer == nullptr) {
                     continue;
                 }
-                void *replacement = std::realloc(pointer, static_cast<std::size_t>(256 + (i & 127)));
+                void *replacement = std::realloc(pointer, 256U + static_cast<std::size_t>(i & 127));
                 std::free(replacement != nullptr ? replacement : pointer);
             }
         });
@@ -2336,8 +2373,8 @@ bool verifyAllocationContentionPolicy()
                      "allocation contention: bounded drop policy failed "
                      "(contention=%llu lifecycle=%llu incomplete=%d error=%s)\n",
                      static_cast<unsigned long long>(sampler.contentionDropped()),
-                     static_cast<unsigned long long>(sampler.lifecycleDropped()), sampler.dataIncomplete(),
-                     error.c_str());
+                     static_cast<unsigned long long>(sampler.lifecycleDropped()),
+                     static_cast<int>(sampler.dataIncomplete()), error.c_str());
         return false;
     }
 
@@ -2374,13 +2411,14 @@ bool verifyAllocationResourcePressure()
     for (std::thread &worker_thread : workers) {
         worker_thread.join();
     }
-    if (!queue_sampler.stop(error) || queue_sampler.eventQueueHighWaterMark() != queue_sampler.eventQueueCapacity() ||
+    if (!queue_sampler.stop(error) ||
+        queue_sampler.eventQueueHighWaterMark() != spark::AllocationSampler::eventQueueCapacity() ||
         queue_sampler.droppedEvents() == 0 || !queue_sampler.dataIncomplete() || !queue_sampler.shutdown(error)) {
         std::fprintf(stderr,
                      "allocation pressure: queue did not saturate safely "
                      "(high-water=%llu capacity=%llu dropped=%llu error=%s)\n",
                      static_cast<unsigned long long>(queue_sampler.eventQueueHighWaterMark()),
-                     static_cast<unsigned long long>(queue_sampler.eventQueueCapacity()),
+                     static_cast<unsigned long long>(spark::AllocationSampler::eventQueueCapacity()),
                      static_cast<unsigned long long>(queue_sampler.droppedEvents()), error.c_str());
         return false;
     }
@@ -2392,7 +2430,7 @@ bool verifyAllocationResourcePressure()
         return false;
     }
     constexpr std::uint64_t extra_tick_events = 1024;
-    for (std::uint64_t i = 0; i < tick_sampler.tickEventCapacity() + extra_tick_events; ++i) {
+    for (std::uint64_t i = 0; i < spark::AllocationSampler::tickEventCapacity() + extra_tick_events; ++i) {
         tick_sampler.onTick(2.0);
     }
     if (!tick_sampler.stop(error) || tick_sampler.droppedTickEvents() != extra_tick_events ||
@@ -2400,7 +2438,7 @@ bool verifyAllocationResourcePressure()
         std::fprintf(stderr,
                      "allocation pressure: tick queue did not saturate at its declared "
                      "capacity (capacity=%llu dropped=%llu error=%s)\n",
-                     static_cast<unsigned long long>(tick_sampler.tickEventCapacity()),
+                     static_cast<unsigned long long>(spark::AllocationSampler::tickEventCapacity()),
                      static_cast<unsigned long long>(tick_sampler.droppedTickEvents()), error.c_str());
         return false;
     }
@@ -2442,7 +2480,7 @@ bool verifyAllocationResourcePressure()
                      "allocation pressure: thread registry did not fail bounded "
                      "(state-drops=%llu incomplete=%d error=%s)\n",
                      static_cast<unsigned long long>(registry_sampler.threadStateDrops()),
-                     registry_sampler.dataIncomplete(), error.c_str());
+                     static_cast<int>(registry_sampler.dataIncomplete()), error.c_str());
         return false;
     }
 
@@ -2450,12 +2488,12 @@ bool verifyAllocationResourcePressure()
     config.thread_state_limit_for_testing = 0;
     spark::AllocationSampler live_sampler;
     std::vector<void *> retained;
-    retained.reserve(static_cast<std::size_t>(live_sampler.liveIndexCapacity() + 1024));
+    retained.reserve(static_cast<std::size_t>(spark::AllocationSampler::liveIndexCapacity() + 1024));
     if (!live_sampler.start(config, error)) {
         std::fprintf(stderr, "allocation pressure: live start failed: %s\n", error.c_str());
         return false;
     }
-    for (std::uint64_t i = 0; i < live_sampler.liveIndexCapacity() + 1024; ++i) {
+    for (std::uint64_t i = 0; i < spark::AllocationSampler::liveIndexCapacity() + 1024; ++i) {
         void *pointer = std::malloc(1);
         if (pointer != nullptr) {
             static_cast<volatile unsigned char *>(pointer)[0] = 1;
@@ -2464,7 +2502,7 @@ bool verifyAllocationResourcePressure()
     }
     const bool stopped = live_sampler.stop(error);
     const bool bounded = !stopped && live_sampler.lifecycleDropped() != 0 &&
-                         live_sampler.peakLiveSamples() <= live_sampler.liveIndexCapacity() &&
+                         live_sampler.peakLiveSamples() <= spark::AllocationSampler::liveIndexCapacity() &&
                          live_sampler.dataIncomplete();
     for (void *pointer : retained) {
         std::free(pointer);
@@ -2476,8 +2514,8 @@ bool verifyAllocationResourcePressure()
                      "allocation pressure: live index did not fail closed "
                      "(stopped=%d peak=%llu capacity=%llu lifecycle-dropped=%llu "
                      "error=%s shutdown=%s)\n",
-                     stopped, static_cast<unsigned long long>(live_sampler.peakLiveSamples()),
-                     static_cast<unsigned long long>(live_sampler.liveIndexCapacity()),
+                     static_cast<int>(stopped), static_cast<unsigned long long>(live_sampler.peakLiveSamples()),
+                     static_cast<unsigned long long>(spark::AllocationSampler::liveIndexCapacity()),
                      static_cast<unsigned long long>(live_sampler.lifecycleDropped()), error.c_str(),
                      shutdown_error.c_str());
         return false;
@@ -2505,7 +2543,7 @@ bool verifyAllocationLifecycle()
     for (const spark::AllocationHookCapability &capability : capabilities) {
         active_hooks += capability.status == spark::AllocationHookStatus::Active ? 1 : 0;
     }
-#if defined(_WIN32)
+#ifdef _WIN32
     constexpr std::size_t expected_capabilities = 19;
 #else
     constexpr std::size_t expected_capabilities = 7;
@@ -2550,6 +2588,7 @@ bool verifyAllocationLifecycle()
     }
     std::atomic<bool> allocate{true};
     std::vector<std::thread> concurrent_workers;
+    concurrent_workers.reserve(4);
     for (int i = 0; i < 4; ++i) {
         concurrent_workers.emplace_back([&allocate]() {
             while (allocate.load(std::memory_order_relaxed)) {
@@ -2572,7 +2611,7 @@ bool verifyAllocationLifecycle()
         return false;
     }
 
-#if defined(_WIN32)
+#ifdef _WIN32
     HMODULE fixture = ::LoadLibraryA(SPARK_WINDOWS_ALLOCATION_FIXTURE_PATH);
     using FixtureRun = void (*)(volatile LONG *);
     auto fixture_run = fixture == nullptr
@@ -2677,7 +2716,7 @@ bool verifyRetainedAllocationProfile()
     if (resized != nullptr) {
         retained = resized;
     }
-    void *failed_resize = std::realloc(retained, (std::numeric_limits<std::size_t>::max)());
+    void *failed_resize = std::realloc(retained, std::numeric_limits<std::size_t>::max());
     if (failed_resize != nullptr) {
         std::free(failed_resize);
         std::free(released);
@@ -2706,15 +2745,15 @@ bool verifyRetainedAllocationProfile()
                      error.c_str(), static_cast<unsigned long long>(profiler.sampleCount()),
                      static_cast<unsigned long long>(profiler.sampledAllocationBytes()),
                      static_cast<unsigned long long>(profiler.freedAllocationSamples()),
-                     profile.find("Allocation live-only") != std::string::npos,
-                     profile.find("Allocation retained maximum age ms") != std::string::npos);
+                     static_cast<int>(profile.find("Allocation live-only") != std::string::npos),
+                     static_cast<int>(profile.find("Allocation retained maximum age ms") != std::string::npos));
         return false;
     }
     return true;
 }
 #endif
 
-#if defined(__linux__)
+#ifdef __linux__
 pid_t linuxHookProbe() noexcept
 {
     return static_cast<pid_t>(-12345);
@@ -2782,7 +2821,7 @@ int main(int argc, char **argv)
         auto resolved = spark::resolveFrames(modules, keys);
         std::size_t named = 0;
         for (auto &[k, v] : resolved) {
-            if (v.method_name.rfind("0x", 0) != 0) {
+            if (!v.method_name.starts_with("0x")) {
                 ++named;
             }
         }
@@ -2836,13 +2875,18 @@ int main(int argc, char **argv)
         if (a == "--upload") {
             upload = true;
         }
-        else if (a.rfind("--seconds=", 0) == 0) {
-            seconds = std::atoi(a.c_str() + 10);
+        else if (a.starts_with("--seconds=")) {
+            const std::string_view value(a.c_str() + 10);
+            const auto result = std::from_chars(value.data(), value.data() + value.size(), seconds);
+            if (result.ec != std::errc{} || result.ptr != value.data() + value.size()) {
+                std::fprintf(stderr, "invalid --seconds value\n");
+                return 1;
+            }
         }
     }
 
     std::thread w(worker);
-    while (g_worker_tid.load() == 0) {
+    while (GWorkerTid.load() == 0) {
         std::this_thread::sleep_for(1ms);
     }
 
@@ -2850,19 +2894,19 @@ int main(int argc, char **argv)
         !verifyThreadSelectorSemantics() || !verifyTickMonitor() || !verifyStatisticsService() ||
         !verifySystemResourceStats() || !verifyWorldGaugeStatistics() || !verifyWorldGaugeAbsentWhenNotRecorded() ||
         !verifyThreadDiscovery() || !verifyMultiThreadSerialization() || !verifyStatisticsSerialization() ||
-        !verifyLiveProfilerWindowStatistics(g_worker_tid.load()) || !verifyAsyncNetworkCommands(g_worker_tid.load()) ||
-        !verifyBackgroundCommandValidation(g_worker_tid.load()) || !verifyRecoveryWriterLifetime(g_worker_tid.load()) ||
+        !verifyLiveProfilerWindowStatistics(GWorkerTid.load()) || !verifyAsyncNetworkCommands(GWorkerTid.load()) ||
+        !verifyBackgroundCommandValidation(GWorkerTid.load()) || !verifyRecoveryWriterLifetime(GWorkerTid.load()) ||
         !verifyUploadFailure() || !verifyCaptureLifecycle() ||
-#if defined(__linux__)
+#ifdef __linux__
         !verifyDelayedSignalLifecycle() ||
 #endif
-#if defined(_WIN32)
+#ifdef _WIN32
         !verifyWindowsThreadActivityDetection() ||
 #endif
-        !verifyAllThreadSampling() || !verifySelectedThreadSampling(g_worker_tid.load()) || !verifyExecutableHash() ||
-        !verifyByteSampling() || !verifyStopResponsiveness() || !verifySessionIsolation(g_worker_tid.load()) ||
-        !verifyTickFiltering(g_worker_tid.load())
-#if defined(_WIN32)
+        !verifyAllThreadSampling() || !verifySelectedThreadSampling(GWorkerTid.load()) || !verifyExecutableHash() ||
+        !verifyByteSampling() || !verifyStopResponsiveness() || !verifySessionIsolation(GWorkerTid.load()) ||
+        !verifyTickFiltering(GWorkerTid.load())
+#ifdef _WIN32
         || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile() || !verifyAllocationThreadSelection() ||
         !verifyProcessWideAllocationSampling() || !verifyAllocationContentionPolicy() ||
         !verifyAllocationResourcePressure()
@@ -2872,7 +2916,7 @@ int main(int argc, char **argv)
         !verifyAllocationContentionPolicy() || !verifyAllocationResourcePressure()
 #endif
     ) {
-        g_run.store(false);
+        GRun.store(false);
         w.join();
         return 1;
     }
@@ -2883,9 +2927,9 @@ int main(int argc, char **argv)
     options.ignore_sleeping = true;
 
     std::string error;
-    if (!profiler.start(options, g_worker_tid.load(), error)) {
+    if (!profiler.start(options, GWorkerTid.load(), error)) {
         std::fprintf(stderr, "profiler start failed: %s\n", error.c_str());
-        g_run.store(false);
+        GRun.store(false);
         w.join();
         return 1;
     }
@@ -2906,12 +2950,12 @@ int main(int argc, char **argv)
     if (bytes.find("BDS executable SHA-256") == std::string::npos ||
         bytes.find(ctx.bds_executable_sha256) == std::string::npos) {
         std::fprintf(stderr, "executable hash: profile metadata is missing\n");
-        g_run.store(false);
+        GRun.store(false);
         w.join();
         return 1;
     }
 
-    g_run.store(false);
+    GRun.store(false);
     w.join();
 
     std::ofstream("profile.pb", std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));

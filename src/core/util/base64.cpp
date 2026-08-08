@@ -4,7 +4,7 @@ namespace spark {
 
 namespace {
 
-constexpr char kEncodeTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+constexpr char KEncodeTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 int decodeChar(char c)
 {
@@ -41,16 +41,16 @@ std::string base64Encode(const std::uint8_t *data, std::size_t length)
             triple |= data[i + 2];
         }
 
-        out.push_back(kEncodeTable[(triple >> 18) & 0x3f]);
-        out.push_back(kEncodeTable[(triple >> 12) & 0x3f]);
+        out.push_back(KEncodeTable[(triple >> 18) & 0x3f]);
+        out.push_back(KEncodeTable[(triple >> 12) & 0x3f]);
         if (i + 1 < length) {
-            out.push_back(kEncodeTable[(triple >> 6) & 0x3f]);
+            out.push_back(KEncodeTable[(triple >> 6) & 0x3f]);
         }
         else {
             out.push_back('=');
         }
         if (i + 2 < length) {
-            out.push_back(kEncodeTable[triple & 0x3f]);
+            out.push_back(KEncodeTable[triple & 0x3f]);
         }
         else {
             out.push_back('=');

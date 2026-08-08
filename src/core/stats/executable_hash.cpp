@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#if defined(_WIN32)
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -19,7 +19,7 @@
 namespace spark {
 namespace {
 
-constexpr std::array<std::uint32_t, 64> kRoundConstants = {
+constexpr std::array<std::uint32_t, 64> KRoundConstants = {
     0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
     0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
     0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU, 0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
@@ -119,7 +119,7 @@ private:
         for (std::size_t i = 0; i < words.size(); ++i) {
             const std::uint32_t sum1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
             const std::uint32_t choice = (e & f) ^ (~e & g);
-            const std::uint32_t temp1 = h + sum1 + choice + kRoundConstants[i] + words[i];
+            const std::uint32_t temp1 = h + sum1 + choice + KRoundConstants[i] + words[i];
             const std::uint32_t sum0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
             const std::uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
             const std::uint32_t temp2 = sum0 + majority;
@@ -153,19 +153,19 @@ private:
 
 std::string digestHex(const std::array<unsigned char, 32> &digest)
 {
-    static constexpr char kHex[] = "0123456789abcdef";
+    static constexpr char k_hex[] = "0123456789abcdef";
     std::string result;
     result.resize(digest.size() * 2);
     for (std::size_t i = 0; i < digest.size(); ++i) {
-        result[i * 2] = kHex[digest[i] >> 4U];
-        result[i * 2 + 1] = kHex[digest[i] & 0x0fU];
+        result[i * 2] = k_hex[digest[i] >> 4U];
+        result[i * 2 + 1] = k_hex[digest[i] & 0x0fU];
     }
     return result;
 }
 
 std::filesystem::path currentExecutablePath(std::string &error)
 {
-#if defined(_WIN32)
+#ifdef _WIN32
     std::vector<wchar_t> path(32768);
     const DWORD length = ::GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
     if (length == 0) {
@@ -176,7 +176,7 @@ std::filesystem::path currentExecutablePath(std::string &error)
         error = "the current executable path exceeds the Windows path limit";
         return {};
     }
-    return std::filesystem::path(std::wstring(path.data(), length));
+    return {std::wstring(path.data(), length)};
 #elif defined(__linux__)
     return std::filesystem::path("/proc/self/exe");
 #else

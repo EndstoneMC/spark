@@ -35,9 +35,9 @@ using spark::symbol_guess::windows::VtableEvidence;
 
 class PeFixture {
 public:
-    static constexpr std::uint64_t kBase = 0x180000000ull;
+    static constexpr std::uint64_t KBase = 0x180000000ULL;
 
-    explicit PeFixture(std::size_t size = 0x8000, std::uint64_t load_base = kBase)
+    explicit PeFixture(std::size_t size = 0x8000, std::uint64_t load_base = KBase)
         : bytes_(size, 0), load_base_(load_base)
     {
         IMAGE_DOS_HEADER dos{};
@@ -104,7 +104,7 @@ public:
     {
         IMAGE_NT_HEADERS64 nt{};
         std::memcpy(&nt, bytes_.data() + 0x80, sizeof(nt));
-        nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION] = {rva, size};
+        nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION] = {.VirtualAddress = rva, .Size = size};
         put(0x80, nt);
     }
 
@@ -123,7 +123,7 @@ public:
     void chainedUnwind(std::uint32_t rva, std::uint8_t code_count, const RUNTIME_FUNCTION &parent)
     {
         putBytes(rva, {static_cast<std::uint8_t>((UNW_FLAG_CHAININFO << 3) | 1), 0, code_count, 0});
-        const std::uint32_t slots = (static_cast<std::uint32_t>(code_count) + 1) & ~1u;
+        const std::uint32_t slots = (static_cast<std::uint32_t>(code_count) + 1) & ~1U;
         put(rva + 4 + slots * 2, parent);
     }
 
@@ -137,7 +137,7 @@ public:
             std::uint32_t attributes;
             std::uint32_t count;
             std::uint32_t array;
-        } chd{0, 0, 1, base_array};
+        } chd{.signature = 0, .attributes = 0, .count = 1, .array = base_array};
         put(hierarchy, chd);
         put(base_array, base_descriptor);
         struct Base {
@@ -148,7 +148,8 @@ public:
             std::int32_t vdisp;
             std::uint32_t attributes;
             std::uint32_t hierarchy;
-        } base{type, 0, 0, -1, 0, 0, hierarchy};
+        } base{
+            .type = type, .contained = 0, .mdisp = 0, .pdisp = -1, .vdisp = 0, .attributes = 0, .hierarchy = hierarchy};
         put(base_descriptor, base);
         struct Col {
             std::uint32_t signature;
@@ -157,7 +158,7 @@ public:
             std::uint32_t type;
             std::uint32_t hierarchy;
             std::uint32_t self;
-        } locator{1, offset, 0, type, hierarchy, col};
+        } locator{.signature = 1, .offset = offset, .cd_offset = 0, .type = type, .hierarchy = hierarchy, .self = col};
         put(col, locator);
     }
 
@@ -186,7 +187,7 @@ public:
         put(rva + 1, displacement);
     }
 
-    Engine engine() const { return Engine(bytes_.data(), bytes_.size(), load_base_); }
+    [[nodiscard]] Engine engine() const { return {bytes_.data(), bytes_.size(), load_base_}; }
 
     std::vector<std::uint8_t> &bytes() { return bytes_; }
 
@@ -300,7 +301,7 @@ bool testRttiVtableAmbiguity()
         addClass(fixture, 0x2400, ".?AVGadget@@", 0x2c08, {0x1010});
         Engine engine = fixture.engine();
         const std::uint64_t query = 0x1010;
-        CHECK(engine.guess(std::span(&query, 1)).count(query) == 0);
+        CHECK(!engine.guess(std::span(&query, 1)).contains(query));
         CHECK(engine.stats().vtable_conflicts == 1);
     }
     CHECK(spark::symbol_guess::windows::chooseVtableLabel({{"Widget", 3, false, false}, {"Gadget", 3, false, false}})
@@ -344,8 +345,8 @@ bool testAslrIndependence()
         return engine.guess(std::span(&query, 1));
     };
 
-    const auto preferred = build(PeFixture::kBase);
-    const auto relocated = build(0x7ff600000000ull);
+    const auto preferred = build(PeFixture::KBase);
+    const auto relocated = build(0x7ff600000000ULL);
     CHECK(preferred == relocated);
     CHECK(preferred.at(0x1010).label == "vtable: Widget::vfn[0]");
     return true;
@@ -386,7 +387,7 @@ bool testInstructionMiddleAndSharedString()
         // mov rax, imm64: the immediate contains a byte-perfect old-style LEA
         // pattern. A real decoder consumes it as data and must not emit an xref.
         fixture.putBytes(0x1000, {0x48, 0xb8, 0x48, 0x8d, 0x05, 0, 0, 0, 0, 0, 0xc3});
-        const std::int32_t fake = static_cast<std::int32_t>(0x3100 - (0x1002 + 7));
+        const auto fake = static_cast<std::int32_t>(0x3100 - (0x1002 + 7));
         fixture.put(0x1005, fake);
         Engine engine = fixture.engine();
         const std::uint64_t query = 0x1002;
@@ -434,33 +435,34 @@ bool testChainedRootStringUniqueness()
 
 bool testLargeRangeLookup()
 {
-    constexpr std::uint32_t kCount = 120000;
-    constexpr std::uint32_t kText = 0x1000;
-    constexpr std::uint32_t kPdata = 0x200000;
-    constexpr std::uint32_t kXdata = 0x380000;
-    constexpr std::uint32_t kSize = 0x390000;
-    PeFixture fixture(kSize);
-    fixture.section(0, ".text", kText, kPdata - kText, IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
+    constexpr std::uint32_t k_count = 120000;
+    constexpr std::uint32_t k_text = 0x1000;
+    constexpr std::uint32_t k_pdata = 0x200000;
+    constexpr std::uint32_t k_xdata = 0x380000;
+    constexpr std::uint32_t k_size = 0x390000;
+    PeFixture fixture(k_size);
+    fixture.section(0, ".text", k_text, k_pdata - k_text,
+                    IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
     fixture.section(1, ".rdata", 0x100, 0x100, IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    fixture.section(2, ".pdata", kPdata, kCount * sizeof(RUNTIME_FUNCTION),
+    fixture.section(2, ".pdata", k_pdata, k_count * sizeof(RUNTIME_FUNCTION),
                     IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    fixture.section(3, ".xdata", kXdata, 0x1000, IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    fixture.leafUnwind(kXdata);
-    for (std::uint32_t i = 0; i < kCount; ++i) {
+    fixture.section(3, ".xdata", k_xdata, 0x1000, IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    fixture.leafUnwind(k_xdata);
+    for (std::uint32_t i = 0; i < k_count; ++i) {
         RUNTIME_FUNCTION function{};
-        function.BeginAddress = kText + i * 8;
+        function.BeginAddress = k_text + i * 8;
         function.EndAddress = function.BeginAddress + 4;
-        function.UnwindData = kXdata;
-        fixture.put(kPdata + i * sizeof(function), function);
+        function.UnwindData = k_xdata;
+        fixture.put(k_pdata + i * sizeof(function), function);
     }
-    fixture.exceptionDirectory(kPdata, kCount * sizeof(RUNTIME_FUNCTION));
+    fixture.exceptionDirectory(k_pdata, k_count * sizeof(RUNTIME_FUNCTION));
     Engine engine = fixture.engine();
     CHECK(engine.valid());
-    CHECK(engine.stats().function_ranges == kCount);
+    CHECK(engine.stats().function_ranges == k_count);
     const auto start = std::chrono::steady_clock::now();
     std::uint64_t checksum = 0;
     for (std::uint32_t i = 0; i < 1000000; ++i) {
-        const std::uint64_t rva = kText + (i % kCount) * 8;
+        const std::uint64_t rva = k_text + (i % k_count) * 8;
         const FunctionRange *range = engine.functionContaining(rva);
         CHECK(range != nullptr);
         checksum += range->root;
@@ -506,7 +508,7 @@ int evaluateMappedPe(int argc, char **argv)
         return 2;
     }
     const std::streamoff length = stream.tellg();
-    if (length <= 0 || length > 1ll << 31) {
+    if (length <= 0 || length > 1LL << 31) {
         std::fprintf(stderr, "invalid PE size\n");
         return 2;
     }
@@ -527,13 +529,12 @@ int evaluateMappedPe(int argc, char **argv)
     IMAGE_NT_HEADERS64 nt{};
     std::memcpy(&nt, file.data() + dos.e_lfanew, sizeof(nt));
     if (nt.Signature != IMAGE_NT_SIGNATURE || nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC ||
-        nt.OptionalHeader.SizeOfImage == 0 || nt.OptionalHeader.SizeOfImage > 1u << 30) {
+        nt.OptionalHeader.SizeOfImage == 0 || nt.OptionalHeader.SizeOfImage > 1U << 30) {
         std::fprintf(stderr, "unsupported PE\n");
         return 2;
     }
     std::vector<std::uint8_t> mapped(nt.OptionalHeader.SizeOfImage, 0);
-    const std::size_t header_bytes =
-        std::min<std::size_t>({file.size(), mapped.size(), nt.OptionalHeader.SizeOfHeaders});
+    const auto header_bytes = std::min<std::size_t>({file.size(), mapped.size(), nt.OptionalHeader.SizeOfHeaders});
     std::memcpy(mapped.data(), file.data(), header_bytes);
     const std::size_t section_offset = static_cast<std::size_t>(dos.e_lfanew) + sizeof(DWORD) +
                                        sizeof(IMAGE_FILE_HEADER) + nt.FileHeader.SizeOfOptionalHeader;
@@ -548,7 +549,7 @@ int evaluateMappedPe(int argc, char **argv)
         if (section.VirtualAddress >= mapped.size() || section.PointerToRawData >= file.size()) {
             continue;
         }
-        const std::size_t copy = std::min<std::size_t>(
+        const auto copy = std::min<std::size_t>(
             {section.SizeOfRawData, file.size() - section.PointerToRawData, mapped.size() - section.VirtualAddress});
         std::memcpy(mapped.data() + section.VirtualAddress, file.data() + section.PointerToRawData, copy);
     }

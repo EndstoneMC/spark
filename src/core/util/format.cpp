@@ -9,12 +9,12 @@ std::string formatDuration(std::int64_t seconds)
     if (seconds < 60) {
         return std::to_string(seconds) + "s";
     }
-    long m = seconds / 60;
-    long s = seconds % 60;
+    std::int64_t m = seconds / 60;
+    std::int64_t s = seconds % 60;
     if (m < 60) {
         return std::to_string(m) + "m " + std::to_string(s) + "s";
     }
-    long h = m / 60;
+    std::int64_t h = m / 60;
     m %= 60;
     return std::to_string(h) + "h " + std::to_string(m) + "m";
 }
@@ -22,7 +22,7 @@ std::string formatDuration(std::int64_t seconds)
 std::string formatBytes(std::uint64_t bytes)
 {
     constexpr const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
-    double value = static_cast<double>(bytes);
+    auto value = static_cast<double>(bytes);
     std::size_t unit = 0;
     while (value >= 1024.0 && unit + 1 < (sizeof(units) / sizeof(units[0]))) {
         value /= 1024.0;

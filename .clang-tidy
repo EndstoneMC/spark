@@ -23,7 +23,7 @@ Checks: >
   -readability-function-cognitive-complexity,
   -readability-magic-numbers,
   -readability-math-missing-parentheses,
-  -readability-named-parameter
+  -readability-named-parameter,
   -readability-simplify-boolean-expr
 
 WarningsAsErrors: "*"

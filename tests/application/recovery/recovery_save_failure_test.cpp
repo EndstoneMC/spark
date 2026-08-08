@@ -18,16 +18,16 @@ public:
 
 class TestMetadataProvider final : public spark::ProfileMetadataProvider {
 public:
-    void gatherServerMetadata(spark::ExportContext &, std::int64_t) override {}
-    void gatherWorldMetadata(spark::ExportContext &) override {}
+    void gatherServerMetadata(spark::ExportContext & /*ctx*/, std::int64_t /*now_ms*/) override {}
+    void gatherWorldMetadata(spark::ExportContext & /*ctx*/) override {}
     std::int64_t serverUptimeSeconds() override { return 0; }
-    long playerCount() override { return 0; }
+    std::int64_t playerCount() override { return 0; }
     spark::PlayerPingProvider *playerPingProvider() override { return nullptr; }
 };
 
 class TestNotifier final : public spark::ResultNotifier {
 public:
-    void notify(const std::string &, const std::string &text) override { messages.push_back(text); }
+    void notify(const std::string & /*sender_name*/, const std::string &text) override { messages.push_back(text); }
     std::vector<std::string> messages;
 };
 
@@ -50,7 +50,7 @@ int main()
     spark::Sample sample;
     sample.thread_id = 1;
     sample.weight = 4000;
-    sample.frames.push_back({0, 0x1000, 0});
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
     writer.journalSample(sample);
     writer.stop();
 

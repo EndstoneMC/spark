@@ -13,7 +13,7 @@ namespace {
 
 // Strict allowlist of server.properties keys that are safe to include
 // in profile metadata. Any key not in this list is silently dropped.
-constexpr std::array<std::string_view, 18> kAllowlist = {
+constexpr std::array<std::string_view, 18> KAllowlist = {
     // Core performance diagnostics
     "max-players",
     "view-distance",
@@ -41,12 +41,7 @@ constexpr std::array<std::string_view, 18> kAllowlist = {
 
 bool isAllowlisted(std::string_view key)
 {
-    for (auto k : kAllowlist) {
-        if (key == k) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(KAllowlist, [key](std::string_view candidate) { return key == candidate; });
 }
 
 std::string trim(std::string_view s)
@@ -67,12 +62,7 @@ bool isAllDigits(std::string_view s)
     if (s.empty()) {
         return false;
     }
-    for (char c : s) {
-        if (c < '0' || c > '9') {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::all_of(s, [](char value) { return value >= '0' && value <= '9'; });
 }
 
 void appendJsonString(std::string &out, std::string_view value)
@@ -173,10 +163,7 @@ std::string serverPropertiesToJsonString(const std::map<std::string, std::string
         first = false;
         appendJsonString(out, key);
         out += ':';
-        if (value == "true" || value == "false") {
-            out += value;
-        }
-        else if (isAllDigits(value)) {
+        if (value == "true" || value == "false" || isAllDigits(value)) {
             out += value;
         }
         else {

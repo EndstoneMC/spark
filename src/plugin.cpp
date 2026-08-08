@@ -7,7 +7,7 @@
 
 #include <endstone/endstone.hpp>
 
-#if defined(_WIN32)
+#ifdef _WIN32
 #include <windows.h>
 #else
 #include <unistd.h>
@@ -29,15 +29,15 @@ namespace {
 
 std::uint64_t currentThreadId()
 {
-#if defined(_WIN32)
+#ifdef _WIN32
     return static_cast<std::uint64_t>(::GetCurrentThreadId());
 #else
     return static_cast<std::uint64_t>(::syscall(SYS_gettid));
 #endif
 }
-
 }  // namespace
 
+// NOLINTBEGIN(bugprone-throwing-static-initialization,misc-use-anonymous-namespace,misc-use-internal-linkage)
 class SparkPlugin : public endstone::Plugin {
 public:
     void onEnable() override
@@ -68,7 +68,7 @@ public:
             std::move(config), std::move(trusted_viewers), *dispatcher_, *metadata_provider_, *notifier_);
 
         app_->statistics().start();
-        app_->statistics().recordPlayerCount(static_cast<long>(getServer().getOnlinePlayers().size()));
+        app_->statistics().recordPlayerCount(static_cast<std::int64_t>(getServer().getOnlinePlayers().size()));
         app_->enable();
 
         tick_task_ = getServer().getScheduler().runTaskTimer(*this, [this]() { onServerTick(); }, 0, 1);
@@ -175,3 +175,4 @@ ENDSTONE_PLUGIN("spark", "0.4.1", SparkPlugin)
         .description("Allows use of /spark tickmonitor")
         .default_(endstone::PermissionDefault::Operator);
 }
+// NOLINTEND(bugprone-throwing-static-initialization,misc-use-anonymous-namespace,misc-use-internal-linkage)

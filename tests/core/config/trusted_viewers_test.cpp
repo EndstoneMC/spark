@@ -6,7 +6,7 @@
 
 #include "core/config/trusted_viewers.h"
 
-using namespace spark;
+using namespace spark;  // NOLINT(google-build-using-namespace)
 
 namespace {
 

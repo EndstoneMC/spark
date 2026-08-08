@@ -10,7 +10,7 @@
 
 namespace spark {
 
-SparkApplication::SparkApplication(std::string bds_executable_sha256, std::filesystem::path profile_storage_dir,
+SparkApplication::SparkApplication(std::string bds_executable_sha256, const std::filesystem::path &profile_storage_dir,
                                    std::filesystem::path activity_log_file, SparkConfig config,
                                    TrustedViewersState trusted_viewers, MainThreadDispatcher &dispatcher,
                                    ProfileMetadataProvider &metadata_provider, ResultNotifier &notifier)
@@ -145,7 +145,7 @@ void SparkApplication::recoverPreviousSession()
             continue;
         }
         auto name = entry.path().filename().string();
-        if (name.size() >= 8 && name.substr(0, 8) == "segment-" && name.size() >= 4 &&
+        if (name.size() >= 8 && name.starts_with("segment-") && name.size() >= 4 &&
             name.substr(name.size() - 4) == ".jnl") {
             has_journal = true;
             break;

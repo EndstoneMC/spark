@@ -5,9 +5,9 @@
 
 #include "core/util/world_region.h"
 
-using namespace spark;
+using namespace spark;  // NOLINT(google-build-using-namespace)
 
-static WorldChunk makeChunk(int x, int z, int entities)
+static WorldChunk makeChunk(int x, int z, int entities)  // NOLINT(misc-use-anonymous-namespace)
 {
     WorldChunk c;
     c.x = x;
@@ -16,12 +16,12 @@ static WorldChunk makeChunk(int x, int z, int entities)
     return c;
 }
 
-static int countRegions(const std::vector<WorldRegion> &regions)
+static int countRegions(const std::vector<WorldRegion> &regions)  // NOLINT(misc-use-anonymous-namespace)
 {
     return static_cast<int>(regions.size());
 }
 
-static int totalChunks(const std::vector<WorldRegion> &regions)
+static int totalChunks(const std::vector<WorldRegion> &regions)  // NOLINT(misc-use-anonymous-namespace)
 {
     int total = 0;
     for (const auto &r : regions) {
@@ -30,7 +30,7 @@ static int totalChunks(const std::vector<WorldRegion> &regions)
     return total;
 }
 
-static int totalEntities(const std::vector<WorldRegion> &regions)
+static int totalEntities(const std::vector<WorldRegion> &regions)  // NOLINT(misc-use-anonymous-namespace)
 {
     int total = 0;
     for (const auto &r : regions) {

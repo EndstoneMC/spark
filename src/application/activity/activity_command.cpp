@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/util/format.h"
@@ -62,9 +63,9 @@ void ActivityCommand::cmdActivity(CommandSender &sender, const Arguments &args)
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
             .count();
 
-    constexpr std::size_t kPerPage = 4;
+    constexpr std::size_t k_per_page = 4;
     const std::size_t total = entries.size();
-    const std::size_t pages = 1 + (total - 1) / kPerPage;
+    const std::size_t pages = 1 + (total - 1) / k_per_page;
 
     std::size_t page = 1;
     if (args.boolFlag("page")) {
@@ -73,7 +74,7 @@ void ActivityCommand::cmdActivity(CommandSender &sender, const Arguments &args)
             sender.sendErrorMessage("The page must be a positive whole number.");
             return;
         }
-        if (static_cast<std::uintmax_t>(*page_flag) > pages) {
+        if (std::cmp_greater(*page_flag, pages)) {
             sender.sendMessage("{}Unknown page selected. {} total pages.{}", kColorGold, pages, kColorGray);
             return;
         }
@@ -85,8 +86,8 @@ void ActivityCommand::cmdActivity(CommandSender &sender, const Arguments &args)
         return;
     }
 
-    const std::size_t start = (page - 1) * kPerPage;
-    const std::size_t end = std::min(start + kPerPage, total);
+    const std::size_t start = (page - 1) * k_per_page;
+    const std::size_t end = std::min(start + k_per_page, total);
 
     sender.sendMessage("{}Recent spark activity {}(page {}/{}){}:", kColorGold, kColorGray, page, pages, kColorReset);
 

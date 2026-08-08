@@ -7,7 +7,7 @@
 
 #include "core/activity/activity_log.h"
 
-using namespace spark;
+using namespace spark;  // NOLINT(google-build-using-namespace)
 
 namespace {
 
@@ -97,9 +97,10 @@ void testLogLoadSave()
     assert(log.entries().empty());
 
     // Add activities.
-    log.add(Activity::url("Alice", true, 100, "Profiler", "https://spark.lucko.me/a1"));
-    log.add(Activity::file("Bob", false, 200, "Profiler", "/profiles/p1.sparkprofile"));
-    log.add(Activity::url("Console", false, 300, "Health report", "https://spark.lucko.me/h1"));
+    const std::int64_t now = nowMs();
+    log.add(Activity::url("Alice", true, now - 200, "Profiler", "https://spark.lucko.me/a1"));
+    log.add(Activity::file("Bob", false, now - 100, "Profiler", "/profiles/p1.sparkprofile"));
+    log.add(Activity::url("Console", false, now, "Health report", "https://spark.lucko.me/h1"));
 
     assert(log.entries().size() == 3);
     // Newest first.
@@ -125,12 +126,13 @@ void testLogCorruptionSafe()
 
     // Write a partially corrupted JSON array.
     {
+        const std::int64_t now = nowMs();
         std::ofstream out(tmp);
-        out << R"([
-            {"user":{"name":"Good","isPlayer":false},"time":100,"type":"Profiler","data":{"type":"url","value":"https://example.com/good"}},
-            {"corrupt":"entry"},
-            {"user":{"name":"AlsoGood","isPlayer":true},"time":200,"type":"Health report","data":{"type":"url","value":"https://example.com/good2"}}
-        ])";
+        out << R"([{"user":{"name":"AlsoGood","isPlayer":true},"time":)" << now
+            << ",\"type\":\"Health report\",\"data\":{\"type\":\"url\",\"value\":\"https://example.com/good2\"}},"
+               "{\"corrupt\":\"entry\"},"
+               "{\"user\":{\"name\":\"Good\",\"isPlayer\":false},\"time\":"
+            << now - 1 << R"(,"type":"Profiler","data":{"type":"url","value":"https://example.com/good"}}])";
     }
 
     ActivityLog log(tmp);

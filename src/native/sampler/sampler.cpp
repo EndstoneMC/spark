@@ -7,7 +7,7 @@
 
 #include <cpptrace/cpptrace.hpp>
 
-#if defined(_WIN32)
+#ifdef _WIN32
 // clang-format off
 #include <windows.h>
 #include <dbghelp.h>
@@ -23,8 +23,8 @@ namespace spark {
 namespace {
 // Leading frames to discard. Linux drops the SIGPROF handler and signal-return trampoline;
 // Windows StackWalk64 reads the real context so nothing is dropped.
-#if defined(_WIN32)
-constexpr std::size_t kLeadingDrop = 0;
+#ifdef _WIN32
+constexpr std::size_t KLeadingDrop = 0;
 #else
 constexpr std::size_t kLeadingDrop = 2;
 #endif
@@ -160,23 +160,21 @@ std::int32_t Sampler::currentWindow() const
 void Sampler::onTick(double mspt_ms)
 {
     std::uint64_t finished = current_tick_.load();
-    ticks_.enqueue(TickEvent{finished, mspt_ms});
+    ticks_.enqueue(TickEvent{.tick_id = finished, .mspt_ms = mspt_ms});
     current_tick_.store(finished + 1);
 
     const std::int32_t window = currentWindow();
     WindowTickStats &w = window_ticks_[window];
     w.ticks += 1;
     w.mspt_sum += mspt_ms;
-    if (mspt_ms > w.mspt_max) {
-        w.mspt_max = mspt_ms;
-    }
+    w.mspt_max = std::max(mspt_ms, w.mspt_max);
     maybePruneTickHistory(window);
 }
 
 void Sampler::samplerLoop()
 {
     struct ThreadTiming {
-        std::chrono::steady_clock::time_point last_attempt{};
+        std::chrono::steady_clock::time_point last_attempt;
         std::uint64_t previous_capture_us = 0;
     };
 
@@ -205,16 +203,14 @@ void Sampler::samplerLoop()
                 targets = enumerateProcessThreads();
                 const std::uint64_t sampler_tid = sampler_tid_.load(std::memory_order_acquire);
                 const std::uint64_t aggregator_tid = aggregator_tid_.load(std::memory_order_acquire);
-                targets.erase(std::remove_if(targets.begin(), targets.end(),
-                                             [&](const ThreadInfo &thread) {
-                                                 return thread.id == sampler_tid || thread.id == aggregator_tid;
-                                             }),
-                              targets.end());
+                auto removed = std::ranges::remove_if(targets, [&](const ThreadInfo &thread) {
+                    return thread.id == sampler_tid || thread.id == aggregator_tid;
+                });
+                targets.erase(removed.begin(), removed.end());
                 if (!config_.all_threads) {
-                    targets.erase(std::remove_if(
-                                      targets.begin(), targets.end(),
-                                      [&](const ThreadInfo &thread) { return !thread_selector_.matches(thread.name); }),
-                                  targets.end());
+                    removed = std::ranges::remove_if(
+                        targets, [&](const ThreadInfo &thread) { return !thread_selector_.matches(thread.name); });
+                    targets.erase(removed.begin(), removed.end());
                 }
                 std::erase_if(timings, [&](const auto &entry) {
                     return std::none_of(targets.begin(), targets.end(),
@@ -228,7 +224,7 @@ void Sampler::samplerLoop()
         }
         else {
             const std::uint64_t tid = target_tid_.load();
-            targets = tid == 0 ? std::vector<ThreadInfo>{} : std::vector<ThreadInfo>{{tid, target_name_}};
+            targets = tid == 0 ? std::vector<ThreadInfo>{} : std::vector<ThreadInfo>{{.id = tid, .name = target_name_}};
         }
 
         const std::size_t target_count = targets.size();
@@ -243,7 +239,7 @@ void Sampler::samplerLoop()
             const auto attempt_time = std::chrono::steady_clock::now();
             auto [timing_it, inserted] = timings.try_emplace(target.id);
             ThreadTiming &timing = timing_it->second;
-            std::uint64_t elapsed_us = static_cast<std::uint64_t>(config_.interval_us);
+            auto elapsed_us = static_cast<std::uint64_t>(config_.interval_us);
             if (!inserted) {
                 const auto elapsed =
                     std::chrono::duration_cast<std::chrono::microseconds>(attempt_time - timing.last_attempt);
@@ -273,15 +269,16 @@ void Sampler::samplerLoop()
             sample.window = currentWindow();
             sample.weight = elapsed_us;
             sample.frames.reserve(buf.count);
-            for (std::size_t i = kLeadingDrop; i < buf.count; ++i) {
-#if defined(_WIN32)
-                std::uint64_t raw_address = static_cast<std::uint64_t>(buf.ips[i]);
+            for (std::size_t i = KLeadingDrop; i < buf.count; ++i) {
+#ifdef _WIN32
+                auto raw_address = static_cast<std::uint64_t>(buf.ips[i]);
                 DWORD64 module_base = SymGetModuleBase64(GetCurrentProcess(), raw_address);
 
                 std::string path = "unknown";
                 if (module_base != 0) {
                     char module_path[MAX_PATH]{};
                     DWORD length =
+                        // NOLINTNEXTLINE(performance-no-int-to-ptr)
                         GetModuleFileNameA(reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(module_base)),
                                            module_path, static_cast<DWORD>(sizeof(module_path)));
                     if (length > 0) {
@@ -398,7 +395,7 @@ void Sampler::recordTickDecision(std::uint64_t tick_id, bool keep)
         }
         tick_decision_base_ = new_base;
     }
-    const std::size_t offset = static_cast<std::size_t>(tick_id - tick_decision_base_);
+    const auto offset = static_cast<std::size_t>(tick_id - tick_decision_base_);
     if (tick_decisions_.size() <= offset) {
         tick_decisions_.resize(offset + 1, 0);
     }
@@ -424,7 +421,7 @@ void Sampler::aggregatorLoop()
 {
     aggregator_tid_.store(currentNativeThreadId(), std::memory_order_release);
     const bool ticked = config_.only_ticks_over_ms > 0;
-    const double threshold = static_cast<double>(config_.only_ticks_over_ms);
+    const auto threshold = static_cast<double>(config_.only_ticks_over_ms);
 
     auto drain = [&] {
         TickEvent ev;
@@ -446,7 +443,7 @@ void Sampler::aggregatorLoop()
             else if (s.tick_id < tick_decision_base_) {
                 continue;
             }
-            else if (const std::size_t offset = static_cast<std::size_t>(s.tick_id - tick_decision_base_);
+            else if (const auto offset = static_cast<std::size_t>(s.tick_id - tick_decision_base_);
                      offset < tick_decisions_.size() && tick_decisions_[offset] != 0) {
                 if (tick_decisions_[offset] == 2) {
                     acceptSample(s);

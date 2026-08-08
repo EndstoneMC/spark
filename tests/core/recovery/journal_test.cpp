@@ -12,7 +12,7 @@
 #include "core/recovery/recovery_writer.h"
 #include "native/sampler/types.h"
 
-using namespace spark;
+using namespace spark;  // NOLINT(google-build-using-namespace)
 
 namespace {
 
@@ -91,8 +91,8 @@ void testSampleRoundTrip()
     sample.window = 3;
     sample.weight = 4000;
     sample.thread_name = "Server thread";
-    sample.frames.push_back({1, 0x1000, 0xABCD});
-    sample.frames.push_back({2, 0x2000, 0xDCBA});
+    sample.frames.push_back({.module = 1, .rva = 0x1000, .raw_address = 0xABCD});
+    sample.frames.push_back({.module = 2, .rva = 0x2000, .raw_address = 0xDCBA});
 
     JournalBuffer payload = buildSamplePayload(sample);
     auto record = serializeRecord(RecordType::Sample, 10, payload);
@@ -428,8 +428,8 @@ void testRecoveryPlayerReplay()
     sample.tick_id = 0;
     sample.window = 0;
     sample.weight = 4000;
-    sample.frames.push_back({0, 0x1000, 0});
-    sample.frames.push_back({0, 0x2000, 0});
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
+    sample.frames.push_back({.module = 0, .rva = 0x2000, .raw_address = 0});
     writer.journalSample(sample);
 
     sample.tick_id = 1;
@@ -489,7 +489,7 @@ void testCleanEndDetected()
     sample.tick_id = 0;
     sample.window = 0;
     sample.weight = 4000;
-    sample.frames.push_back({0, 0x1000, 0});
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
     writer.journalSample(sample);
     writer.journalTickEvent(0, 5.0);
     writer.journalCleanEnd();
@@ -525,7 +525,7 @@ void testNoCleanEndRecovered()
     sample.tick_id = 0;
     sample.window = 0;
     sample.weight = 4000;
-    sample.frames.push_back({0, 0x1000, 0});
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
     writer.journalSample(sample);
     // No journalCleanEnd() - simulate crash.
 
@@ -560,7 +560,7 @@ void testLiveOnlyRefused()
     sample.tick_id = 0;
     sample.window = 0;
     sample.weight = 524287;
-    sample.frames.push_back({0, 0x1000, 0});
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
     writer.journalSample(sample);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));

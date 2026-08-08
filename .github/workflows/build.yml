@@ -31,7 +31,7 @@ jobs:
           wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh 20
-          sudo apt-get install -y libc++-20-dev libc++abi-20-dev
+          sudo apt-get install -y clang-format-20 clang-tidy-20 libc++-20-dev libc++abi-20-dev
           sudo ln -sf /usr/bin/clang-20 /usr/local/bin/clang
           sudo ln -sf /usr/bin/clang++-20 /usr/local/bin/clang++
           clang --version | grep -E "clang version 20\\."
@@ -54,7 +54,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .conan2
-          key: ${{ runner.os }}-clang20-conan-${{ hashFiles('conanfile.txt', '.conan2/profiles/default') }}
+          key: ${{ runner.os }}-clang20-conan-${{ hashFiles('conanfile.py', '.conan2/profiles/default') }}
 
       - name: Install dependencies
         run: conan install . --build=missing
@@ -67,6 +67,12 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir build/RelWithDebInfo --output-on-failure
+
+      - name: Check formatting
+        run: git ls-files '*.cpp' '*.h' | xargs clang-format-20 --dry-run --Werror
+
+      - name: Run clang-tidy
+        run: python tools/run_clang_tidy.py --build-dir build/RelWithDebInfo --clang-tidy clang-tidy-20
 
       - name: Upload test artifact
         uses: actions/upload-artifact@v7
@@ -114,7 +120,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .conan2
-          key: ${{ runner.os }}-clang20-conan-${{ hashFiles('conanfile.txt', '.conan2/profiles/default') }}
+          key: ${{ runner.os }}-clang20-conan-${{ hashFiles('conanfile.py', '.conan2/profiles/default') }}
 
       - name: Install dependencies
         run: conan install . --build=missing
@@ -127,6 +133,16 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir build/RelWithDebInfo --output-on-failure
+
+      - name: Check formatting
+        shell: pwsh
+        run: |
+          $files = git ls-files '*.cpp' '*.h'
+          & clang-format --dry-run --Werror $files
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run clang-tidy
+        run: python tools/run_clang_tidy.py --build-dir build/RelWithDebInfo --clang-tidy clang-tidy
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v7

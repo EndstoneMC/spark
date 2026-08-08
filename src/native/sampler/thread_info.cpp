@@ -4,7 +4,7 @@
 #include <charconv>
 #include <utility>
 
-#if defined(_WIN32)
+#ifdef _WIN32
 // clang-format off
 #include <windows.h>
 #include <tlhelp32.h>
@@ -26,7 +26,7 @@ std::string fallbackThreadName(std::uint64_t id)
     return "Thread " + std::to_string(id);
 }
 
-#if defined(_WIN32)
+#ifdef _WIN32
 
 std::string utf8ThreadName(HANDLE thread)
 {
@@ -93,7 +93,7 @@ std::optional<std::string> platformThreadName(std::uint64_t id)
 
 std::uint64_t currentNativeThreadId()
 {
-#if defined(_WIN32)
+#ifdef _WIN32
     return static_cast<std::uint64_t>(::GetCurrentThreadId());
 #elif defined(__linux__)
     return static_cast<std::uint64_t>(::syscall(SYS_gettid));
@@ -116,7 +116,7 @@ std::string nativeThreadName(std::uint64_t id)
 std::vector<ThreadInfo> enumerateProcessThreads()
 {
     std::vector<ThreadInfo> threads;
-#if defined(_WIN32)
+#ifdef _WIN32
     HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
         return threads;
@@ -128,8 +128,8 @@ std::vector<ThreadInfo> enumerateProcessThreads()
         const DWORD process_id = ::GetCurrentProcessId();
         do {
             if (entry.th32OwnerProcessID == process_id) {
-                const std::uint64_t id = static_cast<std::uint64_t>(entry.th32ThreadID);
-                threads.push_back({id, nativeThreadName(id)});
+                const auto id = static_cast<std::uint64_t>(entry.th32ThreadID);
+                threads.push_back({.id = id, .name = nativeThreadName(id)});
             }
             entry.dwSize = sizeof(entry);
         } while (::Thread32Next(snapshot, &entry));
@@ -158,11 +158,10 @@ std::vector<ThreadInfo> enumerateProcessThreads()
     ::closedir(directory);
 #endif
 
-    std::sort(threads.begin(), threads.end(),
-              [](const ThreadInfo &left, const ThreadInfo &right) { return left.id < right.id; });
-    threads.erase(std::unique(threads.begin(), threads.end(),
-                              [](const ThreadInfo &left, const ThreadInfo &right) { return left.id == right.id; }),
-                  threads.end());
+    std::ranges::sort(threads, [](const ThreadInfo &left, const ThreadInfo &right) { return left.id < right.id; });
+    const auto duplicate = std::ranges::unique(
+        threads, [](const ThreadInfo &left, const ThreadInfo &right) { return left.id == right.id; });
+    threads.erase(duplicate.begin(), duplicate.end());
     return threads;
 }
 

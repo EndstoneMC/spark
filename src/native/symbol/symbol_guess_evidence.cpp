@@ -27,14 +27,14 @@ GuessKind guessKindFromSource(EvidenceSource source)
 std::string lower(std::string_view value)
 {
     std::string out(value);
-    std::transform(out.begin(), out.end(), out.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return out;
 }
 
 bool containsAny(std::string_view value, std::initializer_list<std::string_view> needles)
 {
-    return std::ranges::any_of(needles, [value](std::string_view needle) { return value.find(needle) != value.npos; });
+    return std::ranges::any_of(
+        needles, [value](std::string_view needle) { return value.find(needle) != std::string_view::npos; });
 }
 
 std::string_view sourceName(EvidenceSource source)
@@ -160,12 +160,14 @@ TypedLabel formatEvidenceLabel(EvidenceSource source, std::string_view message, 
     }
     out += ": ";
     out += message;
-    return {std::move(out), guessKindFromSource(source), tentative ? Confidence::Medium : Confidence::High};
+    return {.label = std::move(out),
+            .kind = guessKindFromSource(source),
+            .confidence = tentative ? Confidence::Medium : Confidence::High};
 }
 
 TypedLabel chooseVtableLabel(std::vector<VtableEvidence> evidence, const InheritanceMap *inheritance)
 {
-    std::sort(evidence.begin(), evidence.end(), [](const VtableEvidence &a, const VtableEvidence &b) {
+    std::ranges::sort(evidence, [](const VtableEvidence &a, const VtableEvidence &b) {
         if (a.class_name != b.class_name) {
             return a.class_name < b.class_name;
         }
@@ -177,7 +179,8 @@ TypedLabel chooseVtableLabel(std::vector<VtableEvidence> evidence, const Inherit
         }
         return a.via_thunk < b.via_thunk;
     });
-    evidence.erase(std::unique(evidence.begin(), evidence.end()), evidence.end());
+    const auto duplicate = std::ranges::unique(evidence);
+    evidence.erase(duplicate.begin(), duplicate.end());
     if (evidence.empty()) {
         return {};
     }
@@ -298,7 +301,7 @@ int scoreStringHint(std::string_view value)
     // to their containing function.
     if (std::isdigit(static_cast<unsigned char>(value[0]))) {
         const std::size_t sp = value.find(' ');
-        if (sp != std::string_view::npos && sp <= 2 && sp + 1 < value.size()) {
+        if (sp <= 2 && sp + 1 < value.size()) {
             const std::string_view rest = value.substr(sp + 1);
             if (rest.size() >= 4) {
                 bool has_alpha = false;
@@ -350,10 +353,10 @@ TypedLabel formatStringHint(std::string_view value, int score)
     if (score < kMinimumStringHintScore) {
         return {};
     }
-    constexpr std::size_t kMaximum = 52;
-    std::string message(value.substr(0, kMaximum));
-    if (value.size() > kMaximum) {
-        message.resize(kMaximum - 3);
+    constexpr std::size_t k_maximum = 52;
+    std::string message(value.substr(0, k_maximum));
+    if (value.size() > k_maximum) {
+        message.resize(k_maximum - 3);
         message += "...";
     }
     return formatEvidenceLabel(EvidenceSource::String, message, score < kStrongStringHintScore);

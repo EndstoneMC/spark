@@ -61,7 +61,7 @@ int main()
     {
         InheritanceMap empty;
         CHECK(empty.empty());
-        CHECK(empty.size() == 0);
+        CHECK(empty.empty());
         CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 3, false, false}, {"Gadget", 3, false, false}}, &empty)
                   .empty());
     }
@@ -74,8 +74,9 @@ int main()
         CHECK(inh.size() == 1);
         CHECK(inh.isAncestor("Widget", "Gadget"));
         CHECK(!inh.isAncestor("Gadget", "Widget"));
-        CHECK(inh.findCommonAncestor({"Widget", "Gadget"}).has_value());
-        CHECK(inh.findCommonAncestor({"Widget", "Gadget"}).value() == "Widget");
+        const auto common = inh.findCommonAncestor({"Widget", "Gadget"});
+        CHECK(common.has_value());
+        CHECK(common == "Widget");
 
         // Both share slot 3 -> high confidence on ancestor.
         CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 3, false, false}, {"Gadget", 3, false, false}}, &inh)
@@ -111,10 +112,10 @@ int main()
         CHECK(!inh.isAncestor("D", "A"));
         auto ca = inh.findCommonAncestor({"B", "C"});
         CHECK(ca.has_value());
-        CHECK(ca.value() == "A");
+        CHECK(ca == "A");
         auto ca2 = inh.findCommonAncestor({"B", "C", "D"});
         CHECK(ca2.has_value());
-        CHECK(ca2.value() == "A");
+        CHECK(ca2 == "A");
     }
 
     // Unrelated classes: no common ancestor.

@@ -4,7 +4,7 @@
 #include <chrono>
 #include <limits>
 
-#if defined(_WIN32)
+#ifdef _WIN32
 // clang-format off: psapi.h and tlhelp32.h require windows.h types
 #include <windows.h>
 #include <psapi.h>
@@ -42,7 +42,7 @@ CpuUsage cpuUsageBetween(const CpuSnapshot &before, const CpuSnapshot &after)
         usage.process_valid = true;
     }
     if (after.system_total >= before.system_total && after.system_busy >= before.system_busy) {
-        const unsigned long long total_delta = after.system_total - before.system_total;
+        const std::uint64_t total_delta = after.system_total - before.system_total;
         if (total_delta > 0) {
             usage.system = std::clamp(static_cast<double>(after.system_busy - before.system_busy) /
                                           static_cast<double>(total_delta),
@@ -53,7 +53,7 @@ CpuUsage cpuUsageBetween(const CpuSnapshot &before, const CpuSnapshot &after)
     return usage;
 }
 
-#if !defined(_WIN32)
+#ifndef _WIN32
 
 namespace {
 
@@ -252,7 +252,7 @@ SystemStats gatherSystemStats(const std::string &disk_path)
 
 namespace {
 
-constexpr double kWindowsTicksPerSecond = 10000000.0;
+constexpr double KWindowsTicksPerSecond = 10000000.0;
 
 std::int64_t steadyNowMs()
 {
@@ -260,7 +260,7 @@ std::int64_t steadyNowMs()
         .count();
 }
 
-unsigned long long fileTimeTicks(const FILETIME &time)
+std::uint64_t fileTimeTicks(const FILETIME &time)
 {
     ULARGE_INTEGER value{};
     value.LowPart = time.dwLowDateTime;
@@ -290,7 +290,7 @@ CpuSnapshot captureCpuSnapshot()
     SYSTEM_INFO system_info{};
     GetSystemInfo(&system_info);
     s.cpu_threads = system_info.dwNumberOfProcessors > 0 ? static_cast<int>(system_info.dwNumberOfProcessors) : 1;
-    s.process_ticks_per_second = kWindowsTicksPerSecond;
+    s.process_ticks_per_second = KWindowsTicksPerSecond;
 
     FILETIME creation{}, exit{}, process_kernel{}, process_user{};
     FILETIME idle{}, system_kernel{}, system_user{};
@@ -301,7 +301,7 @@ CpuSnapshot captureCpuSnapshot()
 
     s.process_ticks = fileTimeTicks(process_kernel) + fileTimeTicks(process_user);
     s.system_total = fileTimeTicks(system_kernel) + fileTimeTicks(system_user);
-    unsigned long long idle_ticks = fileTimeTicks(idle);
+    std::uint64_t idle_ticks = fileTimeTicks(idle);
     s.system_busy = s.system_total > idle_ticks ? s.system_total - idle_ticks : 0;
     s.wall_ms = steadyNowMs();
     s.valid = true;
@@ -320,7 +320,7 @@ SystemStats gatherSystemStats(const std::string &disk_path)
     }
 
     HKEY cpu_key = nullptr;
-    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_QUERY_VALUE,
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, R"(HARDWARE\DESCRIPTION\System\CentralProcessor\0)", 0, KEY_QUERY_VALUE,
                       &cpu_key) == ERROR_SUCCESS) {
         char model[256]{};
         DWORD type = 0;
@@ -342,7 +342,7 @@ SystemStats gatherSystemStats(const std::string &disk_path)
     memory.dwLength = sizeof(memory);
     if (GlobalMemoryStatusEx(&memory)) {
         s.mem_total = static_cast<std::int64_t>(memory.ullTotalPhys);
-        unsigned long long physical_used =
+        std::uint64_t physical_used =
             memory.ullTotalPhys > memory.ullAvailPhys ? memory.ullTotalPhys - memory.ullAvailPhys : 0;
         s.mem_used = static_cast<std::int64_t>(physical_used);
         s.memory_present = true;
@@ -350,14 +350,12 @@ SystemStats gatherSystemStats(const std::string &disk_path)
         // Windows exposes commit limit/availability rather than Linux-style swap
         // counters. Approximate page-file capacity as commit limit beyond physical
         // RAM, and usage as committed bytes beyond currently used physical RAM.
-        unsigned long long swap_total =
+        std::uint64_t swap_total =
             memory.ullTotalPageFile > memory.ullTotalPhys ? memory.ullTotalPageFile - memory.ullTotalPhys : 0;
-        unsigned long long commit_used =
+        std::uint64_t commit_used =
             memory.ullTotalPageFile > memory.ullAvailPageFile ? memory.ullTotalPageFile - memory.ullAvailPageFile : 0;
-        unsigned long long swap_used = commit_used > physical_used ? commit_used - physical_used : 0;
-        if (swap_used > swap_total) {
-            swap_used = swap_total;
-        }
+        std::uint64_t swap_used = commit_used > physical_used ? commit_used - physical_used : 0;
+        swap_used = std::min(swap_used, swap_total);
         s.swap_total = static_cast<std::int64_t>(swap_total);
         s.swap_used = static_cast<std::int64_t>(swap_used);
         s.swap_present = true;
@@ -405,12 +403,13 @@ ProcessStats gatherProcessStats()
 
     SYSTEM_INFO system_info{};
     GetNativeSystemInfo(&system_info);
-    std::uintptr_t address = reinterpret_cast<std::uintptr_t>(system_info.lpMinimumApplicationAddress);
-    const std::uintptr_t maximum = reinterpret_cast<std::uintptr_t>(system_info.lpMaximumApplicationAddress);
+    auto address = reinterpret_cast<std::uintptr_t>(system_info.lpMinimumApplicationAddress);
+    const auto maximum = reinterpret_cast<std::uintptr_t>(system_info.lpMaximumApplicationAddress);
     std::uint64_t virtual_bytes = 0;
     bool virtual_query_succeeded = false;
     while (address < maximum) {
         MEMORY_BASIC_INFORMATION region{};
+        // NOLINTNEXTLINE(performance-no-int-to-ptr)
         if (VirtualQuery(reinterpret_cast<const void *>(address), &region, sizeof(region)) == 0) {
             break;
         }
@@ -418,8 +417,8 @@ ProcessStats gatherProcessStats()
         if (region.State != MEM_FREE) {
             virtual_bytes += static_cast<std::uint64_t>(region.RegionSize);
         }
-        const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(region.BaseAddress);
-        if (region.RegionSize == 0 || base > (std::numeric_limits<std::uintptr_t>::max)() - region.RegionSize) {
+        const auto base = reinterpret_cast<std::uintptr_t>(region.BaseAddress);
+        if (region.RegionSize == 0 || base > std::numeric_limits<std::uintptr_t>::max() - region.RegionSize) {
             break;
         }
         const std::uintptr_t next = base + region.RegionSize;
@@ -429,7 +428,7 @@ ProcessStats gatherProcessStats()
         address = next;
     }
     if (virtual_query_succeeded &&
-        virtual_bytes <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
+        virtual_bytes <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
         stats.virtual_bytes = static_cast<std::int64_t>(virtual_bytes);
         stats.virtual_present = true;
     }
@@ -442,7 +441,7 @@ ProcessStats gatherProcessStats()
         const DWORD process_id = GetCurrentProcessId();
         if (Thread32First(snapshot, &entry)) {
             do {
-                if (entry.th32OwnerProcessID == process_id && count < (std::numeric_limits<int>::max)()) {
+                if (entry.th32OwnerProcessID == process_id && count < std::numeric_limits<int>::max()) {
                     ++count;
                 }
             } while (Thread32Next(snapshot, &entry));

@@ -6,12 +6,13 @@
 #include <sstream>
 #include <string>
 #include <toml.hpp>
+#include <type_traits>
 
 namespace spark {
 
 namespace {
 
-constexpr std::int64_t kMaxBackgroundProfilerIntervalMs = 1000;
+constexpr std::int64_t KMaxBackgroundProfilerIntervalMs = 1000;
 
 std::string escapeString(std::string_view s)
 {
@@ -97,8 +98,8 @@ bool SparkConfig::load()
     auto broadcast = result["disableResponseBroadcast"].value<bool>().value_or(disable_response_broadcast);
     auto interval = result["backgroundProfilerInterval"].value<std::int64_t>().value_or(background_profiler_interval);
 
-    const auto invalid_type = [&result](std::string_view key, auto tag) {
-        using Value = decltype(tag);
+    const auto invalid_type = [&result](std::string_view key, const auto &tag) {
+        using Value = std::remove_cvref_t<decltype(tag)>;
         return result[key] && !result[key].value<Value>();
     };
     if (invalid_type("viewerUrl", std::string{}) || invalid_type("bytebinUrl", std::string{}) ||
@@ -114,7 +115,7 @@ bool SparkConfig::load()
         last_error_ = "Spark endpoint values must not be empty - using defaults";
         return false;
     }
-    if (interval < 1 || interval > kMaxBackgroundProfilerIntervalMs || interval > (std::numeric_limits<int>::max)()) {
+    if (interval < 1 || interval > KMaxBackgroundProfilerIntervalMs || interval > std::numeric_limits<int>::max()) {
         last_error_ = "backgroundProfilerInterval must be between 1 and 1000 milliseconds - using defaults";
         return false;
     }

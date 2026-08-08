@@ -14,8 +14,8 @@ namespace {
 using CurlHandle = std::unique_ptr<CURL, decltype(&curl_easy_cleanup)>;
 using CurlHeaders = std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)>;
 
-std::once_flag curl_init_flag;
-CURLcode curl_init_result = CURLE_FAILED_INIT;
+std::once_flag CurlInitFlag;
+CURLcode CurlInitResult = CURLE_FAILED_INIT;
 
 std::string trim(std::string_view value)
 {
@@ -52,7 +52,7 @@ std::size_t captureHeader(char *data, std::size_t size, std::size_t count, void 
     return length;
 }
 
-std::size_t discardBody(char *, std::size_t size, std::size_t count, void *)
+std::size_t discardBody(char * /*unused*/, std::size_t size, std::size_t count, void * /*unused*/)
 {
     return size * count;
 }
@@ -73,9 +73,9 @@ UploadResult uploadToBytebin(const std::string &gzipped_body, const std::string 
 {
     UploadResult result;
 
-    std::call_once(curl_init_flag, [] { curl_init_result = curl_global_init(CURL_GLOBAL_DEFAULT); });
-    if (curl_init_result != CURLE_OK) {
-        result.error = std::string("failed to initialize libcurl: ") + curl_easy_strerror(curl_init_result);
+    std::call_once(CurlInitFlag, [] { CurlInitResult = curl_global_init(CURL_GLOBAL_DEFAULT); });
+    if (CurlInitResult != CURLE_OK) {
+        result.error = std::string("failed to initialize libcurl: ") + curl_easy_strerror(CurlInitResult);
         return result;
     }
 
@@ -127,7 +127,7 @@ UploadResult uploadToBytebin(const std::string &gzipped_body, const std::string 
     curl_easy_setopt(curl.get(), CURLOPT_ERRORBUFFER, error_buffer);
 
     const CURLcode request_result = curl_easy_perform(curl.get());
-    long status = 0;
+    auto status = 0L;
     curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
     if (request_result != CURLE_OK) {
         if (status >= 400) {

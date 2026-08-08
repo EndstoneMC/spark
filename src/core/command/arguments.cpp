@@ -10,7 +10,7 @@ namespace {
 
 bool isFlag(const std::string &token)
 {
-    return token.rfind("--", 0) == 0;
+    return token.starts_with("--");
 }
 
 }  // namespace
@@ -70,17 +70,17 @@ Arguments::Arguments(const std::vector<std::string> &tokens) : raw_(tokens)
 
 bool Arguments::boolFlag(const std::string &name) const
 {
-    return present_.count(name) > 0;
+    return present_.contains(name);
 }
 
-std::optional<long> Arguments::intFlag(const std::string &name) const
+std::optional<std::int64_t> Arguments::intFlag(const std::string &name) const
 {
     auto it = values_.find(name);
     if (it == values_.end()) {
         return std::nullopt;
     }
     const std::string &text = it->second;
-    long value = 0;
+    std::int64_t value = 0;
     auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
     if (error != std::errc{} || end != text.data() + text.size()) {
         return std::nullopt;

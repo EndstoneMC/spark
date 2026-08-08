@@ -11,8 +11,8 @@ namespace {
 
 class TestSender final : public spark::CommandSender {
 public:
-    std::string getName() const override { return "Test"; }
-    bool isPlayer() const override { return false; }
+    [[nodiscard]] std::string getName() const override { return "Test"; }
+    [[nodiscard]] bool isPlayer() const override { return false; }
 
     std::vector<std::string> messages;
     std::vector<std::string> errors;
@@ -35,11 +35,11 @@ int main()
     std::filesystem::remove(path);
     spark::ActivityLog log(path);
     for (int i = 0; i < 9; ++i) {
-        log.add(spark::Activity::url("Test", false,
-                                     std::chrono::duration_cast<std::chrono::milliseconds>(
-                                         std::chrono::system_clock::now().time_since_epoch())
-                                         .count(),
-                                     "Profiler", "https://example.com/" + std::to_string(i)));
+        log.add(spark::Activity::url(
+            "Test", false,
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count(),
+            "Profiler", "https://example.com/" + std::to_string(i)));
     }
 
     spark::ActivityCommand command(log);
@@ -60,13 +60,13 @@ int main()
     runPage(command, "4", sender);
     assert(sender.errors.empty() && sender.messages.size() == 1);
     sender = {};
-    runPage(command, std::to_string((std::numeric_limits<int>::max)()), sender);
+    runPage(command, std::to_string(std::numeric_limits<int>::max()), sender);
     assert(sender.messages.size() == 1);
     sender = {};
-    runPage(command, std::to_string(static_cast<long long>((std::numeric_limits<int>::max)()) + 1), sender);
+    runPage(command, std::to_string(static_cast<std::int64_t>(std::numeric_limits<int>::max()) + 1), sender);
     assert(sender.messages.size() == 1 || sender.errors.size() == 1);
     sender = {};
-    runPage(command, std::to_string((std::numeric_limits<long>::max)()), sender);
+    runPage(command, std::to_string(std::numeric_limits<std::int64_t>::max()), sender);
     assert(sender.messages.size() == 1);
 
     std::filesystem::remove(path);

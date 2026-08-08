@@ -10,17 +10,17 @@ namespace spark {
 namespace {
 
 // PacketWrapper field numbers (from spark_ws.proto)
-constexpr int kFieldServerPong = 1;
-constexpr int kFieldServerConnectResponse = 2;
-constexpr int kFieldServerUpdateSampler = 3;
-constexpr int kFieldClientPing = 10;
-constexpr int kFieldClientConnect = 11;
+constexpr int KFieldServerPong = 1;
+constexpr int KFieldServerConnectResponse = 2;
+constexpr int KFieldServerUpdateSampler = 3;
+constexpr int KFieldClientPing = 10;
+constexpr int KFieldClientConnect = 11;
 
 // RawPacket field numbers
-constexpr int kRawVersion = 1;
-constexpr int kRawPublicKey = 2;
-constexpr int kRawSignature = 3;
-constexpr int kRawMessage = 4;
+constexpr int KRawVersion = 1;
+constexpr int KRawPublicKey = 2;
+constexpr int KRawSignature = 3;
+constexpr int KRawMessage = 4;
 
 std::string buildRawPacket(std::string_view message, const std::vector<std::uint8_t> &private_key_pkcs8)
 {
@@ -29,13 +29,13 @@ std::string buildRawPacket(std::string_view message, const std::vector<std::uint
 
     std::string raw;
     ProtoWriter w(raw);
-    w.int32(kRawVersion, Crypto::kVersion);
+    w.int32(KRawVersion, Crypto::kVersion);
     // public_key is omitted for outgoing (server-signed) packets;
     // the viewer identifies the server by the channel's pre-announced key.
     if (!signature.empty()) {
-        w.string(kRawSignature, std::string_view(reinterpret_cast<const char *>(signature.data()), signature.size()));
+        w.string(KRawSignature, std::string_view(reinterpret_cast<const char *>(signature.data()), signature.size()));
     }
-    w.string(kRawMessage, message);
+    w.string(KRawMessage, message);
     return raw;
 }
 
@@ -78,20 +78,20 @@ bool decodeRawPacket(std::string_view base64_data, WsIncomingPacket &out)
             raw.skip(wire);
             continue;
         }
-        if (field == kRawVersion && wire == 0) {
+        if (field == KRawVersion && wire == 0) {
             version = raw.readInt32();
         }
-        else if (field == kRawPublicKey && wire == 2) {
+        else if (field == KRawPublicKey && wire == 2) {
             auto sv = raw.readString();
             public_key.assign(reinterpret_cast<const std::uint8_t *>(sv.data()),
                               reinterpret_cast<const std::uint8_t *>(sv.data()) + sv.size());
         }
-        else if (field == kRawSignature && wire == 2) {
+        else if (field == KRawSignature && wire == 2) {
             auto sv = raw.readString();
             signature.assign(reinterpret_cast<const std::uint8_t *>(sv.data()),
                              reinterpret_cast<const std::uint8_t *>(sv.data()) + sv.size());
         }
-        else if (field == kRawMessage && wire == 2) {
+        else if (field == KRawMessage && wire == 2) {
             message = std::string(raw.readString());
         }
         else {
@@ -121,7 +121,7 @@ bool decodeRawPacket(std::string_view base64_data, WsIncomingPacket &out)
             wrapper.skip(wire);
             continue;
         }
-        if (field == kFieldClientPing) {
+        if (field == KFieldClientPing) {
             out.type = WsPacketType::ClientPing;
             auto sub = wrapper.readMessage();
             while (sub.nextField(field, wire)) {
@@ -136,7 +136,7 @@ bool decodeRawPacket(std::string_view base64_data, WsIncomingPacket &out)
                 }
             }
         }
-        else if (field == kFieldClientConnect) {
+        else if (field == KFieldClientConnect) {
             out.type = WsPacketType::ClientConnect;
             auto sub = wrapper.readMessage();
             while (sub.nextField(field, wire)) {
@@ -170,7 +170,7 @@ std::string encodeServerPong(bool ok, std::int32_t data, const std::vector<std::
     // PacketWrapper { ServerPong server_pong = 1; }
     std::string wrapper;
     ProtoWriter ww(wrapper);
-    ww.message(kFieldServerPong, pong);
+    ww.message(KFieldServerPong, pong);
 
     return wrapAndEncode(wrapper, private_key_pkcs8);
 }
@@ -199,7 +199,7 @@ std::string encodeServerConnectResponse(const std::string &client_id, int state,
     // PacketWrapper { ServerConnectResponse server_connect_response = 2; }
     std::string wrapper;
     ProtoWriter ww(wrapper);
-    ww.message(kFieldServerConnectResponse, resp);
+    ww.message(KFieldServerConnectResponse, resp);
 
     return wrapAndEncode(wrapper, private_key_pkcs8);
 }
@@ -215,7 +215,7 @@ std::string encodeServerUpdateSamplerData(const std::string &payload_id,
     // PacketWrapper { ServerUpdateSamplerData server_update_sampler = 3; }
     std::string wrapper;
     ProtoWriter ww(wrapper);
-    ww.message(kFieldServerUpdateSampler, update);
+    ww.message(KFieldServerUpdateSampler, update);
 
     return wrapAndEncode(wrapper, private_key_pkcs8);
 }

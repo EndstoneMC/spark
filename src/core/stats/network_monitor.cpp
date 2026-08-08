@@ -1,19 +1,10 @@
-#if defined(_WIN32)
-#ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600
-#endif
-#ifndef NTDDI_VERSION
-#define NTDDI_VERSION 0x06000000
-#endif
-#endif
-
 #include "core/stats/network_monitor.h"
 
 #include <algorithm>
 #include <cmath>
 #include <utility>
 
-#if defined(_WIN32)
+#ifdef _WIN32
 // clang-format off: iphlpapi.h requires windows.h types
 #include <winsock2.h>
 #include <ws2ipdef.h>
@@ -88,7 +79,7 @@ double DoubleRollingAverage::max() const
     if (count_ == 0) {
         return 0.0;
     }
-    return *std::max_element(samples_.begin(), samples_.begin() + count_);
+    return *std::max_element(samples_.begin(), std::next(samples_.begin(), static_cast<std::ptrdiff_t>(count_)));
 }
 
 double DoubleRollingAverage::min() const
@@ -96,13 +87,13 @@ double DoubleRollingAverage::min() const
     if (count_ == 0) {
         return 0.0;
     }
-    return *std::min_element(samples_.begin(), samples_.begin() + count_);
+    return *std::min_element(samples_.begin(), std::next(samples_.begin(), static_cast<std::ptrdiff_t>(count_)));
 }
 
 std::vector<double> DoubleRollingAverage::sortedCopy() const
 {
-    std::vector<double> s(samples_.begin(), samples_.begin() + count_);
-    std::sort(s.begin(), s.end());
+    std::vector<double> s(samples_.begin(), std::next(samples_.begin(), static_cast<std::ptrdiff_t>(count_)));
+    std::ranges::sort(s);
     return s;
 }
 
@@ -157,10 +148,10 @@ NetworkMonitor::NetworkMonitor(PollFn poll_fn, NowFn now_fn) : poll_fn_(std::mov
 bool NetworkMonitor::shouldIgnore(const std::string &name)
 {
     // Match upstream spark: ignore virtual eth adapters and container bridge networks.
-    if (name.rfind("veth", 0) == 0) {
+    if (name.starts_with("veth")) {
         return true;
     }
-    if (name.rfind("br-", 0) == 0) {
+    if (name.starts_with("br-")) {
         return true;
     }
     return false;
@@ -261,7 +252,7 @@ std::map<std::string, NetworkInterfaceInfo> NetworkMonitor::systemTotals() const
 
 // ---- Platform-specific polling ----
 
-#if !defined(_WIN32)
+#ifndef _WIN32
 
 namespace {
 

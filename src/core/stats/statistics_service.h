@@ -78,14 +78,14 @@ public:
     StatisticsSnapshot snapshot() const;
     std::map<std::int32_t, WindowStats> profileWindows(std::int64_t profile_start_unix_ms,
                                                        std::int64_t profile_end_unix_ms) const;
-    void recordPlayerCount(long players);
+    void recordPlayerCount(std::int64_t players);
     void recordWorldGauges(int entities, int chunks);
 
     // Deterministic clock/CPU entry points used by the offline self-test.
     void startAt(std::int64_t steady_ms, std::int64_t unix_ms, const CpuSnapshot &initial_cpu);
     void recordTickAt(double duration_ms, std::int64_t steady_ms);
     void recordCpuSnapshot(const CpuSnapshot &current);
-    void recordPlayerCountAt(long players, std::int64_t steady_ms);
+    void recordPlayerCountAt(std::int64_t players, std::int64_t steady_ms);
     void recordWorldGaugesAt(int entities, int chunks, std::int64_t steady_ms);
     StatisticsSnapshot snapshotAt(std::int64_t steady_ms) const;
 

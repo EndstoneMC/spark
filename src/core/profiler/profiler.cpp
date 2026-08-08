@@ -13,7 +13,7 @@
 #include "core/profiler/thread_grouper.h"
 #include "proto/sampler_data.h"
 #include "spark_constants.h"
-#if defined(_WIN32)
+#ifdef _WIN32
 #include "native/symbol/symbol_guess_windows.h"
 #elif defined(__linux__) && defined(__x86_64__)
 #include "native/symbol/symbol_guess_linux.h"
@@ -33,7 +33,7 @@ std::int64_t nowMs()
 // a complete JSON document rather than arbitrary display text.
 std::string jsonString(std::string_view value)
 {
-    static constexpr char kHex[] = "0123456789abcdef";
+    static constexpr char k_hex[] = "0123456789abcdef";
 
     std::string out;
     out.reserve(value.size() + 2);
@@ -64,8 +64,8 @@ std::string jsonString(std::string_view value)
         default:
             if (ch < 0x20) {
                 out += "\\u00";
-                out.push_back(kHex[(ch >> 4) & 0x0f]);
-                out.push_back(kHex[ch & 0x0f]);
+                out.push_back(k_hex[(ch >> 4) & 0x0f]);
+                out.push_back(k_hex[ch & 0x0f]);
             }
             else {
                 out.push_back(static_cast<char>(ch));
@@ -119,7 +119,7 @@ GroupedThreads groupThreads(std::vector<std::pair<std::uint64_t, std::pair<std::
     for (const auto &[g, trees] : groups) {
         if (mode == ThreadGrouperMode::ByName || trees.size() == 1) {
             result.owned_labels.push_back(grouper.label(g));
-            result.views.push_back({result.owned_labels.back(), trees.front()});
+            result.views.push_back({.name = result.owned_labels.back(), .tree = trees.front()});
         }
         else {
             auto merged = std::make_unique<CallTree>();
@@ -127,7 +127,7 @@ GroupedThreads groupThreads(std::vector<std::pair<std::uint64_t, std::pair<std::
                 mergeCallTree(*merged, *tree);
             }
             result.owned_labels.push_back(grouper.label(g));
-            result.views.push_back({result.owned_labels.back(), merged.get()});
+            result.views.push_back({.name = result.owned_labels.back(), .tree = merged.get()});
             result.owned_trees.push_back(std::move(merged));
         }
     }
@@ -136,7 +136,7 @@ GroupedThreads groupThreads(std::vector<std::pair<std::uint64_t, std::pair<std::
 
 void addSymbolGuessMetadata(ProfileMetadata &meta)
 {
-#if defined(_WIN32)
+#ifdef _WIN32
     const symbol_guess::windows::BuildStats stats = symbol_guess::windows::currentModuleStats();
     if (!stats.initialized) {
         return;
@@ -276,7 +276,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
         error = "--regex requires at least one --thread pattern";
         return false;
     }
-    if (std::find(options.threads.begin(), options.threads.end(), "*") != options.threads.end() &&
+    if (std::ranges::find(options.threads, "*") != options.threads.end() &&
         (options.regex || options.threads.size() != 1)) {
         error = "--thread * cannot be combined with other thread selectors or --regex";
         return false;
@@ -323,7 +323,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
                     1, config.live_only, options.creator_name, options.creator_is_player, options.comment,
                     options.threads);
                 writer->requestFlush();
-                std::lock_guard<std::mutex> lock(recovery_mutex_);
+                std::scoped_lock lock(recovery_mutex_);
                 recovery_writer_ = std::move(writer);
                 allocation_sampler_.setRecoverySink(recovery_writer_.get());
             }
@@ -365,7 +365,7 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
                     static_cast<std::uint8_t>(options.thread_grouper), 0, false, options.creator_name,
                     options.creator_is_player, options.comment, options.threads);
                 writer->requestFlush();
-                std::lock_guard<std::mutex> lock(recovery_mutex_);
+                std::scoped_lock lock(recovery_mutex_);
                 recovery_writer_ = std::move(writer);
                 sampler_.setRecoverySink(recovery_writer_.get());
             }
@@ -441,7 +441,7 @@ void Profiler::stopRecoveryWriter()
 {
     std::unique_ptr<RecoveryWriter> writer;
     {
-        std::lock_guard<std::mutex> lock(recovery_mutex_);
+        std::scoped_lock lock(recovery_mutex_);
         sampler_.setRecoverySink(nullptr);
         allocation_sampler_.setRecoverySink(nullptr);
         writer = std::move(recovery_writer_);
@@ -456,7 +456,7 @@ void Profiler::stopRecoveryWriter()
 
 void Profiler::journalStallBegin(std::uint64_t detected_ns, std::uint64_t last_tick_ns)
 {
-    std::lock_guard<std::mutex> lock(recovery_mutex_);
+    std::scoped_lock lock(recovery_mutex_);
     if (recovery_writer_) {
         recovery_writer_->journalStallBegin(detected_ns, last_tick_ns);
         recovery_writer_->requestFlush();
@@ -465,7 +465,7 @@ void Profiler::journalStallBegin(std::uint64_t detected_ns, std::uint64_t last_t
 
 void Profiler::journalStallEnd(std::uint64_t detected_ns, std::uint64_t recovered_ns)
 {
-    std::lock_guard<std::mutex> lock(recovery_mutex_);
+    std::scoped_lock lock(recovery_mutex_);
     if (recovery_writer_) {
         recovery_writer_->journalStallEnd(detected_ns, recovered_ns);
         recovery_writer_->requestFlush();
@@ -498,7 +498,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     meta.endstone_version = ctx.endstone_version;
     meta.minecraft_version = ctx.minecraft_version;
     if (mode_ == ProfileMode::Allocation) {
-#if defined(_WIN32)
+#ifdef _WIN32
         meta.engine_version = std::string("endstone-spark ") + kVersion + " native-ucrt/funchook";
 #elif defined(__linux__)
         meta.engine_version = std::string("endstone-spark ") + kVersion + " native-glibc/elf-import";
@@ -530,7 +530,7 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         // Upstream SamplerMetadata has no dedicated native allocation diagnostics.
         // The viewer JSON-parses every map value, so textual values must be encoded
         // as JSON string literals; numbers and booleans are already valid JSON.
-#if defined(_WIN32)
+#ifdef _WIN32
         meta.extra_platform_metadata["Allocation backend"] = jsonString("Windows UCRT/funchook");
         meta.extra_platform_metadata["Allocation coverage"] =
             jsonString("process threads reaching hooked UCRT allocation entry points plus "
@@ -564,13 +564,13 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         meta.extra_platform_metadata["Allocation tick events dropped"] =
             std::to_string(allocation_sampler_.droppedTickEvents());
         meta.extra_platform_metadata["Allocation tick event capacity"] =
-            std::to_string(allocation_sampler_.tickEventCapacity());
+            std::to_string(spark::AllocationSampler::tickEventCapacity());
         meta.extra_platform_metadata["Allocation sample events enqueued"] =
             std::to_string(allocation_sampler_.enqueuedSamples());
         meta.extra_platform_metadata["Allocation event queue high-water mark"] =
             std::to_string(allocation_sampler_.eventQueueHighWaterMark());
         meta.extra_platform_metadata["Allocation event queue capacity"] =
-            std::to_string(allocation_sampler_.eventQueueCapacity());
+            std::to_string(spark::AllocationSampler::eventQueueCapacity());
         meta.extra_platform_metadata["Allocation tracked sampled frees (process-wide)"] =
             std::to_string(allocation_sampler_.freedSamples());
         meta.extra_platform_metadata["Allocation tracked sampled freed bytes (process-wide)"] =
@@ -582,11 +582,11 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         meta.extra_platform_metadata["Allocation tracked live peak (process-wide)"] =
             std::to_string(allocation_sampler_.peakLiveSamples());
         meta.extra_platform_metadata["Allocation live index capacity"] =
-            std::to_string(allocation_sampler_.liveIndexCapacity());
+            std::to_string(spark::AllocationSampler::liveIndexCapacity());
         meta.extra_platform_metadata["Allocation sampled thread roots"] =
             std::to_string(allocation_sampler_.sampledThreadCount());
         meta.extra_platform_metadata["Allocation thread root capacity"] =
-            std::to_string(allocation_sampler_.threadRootCapacity());
+            std::to_string(spark::AllocationSampler::threadRootCapacity());
         meta.extra_platform_metadata["Allocation overflow threads"] =
             std::to_string(allocation_sampler_.overflowThreadCount());
         meta.extra_platform_metadata["Allocation thread state drops"] =
@@ -596,10 +596,10 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         meta.extra_platform_metadata["Allocation attributed module entries"] =
             std::to_string(allocation_sampler_.moduleRegistryCount());
         meta.extra_platform_metadata["Allocation attributed module capacity"] =
-            std::to_string(allocation_sampler_.moduleRegistryCapacity());
+            std::to_string(spark::AllocationSampler::moduleRegistryCapacity());
         meta.extra_platform_metadata["Allocation profile node capacity"] =
-            std::to_string(allocation_sampler_.profileNodeCapacity());
-#if defined(__linux__)
+            std::to_string(spark::AllocationSampler::profileNodeCapacity());
+#ifdef __linux__
         meta.extra_platform_metadata["Allocation skipped modules"] =
             std::to_string(allocation_sampler_.skippedModuleCount());
         meta.extra_platform_metadata["Allocation failed modules"] =
@@ -622,8 +622,14 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         meta.extra_platform_metadata["Allocation interval bytes"] = std::to_string(interval_);
         meta.extra_platform_metadata["Allocation live-only"] = options_.alloc_live_only ? "true" : "false";
         meta.extra_platform_metadata["Allocation thread filter stage"] = jsonString("aggregation");
-        meta.extra_platform_metadata["Allocation thread selection"] =
-            jsonString(meta.all_threads ? "all" : (meta.regex_threads ? "regex" : "exact-name"));
+        std::string_view thread_selection = "exact-name";
+        if (meta.all_threads) {
+            thread_selection = "all";
+        }
+        else if (meta.regex_threads) {
+            thread_selection = "regex";
+        }
+        meta.extra_platform_metadata["Allocation thread selection"] = jsonString(thread_selection);
         if (options_.alloc_live_only) {
             meta.extra_platform_metadata["Allocation analysis"] =
                 jsonString("retained sampled allocations at profile stop; candidates "

@@ -15,45 +15,45 @@
 namespace spark {
 
 namespace {
-bool g_armed = false;
-std::unordered_map<DWORD, ULONG64> g_thread_cycles;
+bool GArmed = false;
+std::unordered_map<DWORD, ULONG64> GThreadCycles;  // NOLINT(bugprone-throwing-static-initialization)
 }  // namespace
 
 bool Capture::arm()
 {
     {
-        std::lock_guard lock(dbgHelpMutex());
-        if (g_armed) {
+        std::scoped_lock lock(dbgHelpMutex());
+        if (GArmed) {
             return true;
         }
     }
     if (!retainDbgHelp()) {
         return false;
     }
-    std::lock_guard lock(dbgHelpMutex());
-    g_thread_cycles.clear();
-    g_armed = true;
+    std::scoped_lock lock(dbgHelpMutex());
+    GThreadCycles.clear();
+    GArmed = true;
     return true;
 }
 
 void Capture::disarm()
 {
     {
-        std::lock_guard lock(dbgHelpMutex());
-        if (!g_armed) {
+        std::scoped_lock lock(dbgHelpMutex());
+        if (!GArmed) {
             return;
         }
-        g_thread_cycles.clear();
-        g_armed = false;
+        GThreadCycles.clear();
+        GArmed = false;
     }
     releaseDbgHelp();
 }
 
 bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
 {
-    std::lock_guard lock(dbgHelpMutex());
+    std::scoped_lock lock(dbgHelpMutex());
     out.count = 0;
-    if (!g_armed) {
+    if (!GArmed) {
         return false;
     }
 
@@ -111,12 +111,12 @@ bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
 
 bool Capture::isThreadRunning(std::uint64_t tid)
 {
-    std::lock_guard lock(dbgHelpMutex());
-    if (!g_armed) {
+    std::scoped_lock lock(dbgHelpMutex());
+    if (!GArmed) {
         return true;
     }
 
-    const DWORD thread_id = static_cast<DWORD>(tid);
+    const auto thread_id = static_cast<DWORD>(tid);
     HANDLE thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, thread_id);
     if (thread == nullptr) {
         return true;
@@ -128,9 +128,9 @@ bool Capture::isThreadRunning(std::uint64_t tid)
         return true;
     }
 
-    auto it = g_thread_cycles.find(thread_id);
-    if (it == g_thread_cycles.end()) {
-        g_thread_cycles.emplace(thread_id, cycles);
+    auto it = GThreadCycles.find(thread_id);
+    if (it == GThreadCycles.end()) {
+        GThreadCycles.emplace(thread_id, cycles);
         return false;  // the first observation establishes a baseline
     }
     const ULONG64 previous = it->second;

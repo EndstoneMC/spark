@@ -45,7 +45,7 @@ void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx, std::int
     ctx.endstone_version = server_.getVersion();
     ctx.minecraft_version = server_.getMinecraftVersion();
     ctx.bds_executable_sha256 = bds_executable_sha256_;
-    ctx.player_count = static_cast<long>(server_.getOnlinePlayers().size());
+    ctx.player_count = static_cast<std::int64_t>(server_.getOnlinePlayers().size());
     ctx.online_mode = server_.getOnlineMode() ? 2 : 1;
     {
         std::int64_t start_ms =
@@ -60,7 +60,10 @@ void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx, std::int
         for (const std::string &a : desc.getAuthors()) {
             author += (author.empty() ? "" : ", ") + a;
         }
-        ctx.plugins.push_back({desc.getName(), desc.getVersion(), author, desc.getDescription()});
+        ctx.plugins.push_back({.name = desc.getName(),
+                               .version = desc.getVersion(),
+                               .author = author,
+                               .description = desc.getDescription()});
     }
 
     // Strict allowlist parse; serialized as a JSON object string for server_configurations.
@@ -81,7 +84,7 @@ void EndstoneMetadataProvider::gatherWorldMetadata(ExportContext &ctx)
                 if (chunk) {
                     int x = chunk->getX();
                     int z = chunk->getZ();
-                    chunks.try_emplace({x, z}, WorldChunk{x, z});
+                    chunks.try_emplace({x, z}, WorldChunk{.x = x, .z = z});
                 }
             }
             if (chunks.empty()) {
@@ -113,7 +116,7 @@ void EndstoneMetadataProvider::gatherWorldMetadata(ExportContext &ctx)
                         ctx.world.entity_counts[type] += count;
                     }
                 }
-                world.regions.push_back(std::move(region));
+                world.regions.push_back(region);
             }
             ctx.world.total_entities += world.total_entities;
             ctx.world.worlds.push_back(std::move(world));
@@ -128,9 +131,9 @@ std::int64_t EndstoneMetadataProvider::serverUptimeSeconds()
         .count();
 }
 
-long EndstoneMetadataProvider::playerCount()
+std::int64_t EndstoneMetadataProvider::playerCount()
 {
-    return static_cast<long>(server_.getOnlinePlayers().size());
+    return static_cast<std::int64_t>(server_.getOnlinePlayers().size());
 }
 
 PlayerPingProvider *EndstoneMetadataProvider::playerPingProvider()
@@ -156,14 +159,14 @@ void EndstoneNotifier::notify(const std::string &sender_name, const std::string 
 {
     plugin_.getLogger().info("{}", text);
     if (disable_broadcast_) {
-        auto player = server_.getPlayer(sender_name);
+        auto *player = server_.getPlayer(sender_name);
         if (player) {
             player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
         }
     }
     else {
         for (auto *player : server_.getOnlinePlayers()) {
-            if (player && player->hasPermission("endstone.command.spark")) {
+            if ((player != nullptr) && player->hasPermission("endstone.command.spark")) {
                 player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
             }
         }
@@ -187,7 +190,7 @@ std::map<std::string, int> EndstonePlayerPingProvider::poll()
 
 namespace {
 
-constexpr std::int64_t kReconcileIntervalMs = 30000;
+constexpr std::int64_t KReconcileIntervalMs = 30000;
 
 std::int64_t steadyNowMs()
 {
@@ -234,7 +237,7 @@ void EndstoneWorldGaugeProvider::init()
 std::pair<int, int> EndstoneWorldGaugeProvider::worldGauges()
 {
     std::int64_t now = steadyNowMs();
-    if (now - last_reconcile_steady_ms_ >= kReconcileIntervalMs) {
+    if (now - last_reconcile_steady_ms_ >= KReconcileIntervalMs) {
         reconcile();
     }
     return {entity_count_.load(std::memory_order_relaxed), chunk_count_.load(std::memory_order_relaxed)};

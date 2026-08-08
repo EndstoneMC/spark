@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <string>
 #include <utility>
 #include <vector>
@@ -91,7 +92,7 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
         sender.sendErrorMessage("--regex requires at least one --thread pattern.");
         return;
     }
-    const auto all_selector = std::find(options.threads.begin(), options.threads.end(), "*");
+    const auto all_selector = std::ranges::find(options.threads, "*");
     if (all_selector != options.threads.end() && (options.regex || options.threads.size() != 1)) {
         sender.sendErrorMessage("--thread * cannot be combined with another --thread or --regex.");
         return;
@@ -114,20 +115,16 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
             return;
         }
         options.allocation_interval_bytes =
-            interval ? static_cast<std::int32_t>(*interval + 0.5) : spark::kDefaultAllocationIntervalBytes;
-        if (options.allocation_interval_bytes < 1) {
-            options.allocation_interval_bytes = 1;
-        }
+            interval ? static_cast<std::int32_t>(std::lround(*interval)) : spark::kDefaultAllocationIntervalBytes;
+        options.allocation_interval_bytes = std::max(options.allocation_interval_bytes, 1);
     }
     else {
         if (interval && *interval > spark::kMaxSamplingIntervalMs) {
             sender.sendErrorMessage("The sampling interval must not exceed {}ms.", spark::kMaxSamplingIntervalMs);
             return;
         }
-        options.interval_ms = interval ? static_cast<int>(*interval + 0.5) : 4;
-        if (options.interval_ms < 1) {
-            options.interval_ms = 1;
-        }
+        options.interval_ms = interval ? static_cast<int>(std::lround(*interval)) : 4;
+        options.interval_ms = std::max(options.interval_ms, 1);
     }
 
     auto timeout_flag = args.intFlag("timeout");
@@ -135,7 +132,7 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
         sender.sendErrorMessage("The timeout must be a whole number of seconds.");
         return;
     }
-    long timeout = timeout_flag.value_or(-1);
+    const std::int64_t timeout = timeout_flag.value_or(-1);
     if (timeout_flag && timeout <= 10) {
         sender.sendErrorMessage("The timeout is too short for useful results - choose a value over 10 seconds.");
         return;
@@ -433,7 +430,7 @@ void ProfilerService::cmdCancel(CommandSender &sender)
 void ProfilerService::cmdOpen(CommandSender &sender)
 {
     {
-        std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+        std::scoped_lock lock(viewer_update_mutex_);
         if (viewer_open_pending_) {
             sender.sendMessage("A live viewer is already being opened.");
             return;
@@ -473,7 +470,7 @@ void ProfilerService::cmdOpen(CommandSender &sender)
     ExportContext context = captureLiveContext(nowMs());
     startViewerWorker();
     {
-        std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+        std::scoped_lock lock(viewer_update_mutex_);
         ++viewer_generation_;
         viewer_open_pending_ = true;
         ViewerWorkItem work;
@@ -532,11 +529,11 @@ void ProfilerService::viewerUpdateLoop()
                         return std::string();
                     }
                     work.context.socket_channel_info_proto = channel_info_proto;
-                    return uploadSamplerData(std::move(work.context));
+                    return uploadSamplerData(work.context);
                 });
             }
             {
-                std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+                std::scoped_lock lock(viewer_update_mutex_);
                 viewer_work_active_ = false;
                 if (work.generation == viewer_generation_) {
                     pending_viewer_url_ = std::move(url);
@@ -559,12 +556,12 @@ void ProfilerService::viewerUpdateLoop()
         }
         else {
             if (viewerGenerationCurrent(work.generation) && profiler_.running()) {
-                std::string bytebin_key = uploadSamplerData(std::move(work.context));
+                std::string bytebin_key = uploadSamplerData(work.context);
                 if (!bytebin_key.empty() && viewerGenerationCurrent(work.generation)) {
                     work.socket->sendUpdate(bytebin_key);
                 }
             }
-            std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+            std::scoped_lock lock(viewer_update_mutex_);
             viewer_work_active_ = false;
         }
     }
@@ -576,7 +573,7 @@ void ProfilerService::completeViewerOpen(std::uint64_t generation)
     std::string url;
     std::string sender_name;
     {
-        std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+        std::scoped_lock lock(viewer_update_mutex_);
         if (generation != viewer_generation_) {
             return;
         }
@@ -616,9 +613,9 @@ ExportContext ProfilerService::captureLiveContext(std::int64_t now_ms)
     return context;
 }
 
-std::string ProfilerService::uploadSamplerData(ExportContext context)
+std::string ProfilerService::uploadSamplerData(const ExportContext &context)
 {
-    std::string body = buildLiveSamplerData(std::move(context));
+    std::string body = buildLiveSamplerData(context);
     if (body.empty()) {
         return {};
     }
@@ -628,14 +625,14 @@ std::string ProfilerService::uploadSamplerData(ExportContext context)
     return result.ok ? result.key : std::string();
 }
 
-std::string ProfilerService::buildLiveSamplerData(ExportContext context)
+std::string ProfilerService::buildLiveSamplerData(const ExportContext &context)
 {
     return profiler_.liveExport(context);
 }
 
 bool ProfilerService::viewerGenerationCurrent(std::uint64_t generation) const
 {
-    std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+    std::scoped_lock lock(viewer_update_mutex_);
     return viewer_worker_running_.load() && generation == viewer_generation_;
 }
 
@@ -643,7 +640,7 @@ void ProfilerService::closeViewerSocket()
 {
     std::shared_ptr<ViewerSocket> socket;
     {
-        std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+        std::scoped_lock lock(viewer_update_mutex_);
         ++viewer_generation_;
         viewer_open_pending_ = false;
         viewer_work_.reset();
@@ -763,9 +760,13 @@ void ProfilerService::runExport()
 
 void ProfilerService::announceResult()
 {
-    const char *headline = pending_outcome_ == ExportOutcome::Uploaded ? "Profiler stopped & upload complete!"
-                         : pending_outcome_ == ExportOutcome::Saved    ? "Profiler stopped & saved locally!"
-                                                                       : "Profiler stopped.";
+    const char *headline = "Profiler stopped.";
+    if (pending_outcome_ == ExportOutcome::Uploaded) {
+        headline = "Profiler stopped & upload complete!";
+    }
+    else if (pending_outcome_ == ExportOutcome::Saved) {
+        headline = "Profiler stopped & saved locally!";
+    }
     notifier_.notify(pending_sender_, headline);
     notifier_.notify(pending_sender_, pending_result_);
 
@@ -790,11 +791,10 @@ void ProfilerService::announceResult()
         restart_background_after_export_ = false;
         background_suppressed_ = false;
         if (startBackgroundSession()) {
+            // NOLINTNEXTLINE(readability-simplify-boolean-expr)
             background_started_ = true;
         }
         else {
-            // Allow the onTick() retry path to pick the background profiler up
-            // again; startBackgroundSession() only clears the started flag.
             background_started_ = false;
         }
     }
@@ -838,13 +838,13 @@ void ProfilerService::onTick(double mspt)
                 bool available = false;
                 std::uint64_t generation = 0;
                 {
-                    std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+                    std::scoped_lock lock(viewer_update_mutex_);
                     available = !viewer_work_ && !viewer_work_active_;
                     generation = viewer_generation_;
                 }
                 if (available) {
                     ExportContext context = captureLiveContext(now);
-                    std::lock_guard<std::mutex> lock(viewer_update_mutex_);
+                    std::scoped_lock lock(viewer_update_mutex_);
                     if (!viewer_work_ && !viewer_work_active_ && generation == viewer_generation_ && viewer_socket_) {
                         ViewerWorkItem work;
                         work.type = ViewerWorkItem::Type::Update;

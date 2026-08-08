@@ -6,7 +6,7 @@
 
 #include "native/symbol/symbol_guess.h"
 
-#if defined(_WIN32)
+#ifdef _WIN32
 #include "native/symbol/dbghelp_manager.h"
 // clang-format off
 #include <windows.h>
@@ -26,7 +26,7 @@ namespace spark {
 
 namespace {
 
-#if defined(_WIN32)
+#ifdef _WIN32
 struct SymbolBuffer {
     SYMBOL_INFO info;
     char name[MAX_SYM_NAME];
@@ -115,7 +115,7 @@ std::string hex(std::uint64_t value)
     }
     buf[i--] = 'x';
     buf[i] = '0';
-    return std::string(buf + i, 18 - i + 1);
+    return {buf + i, static_cast<std::size_t>(18 - i + 1)};
 }
 
 }  // namespace
@@ -124,7 +124,7 @@ bool frameMatchesMainModule(std::uint64_t raw_address, std::uint64_t rva, std::u
                             std::uint64_t module_size)
 {
     if (raw_address < module_base || module_size == 0 || rva >= module_size ||
-        module_size > (std::numeric_limits<std::uint64_t>::max)() - module_base) {
+        module_size > std::numeric_limits<std::uint64_t>::max() - module_base) {
         return false;
     }
     return raw_address < module_base + module_size && raw_address - module_base == rva;
@@ -158,7 +158,7 @@ void applySymbolGuessFallback(ResolvedFrame &frame, std::uint64_t rva, bool main
     }
 }
 
-#if !defined(_WIN32)
+#ifndef _WIN32
 
 // Linux: dladdr reads only the dynamic symbol table (never DWARF), safe for stripped BDS.
 std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const ModuleTable &modules,
@@ -260,7 +260,7 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
     out.reserve(keys.size());
 
     DbgHelpReference session;
-    std::lock_guard<std::mutex> lock(dbgHelpMutex());
+    std::scoped_lock lock(dbgHelpMutex());
     HANDLE process = GetCurrentProcess();
     HMODULE executable_module = GetModuleHandleW(nullptr);
     MODULEINFO executable_info{};
@@ -350,9 +350,10 @@ bool isSleepFrame(std::uint64_t raw_address)
     if (!session.initialized()) {
         return false;
     }
-    std::lock_guard<std::mutex> lock(dbgHelpMutex());
+    std::scoped_lock lock(dbgHelpMutex());
     DWORD64 module_base = SymGetModuleBase64(GetCurrentProcess(), raw_address);
-    HMODULE module = reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(module_base));
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
+    auto *module = reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(module_base));
     if (module == nullptr ||
         (module != GetModuleHandleW(L"kernel32.dll") && module != GetModuleHandleW(L"KernelBase.dll") &&
          module != GetModuleHandleW(L"ntdll.dll"))) {
@@ -368,7 +369,7 @@ bool isSleepFrame(std::uint64_t raw_address)
     }
 
     std::string_view name(symbol.info.Name, symbol.info.NameLen);
-    for (std::string_view wait :
+    for (std::string_view wait :  // NOLINT(readability-use-anyofallof)
          {std::string_view("Sleep"), std::string_view("SleepEx"), std::string_view("WaitForSingleObject"),
           std::string_view("WaitForSingleObjectEx"), std::string_view("NtWaitForSingleObject"),
           std::string_view("ZwWaitForSingleObject"), std::string_view("NtDelayExecution"),

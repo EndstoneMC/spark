@@ -36,7 +36,10 @@ public:
         static const std::regex kPoolPattern(R"(^(.*?)[-# ]+\d+$)");
         std::string n(name);
         std::smatch m;
-        std::string g = std::regex_match(n, m, kPoolPattern) ? m[1].str() : n;
+        if (!std::regex_match(n, m, kPoolPattern)) {
+            return n;
+        }
+        std::string g = m[1].str();
         // trim trailing spaces
         while (!g.empty() && g.back() == ' ') {
             g.pop_back();

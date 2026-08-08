@@ -6,7 +6,7 @@
 #include <cstring>
 #include <utility>
 
-#if defined(_WIN32)
+#ifdef _WIN32
 #include <io.h>
 #include <windows.h>
 #else
@@ -25,7 +25,8 @@ std::uint64_t monotonicNowNs()
 
 bool syncFileImpl(std::FILE *f)
 {
-#if defined(_WIN32)
+#ifdef _WIN32
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
     return FlushFileBuffers(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(f)))) != 0;
 #else
     return fdatasync(fileno(f)) == 0;
@@ -65,7 +66,7 @@ bool RecoveryWriter::start()
             continue;
         }
         const std::string name = entry.path().filename().string();
-        if (name.size() <= 12 || name.starts_with("segment-") == false || name.ends_with(".jnl") == false) {
+        if (name.size() <= 12 || !name.starts_with("segment-") || !name.ends_with(".jnl")) {
             continue;
         }
         const std::string_view number(name.data() + 8, name.size() - 12);

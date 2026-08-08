@@ -34,7 +34,7 @@ std::unordered_map<std::uint64_t, std::string> labelsOnly(const std::unordered_m
 }  // namespace
 }  // namespace spark
 
-#if defined(_WIN32)
+#ifdef _WIN32
 
 #include "native/symbol/symbol_guess_windows.h"
 

@@ -29,8 +29,8 @@ inline constexpr int kMaxSamplingIntervalMs = 1000;
 struct ProfilerOptions {
     int interval_ms = 4;
     std::int32_t allocation_interval_bytes = kDefaultAllocationIntervalBytes;
-    long timeout_seconds = -1;
-    long only_ticks_over_ms = -1;  // -1 = disabled
+    std::int64_t timeout_seconds = -1;
+    std::int64_t only_ticks_over_ms = -1;  // -1 = disabled
     bool ignore_sleeping = false;
     bool regex = false;
     std::vector<std::string> threads;
@@ -52,7 +52,7 @@ struct ExportContext {
     std::string minecraft_version;
     std::string bds_executable_sha256;
     std::string comment;  // overrides the start-time comment when non-empty
-    long player_count = -1;
+    std::int64_t player_count = -1;
     int online_mode = 0;  // 0 unknown, 1 offline, 2 online
     std::int64_t uptime_ms = 0;
     StatisticsSnapshot statistics;

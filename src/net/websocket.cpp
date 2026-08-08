@@ -112,7 +112,7 @@ void WebSocketClient::send(const std::string &message)
         return;
     }
     {
-        std::lock_guard<std::mutex> lock(send_mutex_);
+        std::scoped_lock lock(send_mutex_);
         send_queue_.push(message);
         has_data_.store(true);
     }
@@ -159,7 +159,7 @@ void WebSocketClient::runReceiveLoop()
     }
 
     // Poll loop: receive messages and send queued messages.
-    constexpr long kPollIntervalMs = 100;
+    constexpr auto k_poll_interval_ms = 100L;
     char recv_buf[4096];
     std::string pending_recv;  // buffered partial message
 
@@ -168,7 +168,7 @@ void WebSocketClient::runReceiveLoop()
         if (has_data_.exchange(false)) {
             std::queue<std::string> to_send;
             {
-                std::lock_guard<std::mutex> lock(send_mutex_);
+                std::scoped_lock lock(send_mutex_);
                 to_send.swap(send_queue_);
             }
             while (!to_send.empty()) {
@@ -195,7 +195,7 @@ void WebSocketClient::runReceiveLoop()
         else if (r == CURLE_AGAIN) {
             // No data available, wait briefly.
             std::unique_lock<std::mutex> lock(send_mutex_);
-            send_cv_.wait_for(lock, std::chrono::milliseconds(kPollIntervalMs),
+            send_cv_.wait_for(lock, std::chrono::milliseconds(k_poll_interval_ms),
                               [this]() { return !running_.load() || has_data_.load(); });
         }
         else {

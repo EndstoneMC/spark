@@ -73,9 +73,7 @@ void StatisticsService::recordTickAt(double duration_ms, std::int64_t steady_ms)
     if (!started_) {
         startAt(steady_ms, steady_ms, CpuSnapshot{});
     }
-    if (steady_ms < last_observation_steady_ms_) {
-        steady_ms = last_observation_steady_ms_;
-    }
+    steady_ms = std::max(steady_ms, last_observation_steady_ms_);
 
     TickSample sample;
     sample.steady_ms = steady_ms;
@@ -123,12 +121,12 @@ void StatisticsService::recordCpuSnapshot(const CpuSnapshot &current)
     last_observation_steady_ms_ = (std::max)(last_observation_steady_ms_, current.wall_ms);
 }
 
-void StatisticsService::recordPlayerCount(long players)
+void StatisticsService::recordPlayerCount(std::int64_t players)
 {
     recordPlayerCountAt(players, last_observation_steady_ms_);
 }
 
-void StatisticsService::recordPlayerCountAt(long players, std::int64_t steady_ms)
+void StatisticsService::recordPlayerCountAt(std::int64_t players, std::int64_t steady_ms)
 {
     if (!started_ || players < 0) {
         return;
@@ -136,7 +134,7 @@ void StatisticsService::recordPlayerCountAt(long players, std::int64_t steady_ms
 
     GaugeSample sample;
     sample.steady_ms = steady_ms;
-    sample.players = static_cast<int>((std::min)(players, static_cast<long>((std::numeric_limits<int>::max)())));
+    sample.players = static_cast<int>((std::min)(players, static_cast<std::int64_t>(std::numeric_limits<int>::max())));
 
     std::size_t index = (gauge_begin_ + gauge_size_) % gauges_.size();
     if (gauge_size_ == gauges_.size()) {
@@ -154,7 +152,7 @@ void StatisticsService::recordWorldGauges(int entities, int chunks)
     recordWorldGaugesAt(entities, chunks, last_observation_steady_ms_);
 }
 
-void StatisticsService::recordWorldGaugesAt(int entities, int chunks, std::int64_t steady_ms)
+void StatisticsService::recordWorldGaugesAt(int entities, int chunks, std::int64_t /*steady_ms*/)
 {
     if (!started_ || gauge_size_ == 0) {
         return;
@@ -214,7 +212,7 @@ DistributionValues StatisticsService::msptFor(std::int64_t now_ms, std::int64_t 
         return result;
     }
 
-    std::sort(values.begin(), values.end());
+    std::ranges::sort(values);
     result.present = true;
     result.samples = values.size();
     result.mean = total / static_cast<double>(values.size());
@@ -314,8 +312,8 @@ std::map<std::int32_t, WindowStats> StatisticsService::profileWindows(std::int64
 
     const std::int64_t first_window = (available_start - profile_start_steady) / 1000;
     const std::int64_t last_window = (profile_end_steady - profile_start_steady - 1) / 1000;
-    if (first_window > (std::numeric_limits<std::int32_t>::max)() ||
-        last_window > (std::numeric_limits<std::int32_t>::max)()) {
+    if (first_window > std::numeric_limits<std::int32_t>::max() ||
+        last_window > std::numeric_limits<std::int32_t>::max()) {
         return result;
     }
 
@@ -388,7 +386,7 @@ std::map<std::int32_t, WindowStats> StatisticsService::profileWindows(std::int64
         }
 
         if (!accumulator.durations.empty()) {
-            std::sort(accumulator.durations.begin(), accumulator.durations.end());
+            std::ranges::sort(accumulator.durations);
             stats.mspt_present = true;
             stats.mspt_max = accumulator.durations.back();
             const std::size_t middle = accumulator.durations.size() / 2;

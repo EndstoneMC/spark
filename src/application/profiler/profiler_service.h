@@ -121,8 +121,8 @@ private:
     void viewerUpdateLoop();
     void completeViewerOpen(std::uint64_t generation);
     ExportContext captureLiveContext(std::int64_t now_ms);
-    std::string buildLiveSamplerData(ExportContext context);
-    std::string uploadSamplerData(ExportContext context);
+    std::string buildLiveSamplerData(const ExportContext &context);
+    std::string uploadSamplerData(const ExportContext &context);
     bool viewerGenerationCurrent(std::uint64_t generation) const;
 
     StatisticsService &statistics_;

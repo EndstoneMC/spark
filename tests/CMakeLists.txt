@@ -1,3 +1,9 @@
+if (MSVC)
+    add_compile_options(/UNDEBUG)
+else ()
+    add_compile_options(-UNDEBUG)
+endif ()
+
 add_executable(spark_selftest
         selftest.cpp)
 target_link_libraries(spark_selftest PRIVATE spark_application)
@@ -152,3 +158,6 @@ add_test(NAME spark_release_changelog_test
 
 add_test(NAME spark_profile_evaluator_test
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_profile_evaluator.py)
+
+add_test(NAME spark_workflow_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_workflows.py)

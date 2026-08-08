@@ -17,7 +17,7 @@ StallWatchdog::~StallWatchdog()
 
 void StallWatchdog::setStallCallback(StallCallback cb)
 {
-    std::lock_guard<std::mutex> lock(callback_mutex_);
+    std::scoped_lock lock(callback_mutex_);
     callback_ = std::move(cb);
 }
 
@@ -61,7 +61,7 @@ void StallWatchdog::loop()
         if (elapsed >= stall_threshold_ns_) {
             State expected = State::Healthy;
             if (state_.compare_exchange_strong(expected, State::Stalled, std::memory_order_acq_rel)) {
-                std::lock_guard<std::mutex> lock(callback_mutex_);
+                std::scoped_lock lock(callback_mutex_);
                 if (callback_) {
                     callback_(true);
                 }
@@ -70,7 +70,7 @@ void StallWatchdog::loop()
         else {
             State expected = State::Stalled;
             if (state_.compare_exchange_strong(expected, State::Healthy, std::memory_order_acq_rel)) {
-                std::lock_guard<std::mutex> lock(callback_mutex_);
+                std::scoped_lock lock(callback_mutex_);
                 if (callback_) {
                     callback_(false);
                 }

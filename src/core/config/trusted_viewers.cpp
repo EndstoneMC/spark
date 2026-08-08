@@ -55,22 +55,22 @@ std::string jsonEscape(std::string_view s)
 bool parseStringArray(const std::string &text, std::vector<std::string> &out)
 {
     std::size_t pos = 0;
-    auto skipWs = [&]() {
+    auto skip_ws = [&]() {
         while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' || text[pos] == '\n' || text[pos] == '\r')) {
             ++pos;
         }
     };
-    skipWs();
+    skip_ws();
     if (pos >= text.size() || text[pos] != '[') {
         return false;
     }
     ++pos;
-    skipWs();
+    skip_ws();
     if (pos < text.size() && text[pos] == ']') {
         return true;
     }
     while (pos < text.size()) {
-        skipWs();
+        skip_ws();
         if (pos >= text.size() || text[pos] != '"') {
             return false;
         }
@@ -124,7 +124,7 @@ bool parseStringArray(const std::string &text, std::vector<std::string> &out)
             }
         }
         out.push_back(std::move(str));
-        skipWs();
+        skip_ws();
         if (pos >= text.size()) {
             return false;
         }
@@ -211,7 +211,7 @@ bool TrustedViewersState::save() const
 
 bool TrustedViewersState::contains(const std::string &b64_key) const
 {
-    return std::find(keys_.begin(), keys_.end(), b64_key) != keys_.end();
+    return std::ranges::find(keys_, b64_key) != keys_.end();
 }
 
 void TrustedViewersState::add(const std::string &b64_key)

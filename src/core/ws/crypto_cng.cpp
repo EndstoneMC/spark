@@ -98,24 +98,24 @@ void encodeOctetString(std::vector<std::uint8_t> &out, const std::vector<std::ui
 
 // The RSA algorithm identifier: SEQUENCE { OID 1.2.840.113549.1.1.1, NULL }
 // Pre-encoded as constant bytes.
-constexpr std::uint8_t kRsaAlgId[] = {0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
+constexpr std::uint8_t KRsaAlgId[] = {0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
                                       0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00};
-constexpr std::size_t kRsaAlgIdLen = sizeof(kRsaAlgId);
+constexpr std::size_t KRsaAlgIdLen = sizeof(KRsaAlgId);
 
 // Parse a DER tag + length.  On success, *content points to the value
 // bytes, *contentLen is their length, and the return value points past
 // the end of the element.  Returns nullptr on error.
-const std::uint8_t *parseElement(const std::uint8_t *data, std::size_t len, std::uint8_t expectedTag,
-                                 const std::uint8_t **content, std::size_t *contentLen)
+const std::uint8_t *parseElement(const std::uint8_t *data, std::size_t len, std::uint8_t expected_tag,
+                                 const std::uint8_t **content, std::size_t *content_len)
 {
-    if (len < 2 || data[0] != expectedTag) {
+    if (len < 2 || data[0] != expected_tag) {
         return nullptr;
     }
     std::size_t i = 1;
-    std::size_t hdrLen;
+    std::size_t hdr_len;
     if (data[i] < 0x80) {
-        *contentLen = data[i];
-        hdrLen = 2;
+        *content_len = data[i];
+        hdr_len = 2;
     }
     else {
         std::size_t n = data[i] & 0x7f;
@@ -123,17 +123,17 @@ const std::uint8_t *parseElement(const std::uint8_t *data, std::size_t len, std:
         if (n == 0 || n > 4 || len < i + n) {
             return nullptr;
         }
-        *contentLen = 0;
+        *content_len = 0;
         for (std::size_t j = 0; j < n; ++j) {
-            *contentLen = (*contentLen << 8) | data[i + j];
+            *content_len = (*content_len << 8) | data[i + j];
         }
-        hdrLen = 1 + 1 + n;
+        hdr_len = 1 + 1 + n;
     }
-    if (len < hdrLen + *contentLen) {
+    if (len < hdr_len + *content_len) {
         return nullptr;
     }
-    *content = data + hdrLen;
-    return data + hdrLen + *contentLen;
+    *content = data + hdr_len;
+    return data + hdr_len + *content_len;
 }
 
 // Parse a DER INTEGER, returning the big-endian value bytes.
@@ -142,17 +142,17 @@ bool parseInteger(const std::uint8_t *data, std::size_t len, std::vector<std::ui
                   const std::uint8_t **next)
 {
     const std::uint8_t *content;
-    std::size_t contentLen;
-    const std::uint8_t *p = parseElement(data, len, 0x02, &content, &contentLen);
+    std::size_t content_len;
+    const std::uint8_t *p = parseElement(data, len, 0x02, &content, &content_len);
     if (!p) {
         return false;
     }
     // Strip a single leading 0x00 sign byte.
-    if (contentLen > 1 && content[0] == 0x00) {
+    if (content_len > 1 && content[0] == 0x00) {
         ++content;
-        --contentLen;
+        --content_len;
     }
-    value.assign(content, content + contentLen);
+    value.assign(content, content + content_len);
     if (next) {
         *next = p;
     }
@@ -166,11 +166,11 @@ const std::uint8_t *skipElement(const std::uint8_t *data, std::size_t len)
         return nullptr;
     }
     std::size_t i = 1;
-    std::size_t hdrLen;
-    std::size_t contentLen;
+    std::size_t hdr_len;
+    std::size_t content_len;
     if (data[i] < 0x80) {
-        contentLen = data[i];
-        hdrLen = 2;
+        content_len = data[i];
+        hdr_len = 2;
     }
     else {
         std::size_t n = data[i] & 0x7f;
@@ -178,16 +178,16 @@ const std::uint8_t *skipElement(const std::uint8_t *data, std::size_t len)
         if (n == 0 || n > 4 || len < i + n) {
             return nullptr;
         }
-        contentLen = 0;
+        content_len = 0;
         for (std::size_t j = 0; j < n; ++j) {
-            contentLen = (contentLen << 8) | data[i + j];
+            content_len = (content_len << 8) | data[i + j];
         }
-        hdrLen = 1 + 1 + n;
+        hdr_len = 1 + 1 + n;
     }
-    if (len < hdrLen + contentLen) {
+    if (len < hdr_len + content_len) {
         return nullptr;
     }
-    return data + hdrLen + contentLen;
+    return data + hdr_len + content_len;
 }
 
 }  // namespace der
@@ -240,7 +240,7 @@ bool parseRsaKeyBlob(const std::uint8_t *blob, std::size_t len, RsaKeyParams &pa
     if (len < sizeof(BCRYPT_RSAKEY_BLOB)) {
         return false;
     }
-    auto *hdr = reinterpret_cast<const BCRYPT_RSAKEY_BLOB *>(blob);
+    const auto *hdr = reinterpret_cast<const BCRYPT_RSAKEY_BLOB *>(blob);
     is_private = (hdr->Magic == BCRYPT_RSAFULLPRIVATE_MAGIC);
     const std::uint8_t *p = blob + sizeof(BCRYPT_RSAKEY_BLOB);
     std::size_t remaining = len - sizeof(BCRYPT_RSAKEY_BLOB);
@@ -306,7 +306,7 @@ std::vector<std::uint8_t> publicBlobToX509(const std::uint8_t *blob, std::size_t
 
     // SubjectPublicKeyInfo = SEQUENCE { AlgId, BIT STRING(RSAPublicKey) }
     std::vector<std::uint8_t> inner;
-    inner.insert(inner.end(), der::kRsaAlgId, der::kRsaAlgId + der::kRsaAlgIdLen);
+    inner.insert(inner.end(), der::KRsaAlgId, der::KRsaAlgId + der::KRsaAlgIdLen);
     der::encodeBitString(inner, rsa_pub_seq);
 
     std::vector<std::uint8_t> out;
@@ -325,8 +325,8 @@ std::vector<std::uint8_t> privateBlobToPkcs8(const std::uint8_t *blob, std::size
 
     // RSAPrivateKey = SEQUENCE { version, n, e, d, p, q, dmp1, dmq1, iqmp }
     std::vector<std::uint8_t> rsa_priv_key;
-    static const std::uint8_t kZero = 0;
-    der::encodeInteger(rsa_priv_key, &kZero, 1);  // version = 0
+    static const std::uint8_t k_zero = 0;
+    der::encodeInteger(rsa_priv_key, &k_zero, 1);  // version = 0
     der::encodeInteger(rsa_priv_key, params.modulus.data(), params.modulus.size());
     der::encodeInteger(rsa_priv_key, params.public_exp.data(), params.public_exp.size());
     der::encodeInteger(rsa_priv_key, params.private_exp.data(), params.private_exp.size());
@@ -340,8 +340,8 @@ std::vector<std::uint8_t> privateBlobToPkcs8(const std::uint8_t *blob, std::size
 
     // PrivateKeyInfo = SEQUENCE { version, AlgId, OCTET STRING(RSAPrivateKey) }
     std::vector<std::uint8_t> inner;
-    der::encodeInteger(inner, &kZero, 1);  // version = 0
-    inner.insert(inner.end(), der::kRsaAlgId, der::kRsaAlgId + der::kRsaAlgIdLen);
+    der::encodeInteger(inner, &k_zero, 1);  // version = 0
+    inner.insert(inner.end(), der::KRsaAlgId, der::KRsaAlgId + der::KRsaAlgIdLen);
     der::encodeOctetString(inner, rsa_priv_seq);
 
     std::vector<std::uint8_t> out;
@@ -354,8 +354,8 @@ std::vector<std::uint8_t> x509ToPublicBlob(const std::uint8_t *data, std::size_t
 {
     // SubjectPublicKeyInfo = SEQUENCE { AlgId, BIT STRING }
     const std::uint8_t *content;
-    std::size_t contentLen;
-    const std::uint8_t *p = der::parseElement(data, len, 0x30, &content, &contentLen);
+    std::size_t content_len;
+    const std::uint8_t *p = der::parseElement(data, len, 0x30, &content, &content_len);
     if (!p) {
         return {};
     }
@@ -363,7 +363,7 @@ std::vector<std::uint8_t> x509ToPublicBlob(const std::uint8_t *data, std::size_t
     // Skip AlgId (SEQUENCE).
     const std::uint8_t *alg_content;
     std::size_t alg_len;
-    const std::uint8_t *after_alg = der::parseElement(content, contentLen, 0x30, &alg_content, &alg_len);
+    const std::uint8_t *after_alg = der::parseElement(content, content_len, 0x30, &alg_content, &alg_len);
     if (!after_alg) {
         return {};
     }
@@ -372,7 +372,7 @@ std::vector<std::uint8_t> x509ToPublicBlob(const std::uint8_t *data, std::size_t
     const std::uint8_t *bit_content;
     std::size_t bit_len;
     const std::uint8_t *after_bit =
-        der::parseElement(after_alg, contentLen - (after_alg - content), 0x03, &bit_content, &bit_len);
+        der::parseElement(after_alg, content_len - (after_alg - content), 0x03, &bit_content, &bit_len);
     if (!after_bit || bit_len < 1) {
         return {};
     }
@@ -408,8 +408,8 @@ std::vector<std::uint8_t> pkcs8ToPrivateBlob(const std::uint8_t *data, std::size
 {
     // PrivateKeyInfo = SEQUENCE { version, AlgId, OCTET STRING }
     const std::uint8_t *content;
-    std::size_t contentLen;
-    const std::uint8_t *p = der::parseElement(data, len, 0x30, &content, &contentLen);
+    std::size_t content_len;
+    const std::uint8_t *p = der::parseElement(data, len, 0x30, &content, &content_len);
     if (!p) {
         return {};
     }
@@ -417,7 +417,7 @@ std::vector<std::uint8_t> pkcs8ToPrivateBlob(const std::uint8_t *data, std::size
     // Skip version (INTEGER).
     std::vector<std::uint8_t> version;
     const std::uint8_t *after_ver;
-    if (!der::parseInteger(content, contentLen, version, &after_ver)) {
+    if (!der::parseInteger(content, content_len, version, &after_ver)) {
         return {};
     }
 
@@ -425,7 +425,7 @@ std::vector<std::uint8_t> pkcs8ToPrivateBlob(const std::uint8_t *data, std::size
     const std::uint8_t *alg_content;
     std::size_t alg_len;
     const std::uint8_t *after_alg =
-        der::parseElement(after_ver, contentLen - (after_ver - content), 0x30, &alg_content, &alg_len);
+        der::parseElement(after_ver, content_len - (after_ver - content), 0x30, &alg_content, &alg_len);
     if (!after_alg) {
         return {};
     }
@@ -434,7 +434,7 @@ std::vector<std::uint8_t> pkcs8ToPrivateBlob(const std::uint8_t *data, std::size
     const std::uint8_t *oct_content;
     std::size_t oct_len;
     const std::uint8_t *after_oct =
-        der::parseElement(after_alg, contentLen - (after_alg - content), 0x04, &oct_content, &oct_len);
+        der::parseElement(after_alg, content_len - (after_alg - content), 0x04, &oct_content, &oct_len);
     if (!after_oct) {
         return {};
     }
@@ -504,9 +504,9 @@ std::vector<std::uint8_t> sha256(const std::uint8_t *data, std::size_t len)
 
     DWORD hash_len = 0;
     DWORD hash_obj_len = 0;
-    ULONG cbData = 0;
-    BCryptGetProperty(alg, BCRYPT_HASH_LENGTH, reinterpret_cast<PUCHAR>(&hash_len), sizeof(DWORD), &cbData, 0);
-    BCryptGetProperty(alg, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&hash_obj_len), sizeof(DWORD), &cbData, 0);
+    ULONG cb_data = 0;
+    BCryptGetProperty(alg, BCRYPT_HASH_LENGTH, reinterpret_cast<PUCHAR>(&hash_len), sizeof(DWORD), &cb_data, 0);
+    BCryptGetProperty(alg, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&hash_obj_len), sizeof(DWORD), &cb_data, 0);
 
     std::vector<std::uint8_t> hash_obj(hash_obj_len);
     std::vector<std::uint8_t> hash(hash_len);

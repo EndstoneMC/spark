@@ -9,7 +9,7 @@
 
 #include "core/stats/network_monitor.h"
 
-using namespace spark;
+using namespace spark;  // NOLINT(google-build-using-namespace)
 
 namespace {
 
@@ -45,7 +45,7 @@ public:
     void advance(std::chrono::nanoseconds duration) { now_ += duration; }
 
 private:
-    NetworkMonitor::Clock::time_point now_{};
+    NetworkMonitor::Clock::time_point now_;
 };
 
 NetworkInterfaceInfo makeInfo(const std::string &name, std::uint64_t rx_bytes, std::uint64_t rx_packets,
@@ -184,8 +184,8 @@ void testNetworkMonitorIgnoresVethAndBr()
 
     auto snap = monitor.snapshot();
     assert(snap.count("eth0") == 1);
-    assert(snap.count("veth1234") == 0);
-    assert(snap.count("br-abc") == 0);
+    assert(!snap.contains("veth1234"));
+    assert(!snap.contains("br-abc"));
 }
 
 void testNetworkMonitorEmptyPolls()
@@ -235,10 +235,10 @@ void testNetworkMonitorInterfaceLifecycle()
     require(!monitor.poll(), "initial interface baseline was accepted");
     clock.advance(std::chrono::seconds(10));
     require(monitor.poll(), "existing interface delta was rejected");
-    require(monitor.snapshot().count("wlan0") == 0, "new interface absolute counter was accepted");
+    require(!monitor.snapshot().contains("wlan0"), "new interface absolute counter was accepted");
     clock.advance(std::chrono::seconds(10));
     require(!monitor.poll(), "disappeared interface produced a rate");
-    require(monitor.snapshot().count("eth0") == 0, "disappeared interface retained stale rates");
+    require(!monitor.snapshot().contains("eth0"), "disappeared interface retained stale rates");
     clock.advance(std::chrono::seconds(10));
     require(!monitor.poll(), "reappeared interface absolute counter was accepted");
     clock.advance(std::chrono::seconds(10));

@@ -98,7 +98,7 @@ void ViewerSocket::sendUpdate(const std::string &bytebin_key)
         return;
     }
     {
-        std::lock_guard<std::mutex> lock(payload_mutex_);
+        std::scoped_lock lock(payload_mutex_);
         last_payload_id_ = bytebin_key;
     }
     std::string msg = encodeServerUpdateSamplerData(bytebin_key, key_pair_.private_key_pkcs8);
@@ -128,7 +128,7 @@ bool ViewerSocket::tick()
     // Process queued incoming messages.
     std::vector<std::string> messages;
     {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
+        std::scoped_lock lock(queue_mutex_);
         messages.swap(incoming_queue_);
     }
     for (const auto &msg : messages) {
@@ -140,7 +140,7 @@ bool ViewerSocket::tick()
         switch (packet.type) {
         case WsPacketType::ClientPing:
             last_ping_ms_.store(nowMs());
-            ws_->send(encodeServerPong(!open_.load() ? false : true, packet.ping.data, key_pair_.private_key_pkcs8));
+            ws_->send(encodeServerPong(open_.load(), packet.ping.data, key_pair_.private_key_pkcs8));
             break;
         case WsPacketType::ClientConnect: {
             last_ping_ms_.store(nowMs());
@@ -154,7 +154,7 @@ bool ViewerSocket::tick()
             int state = trusted ? 0 : 1;  // 0=ACCEPTED, 1=UNTRUSTED
             std::string payload_id;
             {
-                std::lock_guard<std::mutex> lock(payload_mutex_);
+                std::scoped_lock lock(payload_mutex_);
                 payload_id = last_payload_id_;
             }
             ws_->send(encodeServerConnectResponse(packet.connect.client_id, state, 10,
@@ -179,7 +179,7 @@ bool ViewerSocket::tick()
 
 void ViewerSocket::onMessage(const std::string &data)
 {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    std::scoped_lock lock(queue_mutex_);
     incoming_queue_.push_back(data);
 }
 
@@ -199,7 +199,7 @@ void ViewerSocket::sendClientTrusted(const std::string &client_id)
     }
     std::string payload_id;
     {
-        std::lock_guard<std::mutex> lock(payload_mutex_);
+        std::scoped_lock lock(payload_mutex_);
         payload_id = last_payload_id_;
     }
     ws_->send(encodeServerConnectResponse(client_id, 0,  // 0=ACCEPTED

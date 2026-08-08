@@ -104,7 +104,7 @@ public:
     void gatherServerMetadata(ExportContext &ctx, std::int64_t now_ms) override;
     void gatherWorldMetadata(ExportContext &ctx) override;
     std::int64_t serverUptimeSeconds() override;
-    long playerCount() override;
+    std::int64_t playerCount() override;
     std::pair<int, int> worldGauges() override;
     PlayerPingProvider *playerPingProvider() override;
 

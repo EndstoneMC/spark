@@ -57,10 +57,10 @@ public:
 private:
     friend struct HealthCommandTestAccess;
 
-    void sendPerformanceReport(CommandSender &sender, const StatisticsSnapshot &stats);
+    static void sendPerformanceReport(CommandSender &sender, const StatisticsSnapshot &stats);
     void uploadHealthReport(CommandSender &sender);
     HealthData captureHealthData(const CommandSender &sender, std::int64_t now_ms);
-    void runHealthUpload(HealthData data, std::string sender_name, bool sender_is_player, std::int64_t now_ms);
+    void runHealthUpload(const HealthData &data, std::string sender_name, bool sender_is_player, std::int64_t now_ms);
     void announceHealthUpload();
 
     StatisticsService &statistics_;

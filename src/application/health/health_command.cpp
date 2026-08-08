@@ -196,11 +196,14 @@ void HealthCommand::cmdHealth(CommandSender &sender, const Arguments &args)
             if (!snap.rx_bytes_per_second.present || !snap.tx_bytes_per_second.present) {
                 continue;
             }
-            std::string net_msg = "  " + kColorGray + name + ": " + kColorGreen +
-                                  formatBytes(static_cast<std::uint64_t>(snap.rx_bytes_per_second.mean)) + "/s" +
-                                  kColorGray + "  " + kColorGreen +
-                                  formatBytes(static_cast<std::uint64_t>(snap.tx_bytes_per_second.mean)) + "/s" +
-                                  kColorGray;
+            std::string net_msg = "  " + kColorGray;
+            net_msg += name;
+            net_msg += ": " + kColorGreen;
+            net_msg += formatBytes(static_cast<std::uint64_t>(snap.rx_bytes_per_second.mean)) + "/s";
+            net_msg += kColorGray;
+            net_msg += "  " + kColorGreen;
+            net_msg += formatBytes(static_cast<std::uint64_t>(snap.tx_bytes_per_second.mean)) + "/s";
+            net_msg += kColorGray;
             sender.sendMessage(net_msg);
         }
     }
@@ -228,7 +231,7 @@ void HealthCommand::uploadHealthReport(CommandSender &sender)
         const std::string sender_name = sender.getName();
         const bool sender_is_player = sender.isPlayer();
         upload_thread_ = std::thread([this, data = std::move(data), sender_name, sender_is_player, now_ms]() mutable {
-            runHealthUpload(std::move(data), sender_name, sender_is_player, now_ms);
+            runHealthUpload(data, sender_name, sender_is_player, now_ms);
         });
     }
     catch (const std::exception &error) {
@@ -299,7 +302,7 @@ HealthData HealthCommand::captureHealthData(const CommandSender &sender, std::in
     return data;
 }
 
-void HealthCommand::runHealthUpload(HealthData data, std::string sender_name, bool sender_is_player,
+void HealthCommand::runHealthUpload(const HealthData &data, std::string sender_name, bool sender_is_player,
                                     std::int64_t now_ms)
 {
     UploadResult result;
@@ -312,7 +315,7 @@ void HealthCommand::runHealthUpload(HealthData data, std::string sender_name, bo
         result.error = std::string("health report generation failed: ") + e.what();
     }
     {
-        std::lock_guard<std::mutex> lock(upload_mutex_);
+        std::scoped_lock lock(upload_mutex_);
         upload_result_ = std::move(result);
         upload_sender_ = std::move(sender_name);
         upload_sender_is_player_ = sender_is_player;
@@ -339,7 +342,7 @@ void HealthCommand::announceHealthUpload()
     bool sender_is_player = false;
     std::int64_t now_ms = 0;
     {
-        std::lock_guard<std::mutex> lock(upload_mutex_);
+        std::scoped_lock lock(upload_mutex_);
         result = std::move(upload_result_);
         sender_name = std::move(upload_sender_);
         sender_is_player = upload_sender_is_player_;

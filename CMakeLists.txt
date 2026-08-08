@@ -66,6 +66,7 @@ add_library(spark_native STATIC
         src/native/symbol/symbolicate.cpp
         src/native/symbol/symbol_guess.cpp)
 if (WIN32)
+    target_compile_definitions(spark_native PRIVATE NOMINMAX)
     target_sources(spark_native PRIVATE
             src/native/symbol/dbghelp_manager.cpp
             src/native/symbol/symbol_guess_windows.cpp
@@ -134,7 +135,7 @@ else ()
     target_link_libraries(spark_core PUBLIC spark_native ZLIB::ZLIB CURL::libcurl tomlplusplus::tomlplusplus OpenSSL::Crypto)
 endif ()
 if (WIN32)
-    target_compile_definitions(spark_core PUBLIC NOMINMAX)
+    target_compile_definitions(spark_core PUBLIC NOMINMAX _WIN32_WINNT=0x0600 NTDDI_VERSION=0x06000000)
     target_link_libraries(spark_core PUBLIC iphlpapi)
 endif ()
 set_target_properties(spark_core PROPERTIES POSITION_INDEPENDENT_CODE ON)

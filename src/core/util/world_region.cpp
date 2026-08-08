@@ -24,22 +24,22 @@ std::uint64_t packCoord(int x, int z)
 std::vector<WorldRegion> groupChunksIntoRegions(const std::map<std::pair<int, int>, WorldChunk> &chunks)
 {
     // Build a hash map of chunks with entities > 0, keyed by packed coordinate.
-    std::unordered_map<std::uint64_t, const WorldChunk *> chunkMap;
-    chunkMap.reserve(chunks.size());
+    std::unordered_map<std::uint64_t, const WorldChunk *> chunk_map;
+    chunk_map.reserve(chunks.size());
     for (const auto &[coord, chunk] : chunks) {
         if (chunk.total_entities <= 0) {
             continue;
         }
-        chunkMap.emplace(packCoord(coord.first, coord.second), &chunk);
+        chunk_map.emplace(packCoord(coord.first, coord.second), &chunk);
     }
 
     std::vector<WorldRegion> regions;
     std::unordered_map<std::uint64_t, bool> visited;
-    visited.reserve(chunkMap.size());
+    visited.reserve(chunk_map.size());
 
     std::deque<const WorldChunk *> queue;
 
-    for (const auto &[key, chunkPtr] : chunkMap) {
+    for (const auto &[key, chunkPtr] : chunk_map) {
         if (visited[key]) {
             continue;
         }
@@ -63,12 +63,12 @@ std::vector<WorldRegion> groupChunksIntoRegions(const std::map<std::pair<int, in
                     if (dx == 0 && dz == 0) {
                         continue;
                     }
-                    std::uint64_t neighborKey = packCoord(cx + dx, cz + dz);
-                    auto it = chunkMap.find(neighborKey);
-                    if (it == chunkMap.end() || visited[neighborKey]) {
+                    std::uint64_t neighbor_key = packCoord(cx + dx, cz + dz);
+                    auto it = chunk_map.find(neighbor_key);
+                    if (it == chunk_map.end() || visited[neighbor_key]) {
                         continue;
                     }
-                    visited[neighborKey] = true;
+                    visited[neighbor_key] = true;
                     region.total_entities += it->second->total_entities;
                     region.chunks.push_back(*it->second);
                     queue.push_back(it->second);

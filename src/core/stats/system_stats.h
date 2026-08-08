@@ -48,7 +48,7 @@ struct PlatformStats {
     bool present = false;
     int target_tps = 20;
     int max_ideal_mspt = 50;
-    long player_count = -1;
+    std::int64_t player_count = -1;
     int online_mode = 0;  // 0 unknown, 1 offline, 2 online
     std::int64_t uptime_ms = 0;
     bool process_mem_present = false;

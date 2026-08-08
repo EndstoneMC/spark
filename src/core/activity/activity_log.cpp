@@ -11,7 +11,7 @@ namespace spark {
 
 namespace {
 
-constexpr std::int64_t kUrlExpiryMs = 60LL * 24 * 3600 * 1000;  // 60 days
+constexpr std::int64_t KUrlExpiryMs = 60LL * 24 * 3600 * 1000;  // 60 days
 
 std::int64_t nowMs()
 {
@@ -78,7 +78,7 @@ struct JsonValue {
     std::vector<JsonValue> arr_val;
     std::vector<std::pair<std::string, JsonValue>> obj_val;
 
-    const JsonValue *find(std::string_view key) const
+    [[nodiscard]] const JsonValue *find(std::string_view key) const
     {
         for (const auto &[k, v] : obj_val) {
             if (k == key) {
@@ -113,7 +113,7 @@ private:
         }
     }
 
-    bool parseValue(JsonValue &out)
+    bool parseValue(JsonValue &out)  // NOLINT(misc-no-recursion)
     {
         skipWs();
         if (pos_ >= text_.size()) {
@@ -138,7 +138,7 @@ private:
         return parseNumber(out);
     }
 
-    bool parseObject(JsonValue &out)
+    bool parseObject(JsonValue &out)  // NOLINT(misc-no-recursion)
     {
         out.type = JsonValue::Type::Object;
         ++pos_;
@@ -183,7 +183,7 @@ private:
         return false;
     }
 
-    bool parseArray(JsonValue &out)
+    bool parseArray(JsonValue &out)  // NOLINT(misc-no-recursion)
     {
         out.type = JsonValue::Type::Array;
         ++pos_;
@@ -416,7 +416,7 @@ Activity Activity::file(std::string user_name, bool user_is_player, std::int64_t
 bool Activity::shouldExpire(std::int64_t now_ms) const
 {
     if (data_type == DataType::Url) {
-        return (now_ms - time_ms) > kUrlExpiryMs;
+        return (now_ms - time_ms) > KUrlExpiryMs;
     }
     return false;
 }
@@ -424,9 +424,9 @@ bool Activity::shouldExpire(std::int64_t now_ms) const
 std::string Activity::serialize() const
 {
     std::ostringstream ss;
-    ss << "{\"user\":{\"name\":\"" << jsonEscape(user_name) << "\",\"isPlayer\":" << (user_is_player ? "true" : "false")
-       << "},\"time\":" << time_ms << ",\"type\":\"" << jsonEscape(type) << "\""
-       << ",\"data\":{\"type\":\"" << (data_type == DataType::Url ? "url" : "file") << "\",\"value\":\""
+    ss << R"({"user":{"name":")" << jsonEscape(user_name) << R"(","isPlayer":)" << (user_is_player ? "true" : "false")
+       << "},\"time\":" << time_ms << R"(,"type":")" << jsonEscape(type) << "\""
+       << R"(,"data":{"type":")" << (data_type == DataType::Url ? "url" : "file") << R"(","value":")"
        << jsonEscape(data_value) << "\"}}";
     return ss.str();
 }
@@ -507,14 +507,14 @@ void ActivityLog::save() const
             const Activity &a = entries_[i];
             ss << "  {\n";
             ss << "    \"user\": {\n";
-            ss << "      \"name\": \"" << jsonEscape(a.user_name) << "\",\n";
+            ss << R"(      "name": ")" << jsonEscape(a.user_name) << "\",\n";
             ss << "      \"isPlayer\": " << (a.user_is_player ? "true" : "false") << "\n";
             ss << "    },\n";
             ss << "    \"time\": " << a.time_ms << ",\n";
-            ss << "    \"type\": \"" << jsonEscape(a.type) << "\",\n";
+            ss << R"(    "type": ")" << jsonEscape(a.type) << "\",\n";
             ss << "    \"data\": {\n";
-            ss << "      \"type\": \"" << (a.data_type == Activity::DataType::Url ? "url" : "file") << "\",\n";
-            ss << "      \"value\": \"" << jsonEscape(a.data_value) << "\"\n";
+            ss << R"(      "type": ")" << (a.data_type == Activity::DataType::Url ? "url" : "file") << "\",\n";
+            ss << R"(      "value": ")" << jsonEscape(a.data_value) << "\"\n";
             ss << "    }\n";
             ss << "  }";
             if (i + 1 < entries_.size()) {

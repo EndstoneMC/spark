@@ -1,6 +1,6 @@
 #include "native/symbol/symbol_guess_windows.h"
 
-#if defined(_WIN32)
+#ifdef _WIN32
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -22,6 +22,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -72,7 +73,7 @@ bool checkedAdd(std::uint32_t a, std::uint32_t b, std::uint32_t &out)
 
 std::string classNameFromTypeDescriptor(std::string_view mangled)
 {
-    if (mangled.rfind(".?A", 0) != 0) {
+    if (!mangled.starts_with(".?A")) {
         return {};
     }
     std::string_view encoded = mangled.substr(3);
@@ -100,15 +101,15 @@ std::string classNameFromTypeDescriptor(std::string_view mangled)
         parts.push_back(encoded.substr(start, at - start));
         start = at + 1;
     }
-    if (std::any_of(parts.begin(), parts.end(), [](std::string_view part) { return part.empty(); })) {
+    if (std::ranges::any_of(parts, [](std::string_view part) { return part.empty(); })) {
         return {};
     }
     std::string out;
-    for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
+    for (auto &part : std::views::reverse(parts)) {
         if (!out.empty()) {
             out += "::";
         }
-        out += *it;
+        out += part;
     }
     if (out.size() > 80) {
         return {};
@@ -161,7 +162,7 @@ struct Engine::Impl {
 
     const Section *sectionContaining(std::uint32_t rva, std::uint32_t length = 1) const
     {
-        auto it = std::upper_bound(sections.begin(), sections.end(), rva,
+        auto it = std::upper_bound(sections.begin(), sections.end(), rva,  // NOLINT(modernize-use-ranges)
                                    [](std::uint32_t value, const Section &section) { return value < section.begin; });
         if (it == sections.begin()) {
             return nullptr;
@@ -201,7 +202,7 @@ struct Engine::Impl {
         for (std::uint32_t i = 0; i < limit; ++i) {
             const auto c = static_cast<unsigned char>(text[i]);
             if (c == 0) {
-                return std::string(text, i);
+                return {text, i};
             }
             if (c < 0x20 || c > 0x7e) {
                 return {};
@@ -219,7 +220,7 @@ struct Engine::Impl {
         if (!readRaw(0, dos) || dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew < 0) {
             return false;
         }
-        const std::size_t nt_offset = static_cast<std::size_t>(dos.e_lfanew);
+        const auto nt_offset = static_cast<std::size_t>(dos.e_lfanew);
         IMAGE_NT_HEADERS64 nt{};
         if (!readRaw(nt_offset, nt) || nt.Signature != IMAGE_NT_SIGNATURE ||
             nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC ||
@@ -253,9 +254,11 @@ struct Engine::Impl {
                 header.VirtualAddress >= end) {
                 continue;
             }
-            sections.push_back({header.VirtualAddress, end, (header.Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0});
+            sections.push_back({.begin = header.VirtualAddress,
+                                .end = end,
+                                .executable = (header.Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0});
         }
-        std::sort(sections.begin(), sections.end(), [](const Section &a, const Section &b) {
+        std::ranges::sort(sections, [](const Section &a, const Section &b) {
             return a.begin != b.begin ? a.begin < b.begin : a.end < b.end;
         });
         // Ambiguous overlapping section permissions make every later validation
@@ -317,9 +320,9 @@ struct Engine::Impl {
             if ((flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER)) != 0) {
                 return std::nullopt;
             }
-            const std::uint32_t slots = (static_cast<std::uint32_t>(header[2]) + 1u) & ~1u;
+            const std::uint32_t slots = (static_cast<std::uint32_t>(header[2]) + 1U) & ~1U;
             std::uint32_t chained_rva = 0;
-            if (!checkedAdd(function.UnwindData, 4u + 2u * slots, chained_rva) || !read(chained_rva, function)) {
+            if (!checkedAdd(function.UnwindData, 4U + 2U * slots, chained_rva) || !read(chained_rva, function)) {
                 return std::nullopt;
             }
         }
@@ -346,10 +349,10 @@ struct Engine::Impl {
                 ++stats.rejected_ranges;
                 continue;
             }
-            ranges.push_back({function.BeginAddress, function.EndAddress, *root});
+            ranges.push_back({.begin = function.BeginAddress, .end = function.EndAddress, .root = *root});
             stats.chained_ranges += *root != function.BeginAddress ? 1 : 0;
         }
-        std::sort(ranges.begin(), ranges.end(), [](const FunctionRange &a, const FunctionRange &b) {
+        std::ranges::sort(ranges, [](const FunctionRange &a, const FunctionRange &b) {
             if (a.begin != b.begin) {
                 return a.begin < b.begin;
             }
@@ -358,7 +361,8 @@ struct Engine::Impl {
             }
             return a.root < b.root;
         });
-        ranges.erase(std::unique(ranges.begin(), ranges.end()), ranges.end());
+        const auto duplicate = std::ranges::unique(ranges);
+        ranges.erase(duplicate.begin(), duplicate.end());
 
         std::vector<bool> ambiguous(ranges.size(), false);
         std::size_t cluster_begin = 0;
@@ -398,6 +402,7 @@ struct Engine::Impl {
         if (rva > std::numeric_limits<std::uint32_t>::max()) {
             return nullptr;
         }
+        // NOLINTNEXTLINE(modernize-use-ranges)
         auto it = std::upper_bound(ranges.begin(), ranges.end(), static_cast<std::uint32_t>(rva),
                                    [](std::uint32_t value, const FunctionRange &range) { return value < range.begin; });
         if (it == ranges.begin()) {
@@ -418,7 +423,7 @@ struct Engine::Impl {
             hierarchy.base_count > 1024) {
             return std::nullopt;
         }
-        const Section *base_array = sectionContaining(hierarchy.base_array, hierarchy.base_count * 4u);
+        const Section *base_array = sectionContaining(hierarchy.base_array, hierarchy.base_count * 4U);
         if (base_array == nullptr || base_array->executable) {
             return std::nullopt;
         }
@@ -452,16 +457,12 @@ struct Engine::Impl {
         }
         const std::uint8_t *code = image + cursor;
         std::uint32_t prefix = 0;
-        if (available >= 9 && code[0] == 0x48 && code[1] == 0x83 && (code[2] == 0xe9 || code[2] == 0xc1)) {
+        if (available >= 9 && code[0] == 0x48 &&
+            ((code[1] == 0x83 && (code[2] == 0xe9 || code[2] == 0xc1)) || (code[1] == 0x8d && code[2] == 0x49))) {
             prefix = 4;
         }
-        else if (available >= 12 && code[0] == 0x48 && code[1] == 0x81 && (code[2] == 0xe9 || code[2] == 0xc1)) {
-            prefix = 7;
-        }
-        else if (available >= 9 && code[0] == 0x48 && code[1] == 0x8d && code[2] == 0x49) {
-            prefix = 4;
-        }
-        else if (available >= 12 && code[0] == 0x48 && code[1] == 0x8d && code[2] == 0x89) {
+        else if (available >= 12 && code[0] == 0x48 &&
+                 ((code[1] == 0x81 && (code[2] == 0xe9 || code[2] == 0xc1)) || (code[1] == 0x8d && code[2] == 0x89))) {
             prefix = 7;
         }
         if (available < prefix + 5 || code[prefix] != 0xe9) {
@@ -470,7 +471,7 @@ struct Engine::Impl {
         std::int32_t displacement = 0;
         std::memcpy(&displacement, code + prefix + 1, sizeof(displacement));
         const std::int64_t target = static_cast<std::int64_t>(rva) + prefix + 5 + displacement;
-        if (target < 0 || target > std::numeric_limits<std::uint32_t>::max()) {
+        if (target < 0 || std::cmp_greater(target, std::numeric_limits<std::uint32_t>::max())) {
             return std::nullopt;
         }
         const FunctionRange *function = containing(static_cast<std::uint32_t>(target));
@@ -488,8 +489,8 @@ struct Engine::Impl {
             if (section.executable) {
                 continue;
             }
-            const std::uint32_t start = (section.begin + 7u) & ~7u;
-            for (std::uint32_t rva = start; rva <= section.end - 16u; rva += 8) {
+            const std::uint32_t start = (section.begin + 7U) & ~7U;
+            for (std::uint32_t rva = start; rva <= section.end - 16U; rva += 8) {
                 std::uint64_t col_pointer = 0;
                 std::memcpy(&col_pointer, image + rva, sizeof(col_pointer));
                 std::uint32_t col_rva = 0;
@@ -505,9 +506,9 @@ struct Engine::Impl {
                 const std::uint32_t table = rva + 8;
                 bool saw_code = false;
                 unsigned external_holes = 0;
-                for (std::uint32_t slot = 0; slot < 512 && table <= section.end - 8u * (slot + 1u); ++slot) {
+                for (std::uint32_t slot = 0; slot < 512 && table <= section.end - 8U * (slot + 1U); ++slot) {
                     std::uint64_t entry = 0;
-                    std::memcpy(&entry, image + table + 8u * slot, sizeof(entry));
+                    std::memcpy(&entry, image + table + 8U * slot, sizeof(entry));
                     std::uint32_t target = 0;
                     if (!toRva(entry, target)) {
                         // Permit one external _purecall-like slot after the table
@@ -539,7 +540,8 @@ struct Engine::Impl {
                     else {
                         continue;
                     }
-                    candidates[root].push_back({class_name, slot, col.offset != 0, via_thunk});
+                    candidates[root].push_back(
+                        {.class_name = class_name, .slot = slot, .secondary = col.offset != 0, .via_thunk = via_thunk});
                     ++stats.vtable_candidates;
                 }
             }
@@ -601,7 +603,7 @@ struct Engine::Impl {
                         stop = true;
                         break;
                     }
-                    const std::uint32_t address = static_cast<std::uint32_t>(instruction.addr);
+                    const auto address = static_cast<std::uint32_t>(instruction.addr);
                     if (address != cursor && !visited.insert(address).second) {
                         stop = true;
                         break;
@@ -614,7 +616,9 @@ struct Engine::Impl {
                             std::string value = readCString(target, 180);
                             const int score = scoreStringHint(value);
                             if (score >= ::spark::symbol_guess::kMinimumStringHintScore) {
-                                candidates.try_emplace(target, StringCandidate{target, std::move(value), score});
+                                candidates.try_emplace(
+                                    target,
+                                    StringCandidate{.target = target, .value = std::move(value), .score = score});
                             }
                         }
                     }
@@ -648,7 +652,7 @@ struct Engine::Impl {
         for (auto &[target, candidate] : candidates) {
             out.push_back(std::move(candidate));
         }
-        std::sort(out.begin(), out.end(), [](const StringCandidate &a, const StringCandidate &b) {
+        std::ranges::sort(out, [](const StringCandidate &a, const StringCandidate &b) {
             if (a.score != b.score) {
                 return a.score > b.score;
             }
@@ -676,11 +680,11 @@ struct Engine::Impl {
                 std::int32_t displacement = 0;
                 std::memcpy(&displacement, code + 3, sizeof(displacement));
                 const std::int64_t target_wide = static_cast<std::int64_t>(rva) + 7 + displacement;
-                if (target_wide < 0 || target_wide > std::numeric_limits<std::uint32_t>::max()) {
+                if (target_wide < 0 || std::cmp_greater(target_wide, std::numeric_limits<std::uint32_t>::max())) {
                     continue;
                 }
                 const auto target = static_cast<std::uint32_t>(target_wide);
-                if (targets.count(target) == 0) {
+                if (!targets.contains(target)) {
                     continue;
                 }
                 if (const FunctionRange *function = containing(rva)) {
@@ -721,7 +725,7 @@ struct Engine::Impl {
 
     std::unordered_map<std::uint64_t, TypedLabel> guess(std::span<const std::uint64_t> rvas)
     {
-        std::lock_guard lock(mutex);
+        std::scoped_lock lock(mutex);
         const auto start = Clock::now();
         BuildStats batch = stats;
         batch.batch_microseconds = 0;
@@ -819,7 +823,7 @@ BuildStats Engine::stats() const
     if (impl_ == nullptr) {
         return {};
     }
-    std::lock_guard lock(impl_->mutex);
+    std::scoped_lock lock(impl_->mutex);
     return impl_->stats;
 }
 
@@ -839,7 +843,7 @@ CurrentEngineState &currentEngineState()
 Engine &currentEngine()
 {
     CurrentEngineState &state = currentEngineState();
-    std::lock_guard lock(state.mutex);
+    std::scoped_lock lock(state.mutex);
     if (state.engine != nullptr) {
         return *state.engine;
     }
@@ -868,7 +872,7 @@ std::unordered_map<std::uint64_t, TypedLabel> guessCurrentModuleSymbols(std::spa
 BuildStats currentModuleStats()
 {
     CurrentEngineState &state = currentEngineState();
-    std::lock_guard lock(state.mutex);
+    std::scoped_lock lock(state.mutex);
     return state.engine != nullptr ? state.engine->stats() : BuildStats{};
 }
 

@@ -14,10 +14,10 @@ namespace {
 
 class ByteCursor {
 public:
-    ByteCursor(const std::uint8_t *data, std::size_t size) : data_(data), size_(size), pos_(0) {}
+    ByteCursor(const std::uint8_t *data, std::size_t size) : data_(data), size_(size) {}
 
-    bool eof() const { return pos_ >= size_; }
-    std::size_t remaining() const { return pos_ < size_ ? size_ - pos_ : 0; }
+    [[nodiscard]] bool eof() const { return pos_ >= size_; }
+    [[nodiscard]] std::size_t remaining() const { return pos_ < size_ ? size_ - pos_ : 0; }
 
     bool u8(std::uint8_t &out)
     {
@@ -63,7 +63,7 @@ private:
     }
     const std::uint8_t *data_;
     std::size_t size_;
-    std::size_t pos_;
+    std::size_t pos_{0};
 };
 
 }  // namespace
@@ -253,7 +253,7 @@ bool JournalReader::readSegment(const std::filesystem::path &path, JournalReadRe
 
     // Read entire file into memory.
     std::fseek(f, 0, SEEK_END);
-    long file_size = std::ftell(f);
+    const auto file_size = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
     if (file_size <= 0) {
         std::fclose(f);
@@ -355,7 +355,7 @@ bool JournalReader::readSegment(const std::filesystem::path &path, JournalReadRe
         const std::uint8_t *payload_ptr = buf.data() + (buf.size() - c.remaining());
 
         // Verify CRC.
-        std::uint32_t actual_crc = static_cast<std::uint32_t>(crc32(0L, payload_ptr, payload_len));
+        auto actual_crc = static_cast<std::uint32_t>(crc32(0L, payload_ptr, payload_len));
         if (actual_crc != crc) {
             result.corrupt_records++;
             break;  // stop reading this segment
@@ -404,7 +404,7 @@ JournalReadResult JournalReader::readSession(const std::filesystem::path &direct
             continue;
         }
         auto name = entry.path().filename().string();
-        if (name.size() < 8 || name.substr(0, 8) != "segment-") {
+        if (name.size() < 8 || !name.starts_with("segment-")) {
             continue;
         }
         if (name.size() < 4 || name.substr(name.size() - 4) != ".jnl") {

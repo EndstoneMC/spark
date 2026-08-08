@@ -4,9 +4,9 @@
 
 #include "core/profiler/thread_grouper.h"
 
-using namespace spark;
+using namespace spark;  // NOLINT(google-build-using-namespace)
 
-static void test_by_name()
+static void test_by_name()  // NOLINT(misc-use-anonymous-namespace)
 {
     ThreadGrouper g(ThreadGrouperMode::ByName);
     assert(g.group(1, "Server thread") == "Server thread");
@@ -16,7 +16,7 @@ static void test_by_name()
     std::printf("  by_name: OK\n");
 }
 
-static void test_by_pool()
+static void test_by_pool()  // NOLINT(misc-use-anonymous-namespace)
 {
     ThreadGrouper g(ThreadGrouperMode::ByPool);
 
@@ -38,7 +38,7 @@ static void test_by_pool()
     std::printf("  by_pool: OK\n");
 }
 
-static void test_by_pool_separators()
+static void test_by_pool_separators()  // NOLINT(misc-use-anonymous-namespace)
 {
     ThreadGrouper g(ThreadGrouperMode::ByPool);
 
@@ -54,7 +54,7 @@ static void test_by_pool_separators()
     std::printf("  by_pool_separators: OK\n");
 }
 
-static void test_as_one()
+static void test_as_one()  // NOLINT(misc-use-anonymous-namespace)
 {
     ThreadGrouper g(ThreadGrouperMode::AsOne);
     assert(g.group(1, "Server thread") == "root");
@@ -67,7 +67,7 @@ static void test_as_one()
     std::printf("  as_one: OK\n");
 }
 
-static void test_by_pool_no_match()
+static void test_by_pool_no_match()  // NOLINT(misc-use-anonymous-namespace)
 {
     ThreadGrouper g(ThreadGrouperMode::ByPool);
     // Names without a trailing number are not pooled.

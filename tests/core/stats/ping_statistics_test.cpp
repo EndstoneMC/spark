@@ -5,7 +5,7 @@
 
 #include "core/stats/ping_statistics.h"
 
-using namespace spark;
+using namespace spark;  // NOLINT(google-build-using-namespace)
 
 namespace {
 

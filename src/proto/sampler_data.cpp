@@ -46,7 +46,7 @@ std::vector<const CallTree::Node *> sortedChildren(const CallTree::Node &node)
     for (const auto &[key, child] : node.children) {
         kids.push_back(child.get());
     }
-    std::sort(kids.begin(), kids.end(), [](const CallTree::Node *a, const CallTree::Node *b) {
+    std::ranges::sort(kids, [](const CallTree::Node *a, const CallTree::Node *b) {
         std::uint64_t ta = nodeTotal(*a);
         std::uint64_t tb = nodeTotal(*b);
         return ta != tb ? ta > tb : a->key.rva < b->key.rva;
@@ -55,6 +55,7 @@ std::vector<const CallTree::Node *> sortedChildren(const CallTree::Node &node)
 }
 
 // Post-order flatten: append children first, then this node; return this node's index.
+// NOLINTNEXTLINE(misc-no-recursion)
 int emitNode(const CallTree::Node *node, const std::vector<std::int32_t> &windows, const ProfileMetadata &meta,
              const std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> &resolved, std::vector<std::string> &flat)
 {
@@ -107,7 +108,14 @@ std::string buildMetadata(const ProfileMetadata &m)
     {
         std::string t;
         ProtoWriter tw(t);
-        tw.varint(1, m.all_threads ? 0 : (m.regex_threads ? 2 : 1));
+        int dumper_type = 1;
+        if (m.all_threads) {
+            dumper_type = 0;
+        }
+        else if (m.regex_threads) {
+            dumper_type = 2;
+        }
+        tw.varint(1, dumper_type);
         for (std::int64_t id : m.thread_ids) {
             tw.int64(2, id);
         }
@@ -362,7 +370,7 @@ std::string buildMetadata(const ProfileMetadata &m)
             for (const auto &[name, snap] : s.net_averages) {
                 std::string netif;
                 ProtoWriter nw(netif);
-                auto writeRate = [&nw](int field, const NetworkRateValues &rate) {
+                auto write_rate = [&nw](int field, const NetworkRateValues &rate) {
                     if (!rate.present) {
                         return;
                     }
@@ -375,10 +383,10 @@ std::string buildMetadata(const ProfileMetadata &m)
                     raw.real(5, rate.percentile95);
                     nw.message(field, ra);
                 };
-                writeRate(1, snap.rx_bytes_per_second);
-                writeRate(2, snap.tx_bytes_per_second);
-                writeRate(3, snap.rx_packets_per_second);
-                writeRate(4, snap.tx_packets_per_second);
+                write_rate(1, snap.rx_bytes_per_second);
+                write_rate(2, snap.tx_bytes_per_second);
+                write_rate(3, snap.rx_packets_per_second);
+                write_rate(4, snap.tx_packets_per_second);
                 std::string entry;
                 ProtoWriter ew(entry);
                 ew.string(1, name);
@@ -436,7 +444,7 @@ std::string buildMetadata(const ProfileMetadata &m)
 
 std::vector<FrameKey> collectFrameKeys(const CallTree &tree)
 {
-    return collectFrameKeys({ThreadTreeView{"", &tree}});
+    return collectFrameKeys({ThreadTreeView{.name = "", .tree = &tree}});
 }
 
 std::vector<FrameKey> collectFrameKeys(const std::vector<ThreadTreeView> &threads)
@@ -468,7 +476,7 @@ std::vector<FrameKey> collectFrameKeys(const std::vector<ThreadTreeView> &thread
 std::string buildSamplerData(const ProfileMetadata &meta, const CallTree &tree,
                              const std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> &resolved)
 {
-    return buildSamplerData(meta, {ThreadTreeView{meta.thread_name, &tree}}, resolved);
+    return buildSamplerData(meta, {ThreadTreeView{.name = meta.thread_name, .tree = &tree}}, resolved);
 }
 
 std::string buildSamplerData(const ProfileMetadata &meta, const std::vector<ThreadTreeView> &threads,
@@ -770,7 +778,7 @@ std::string buildHealthData(const HealthData &data)
                 for (const auto &[name, snap] : s.net_averages) {
                     std::string netif;
                     ProtoWriter nw(netif);
-                    auto writeRate = [&nw](int field, const NetworkRateValues &rate) {
+                    auto write_rate = [&nw](int field, const NetworkRateValues &rate) {
                         if (!rate.present) {
                             return;
                         }
@@ -783,10 +791,10 @@ std::string buildHealthData(const HealthData &data)
                         raw.real(5, rate.percentile95);
                         nw.message(field, ra);
                     };
-                    writeRate(1, snap.rx_bytes_per_second);
-                    writeRate(2, snap.tx_bytes_per_second);
-                    writeRate(3, snap.rx_packets_per_second);
-                    writeRate(4, snap.tx_packets_per_second);
+                    write_rate(1, snap.rx_bytes_per_second);
+                    write_rate(2, snap.tx_bytes_per_second);
+                    write_rate(3, snap.rx_packets_per_second);
+                    write_rate(4, snap.tx_packets_per_second);
                     std::string entry;
                     ProtoWriter ew(entry);
                     ew.string(1, name);

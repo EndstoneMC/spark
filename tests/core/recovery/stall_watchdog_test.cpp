@@ -6,17 +6,17 @@
 
 #include "core/recovery/stall_watchdog.h"
 
-using namespace spark;
+using namespace spark;  // NOLINT(google-build-using-namespace)
 
 namespace {
 
 // Short thresholds for fast tests.
-constexpr std::uint64_t kTestStallNs = 200'000'000ULL;  // 200 ms
-constexpr int kTestPollMs = 50;
+constexpr std::uint64_t KTestStallNs = 200'000'000ULL;  // 200 ms
+constexpr int KTestPollMs = 50;
 
 class WatchdogFixture {
 public:
-    WatchdogFixture() : watchdog_(server_hb_, kTestStallNs, kTestPollMs) {}
+    WatchdogFixture() : watchdog_(server_hb_, KTestStallNs, KTestPollMs) {}
     ~WatchdogFixture() { watchdog_.stop(); }
 
     void start() { watchdog_.start(); }
@@ -206,7 +206,7 @@ void testDestructorStopsThread()
 {
     Heartbeat hb;
     {
-        StallWatchdog wd(hb, kTestStallNs, kTestPollMs);
+        StallWatchdog wd(hb, KTestStallNs, KTestPollMs);
         wd.start();
         assert(wd.state() == StallWatchdog::State::Healthy);
     }

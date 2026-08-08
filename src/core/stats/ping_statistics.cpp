@@ -10,7 +10,7 @@ namespace spark {
 
 PingSummary::PingSummary(std::vector<int> values) : sorted_(std::move(values))
 {
-    std::sort(sorted_.begin(), sorted_.end());
+    std::ranges::sort(sorted_);
 }
 
 int PingSummary::percentile(double p) const
@@ -70,7 +70,7 @@ void PingRollingAverage::add(int value)
 std::vector<int> PingRollingAverage::sortedCopy() const
 {
     std::vector<int> copy(samples_.begin(), samples_.end());
-    std::sort(copy.begin(), copy.end());
+    std::ranges::sort(copy);
     return copy;
 }
 
@@ -91,7 +91,7 @@ int PingRollingAverage::min() const
     if (count_ == 0) {
         return 0;
     }
-    return *std::min_element(samples_.begin(), samples_.end());
+    return *std::ranges::min_element(samples_);
 }
 
 int PingRollingAverage::median() const
@@ -127,7 +127,7 @@ int PingRollingAverage::max() const
     if (count_ == 0) {
         return 0;
     }
-    return *std::max_element(samples_.begin(), samples_.end());
+    return *std::ranges::max_element(samples_);
 }
 
 // --- PingStatistics ---
@@ -155,7 +155,7 @@ PingSummary PingStatistics::currentSummary() const
         }
     }
     if (values.empty()) {
-        return PingSummary();
+        return {};
     }
     return PingSummary(std::move(values));
 }
@@ -166,7 +166,7 @@ PlayerPing PingStatistics::query(const std::string &player_name) const
     // Exact match first
     auto it = results.find(player_name);
     if (it != results.end()) {
-        return {it->first, it->second};
+        return {.name = it->first, .ping = it->second};
     }
     // Case-insensitive match
     for (const auto &[name, ping] : results) {
@@ -187,7 +187,7 @@ PlayerPing PingStatistics::query(const std::string &player_name) const
                 }
             }
             if (match) {
-                return {name, ping};
+                return {.name = name, .ping = ping};
             }
         }
     }

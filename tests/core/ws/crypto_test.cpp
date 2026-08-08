@@ -10,7 +10,7 @@ namespace {
 // Fixed RSA-2048 test vector (PKCS#8 DER private, X.509 DER public, SHA256withRSA).
 // PKCS#1 v1.5 is deterministic, so both backends must produce the same signature.
 
-static const std::uint8_t kTestPrivateKey[] = {
+const std::uint8_t KTestPrivateKey[] = {
     0x30, 0x82, 0x04, 0xbc, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01,
     0x01, 0x05, 0x00, 0x04, 0x82, 0x04, 0xa6, 0x30, 0x82, 0x04, 0xa2, 0x02, 0x01, 0x00, 0x02, 0x82, 0x01, 0x01, 0x00,
     0x96, 0x96, 0x93, 0xe0, 0x3d, 0x56, 0x9d, 0x65, 0x9a, 0x52, 0xee, 0xb8, 0x66, 0x15, 0x8d, 0xaf, 0x6a, 0x60, 0x68,
@@ -77,7 +77,7 @@ static const std::uint8_t kTestPrivateKey[] = {
     0xed, 0xa8, 0x3d, 0x77, 0xea, 0x4b, 0xe3, 0xc3, 0x0a, 0xdd, 0x02, 0x86, 0xbb, 0x45, 0xf4, 0x95, 0xaf, 0xd0, 0x30,
 };
 
-static const std::uint8_t kTestPublicKey[] = {
+const std::uint8_t KTestPublicKey[] = {
     0x30, 0x82, 0x01, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
     0x03, 0x82, 0x01, 0x0f, 0x00, 0x30, 0x82, 0x01, 0x0a, 0x02, 0x82, 0x01, 0x01, 0x00, 0x96, 0x96, 0x93, 0xe0, 0x3d,
     0x56, 0x9d, 0x65, 0x9a, 0x52, 0xee, 0xb8, 0x66, 0x15, 0x8d, 0xaf, 0x6a, 0x60, 0x68, 0xcb, 0x87, 0x6d, 0x59, 0x7b,
@@ -96,7 +96,7 @@ static const std::uint8_t kTestPublicKey[] = {
     0x2a, 0xf2, 0xde, 0xd3, 0x02, 0x03, 0x01, 0x00, 0x01,
 };
 
-static const std::uint8_t kTestSignature[] = {
+const std::uint8_t KTestSignature[] = {
     0x0d, 0x69, 0xd4, 0x37, 0x49, 0x9b, 0x90, 0xc7, 0xeb, 0xbc, 0x3d, 0xbf, 0x53, 0xe5, 0xdb, 0x05, 0x8f, 0xf3, 0x4c,
     0xbc, 0x0a, 0xaa, 0x64, 0xb3, 0x6f, 0xd9, 0xa0, 0xa8, 0x27, 0x76, 0x1f, 0xe3, 0x87, 0xc3, 0xa9, 0x55, 0x26, 0x03,
     0xb1, 0xcc, 0xae, 0x01, 0x43, 0xd2, 0xb8, 0xe7, 0xe8, 0xee, 0x9f, 0xa3, 0xf8, 0xfa, 0x92, 0x2e, 0xd9, 0x53, 0x5f,
@@ -113,33 +113,33 @@ static const std::uint8_t kTestSignature[] = {
     0x0c, 0x5e, 0xde, 0xa2, 0x13, 0x11, 0x02, 0x63, 0x3a,
 };
 
-static constexpr std::size_t kTestPrivateKeyLen = sizeof(kTestPrivateKey);
-static constexpr std::size_t kTestPublicKeyLen = sizeof(kTestPublicKey);
-static constexpr std::size_t kTestSignatureLen = sizeof(kTestSignature);
+constexpr std::size_t KTestPrivateKeyLen = sizeof(KTestPrivateKey);
+constexpr std::size_t KTestPublicKeyLen = sizeof(KTestPublicKey);
+constexpr std::size_t KTestSignatureLen = sizeof(KTestSignature);
 
-static const char kTestMessage[] = "spark-crypto-test-vector";
-static constexpr std::size_t kTestMessageLen = sizeof(kTestMessage) - 1;
+const char KTestMessage[] = "spark-crypto-test-vector";
+constexpr std::size_t KTestMessageLen = sizeof(KTestMessage) - 1;
 
 int runCryptoTests()
 {
-    std::vector<std::uint8_t> priv(kTestPrivateKey, kTestPrivateKey + kTestPrivateKeyLen);
-    std::vector<std::uint8_t> pub(kTestPublicKey, kTestPublicKey + kTestPublicKeyLen);
+    std::vector<std::uint8_t> priv(KTestPrivateKey, KTestPrivateKey + KTestPrivateKeyLen);
+    std::vector<std::uint8_t> pub(KTestPublicKey, KTestPublicKey + KTestPublicKeyLen);
 
     // 1. Sign with the test private key and compare to the expected signature.
-    auto sig = spark::Crypto::sign(priv, reinterpret_cast<const std::uint8_t *>(kTestMessage), kTestMessageLen);
-    if (sig.size() != kTestSignatureLen) {
-        std::cerr << "FAIL: signature length " << sig.size() << " != " << kTestSignatureLen << "\n";
+    auto sig = spark::Crypto::sign(priv, reinterpret_cast<const std::uint8_t *>(KTestMessage), KTestMessageLen);
+    if (sig.size() != KTestSignatureLen) {
+        std::cerr << "FAIL: signature length " << sig.size() << " != " << KTestSignatureLen << "\n";
         return 1;
     }
-    if (std::memcmp(sig.data(), kTestSignature, kTestSignatureLen) != 0) {
+    if (std::memcmp(sig.data(), KTestSignature, KTestSignatureLen) != 0) {
         std::cerr << "FAIL: signature does not match expected test vector\n";
         return 1;
     }
     std::cout << "PASS: sign() produces the expected deterministic signature\n";
 
     // 2. Verify the test signature with the test public key.
-    bool ok = spark::Crypto::verify(pub, reinterpret_cast<const std::uint8_t *>(kTestMessage), kTestMessageLen,
-                                    kTestSignature, kTestSignatureLen);
+    bool ok = spark::Crypto::verify(pub, reinterpret_cast<const std::uint8_t *>(KTestMessage), KTestMessageLen,
+                                    KTestSignature, KTestSignatureLen);
     if (!ok) {
         std::cerr << "FAIL: verify() rejected a valid signature\n";
         return 1;
@@ -149,7 +149,7 @@ int runCryptoTests()
     // 3. Verify rejects a tampered message.
     const char bad_msg[] = "spark-crypto-test-vectoX";
     ok = spark::Crypto::verify(pub, reinterpret_cast<const std::uint8_t *>(bad_msg), sizeof(bad_msg) - 1,
-                               kTestSignature, kTestSignatureLen);
+                               KTestSignature, KTestSignatureLen);
     if (ok) {
         std::cerr << "FAIL: verify() accepted a signature for a tampered message\n";
         return 1;
@@ -157,9 +157,9 @@ int runCryptoTests()
     std::cout << "PASS: verify() rejects a tampered message\n";
 
     // 4. Verify rejects a tampered signature.
-    std::vector<std::uint8_t> bad_sig(kTestSignature, kTestSignature + kTestSignatureLen);
+    std::vector<std::uint8_t> bad_sig(KTestSignature, KTestSignature + KTestSignatureLen);
     bad_sig[0] ^= 0xff;
-    ok = spark::Crypto::verify(pub, reinterpret_cast<const std::uint8_t *>(kTestMessage), kTestMessageLen,
+    ok = spark::Crypto::verify(pub, reinterpret_cast<const std::uint8_t *>(KTestMessage), KTestMessageLen,
                                bad_sig.data(), bad_sig.size());
     if (ok) {
         std::cerr << "FAIL: verify() accepted a tampered signature\n";

@@ -48,12 +48,12 @@ bool ThreadSelector::matches(std::string_view thread_name) const
         return true;
     }
     if (regex_threads_) {
-        return std::any_of(regexes_.begin(), regexes_.end(), [&](const std::regex &pattern) {
+        return std::ranges::any_of(regexes_, [&](const std::regex &pattern) {
             return std::regex_match(thread_name.begin(), thread_name.end(), pattern);
         });
     }
-    return std::any_of(patterns_.begin(), patterns_.end(),
-                       [&](const std::string &pattern) { return equalsIgnoreCase(thread_name, pattern); });
+    return std::ranges::any_of(patterns_,
+                               [&](const std::string &pattern) { return equalsIgnoreCase(thread_name, pattern); });
 }
 
 }  // namespace spark

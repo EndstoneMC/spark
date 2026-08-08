@@ -6,7 +6,7 @@ namespace spark {
 
 void CallTree::log(const std::vector<FrameKey> &frames, std::int32_t window, std::uint64_t weight)
 {
-    std::size_t unlimited = (std::numeric_limits<std::size_t>::max)();
+    std::size_t unlimited = std::numeric_limits<std::size_t>::max();
     logBounded(frames, window, weight, unlimited);
 }
 
@@ -50,7 +50,7 @@ std::uint64_t CallTree::sampleCount() const
 
 namespace {
 
-void pruneNode(CallTree::Node &node, std::int32_t minimum_window)
+void pruneNode(CallTree::Node &node, std::int32_t minimum_window)  // NOLINT(misc-no-recursion)
 {
     node.times.erase(node.times.begin(), node.times.lower_bound(minimum_window));
     for (auto &[key, child] : node.children) {
@@ -67,7 +67,7 @@ void CallTree::pruneBefore(std::int32_t minimum_window)
 
 namespace {
 
-void mergeNode(CallTree::Node &dst, const CallTree::Node &src)
+void mergeNode(CallTree::Node &dst, const CallTree::Node &src)  // NOLINT(misc-no-recursion)
 {
     for (const auto &[window, count] : src.times) {
         dst.times[window] += count;

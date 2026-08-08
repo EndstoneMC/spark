@@ -14,26 +14,26 @@
 namespace spark::symbol_guess::dwarf {
 namespace {
 
-constexpr std::uint8_t kOmit = 0xff;
-constexpr std::uint8_t kAbsptr = 0x00;
-constexpr std::uint8_t kUleb128 = 0x01;
-constexpr std::uint8_t kUdata2 = 0x02;
-constexpr std::uint8_t kUdata4 = 0x03;
-constexpr std::uint8_t kUdata8 = 0x04;
-constexpr std::uint8_t kSleb128 = 0x09;
-constexpr std::uint8_t kSdata2 = 0x0a;
-constexpr std::uint8_t kSdata4 = 0x0b;
-constexpr std::uint8_t kSdata8 = 0x0c;
-constexpr std::uint8_t kPcrel = 0x10;
-constexpr std::uint8_t kTextrel = 0x20;
-constexpr std::uint8_t kDatarel = 0x30;
-constexpr std::uint8_t kFuncrel = 0x40;
-constexpr std::uint8_t kAligned = 0x50;
-constexpr std::uint8_t kIndirect = 0x80;
+constexpr std::uint8_t KOmit = 0xff;
+constexpr std::uint8_t KAbsptr = 0x00;
+constexpr std::uint8_t KUleb128 = 0x01;
+constexpr std::uint8_t KUdata2 = 0x02;
+constexpr std::uint8_t KUdata4 = 0x03;
+constexpr std::uint8_t KUdata8 = 0x04;
+constexpr std::uint8_t KSleb128 = 0x09;
+constexpr std::uint8_t KSdata2 = 0x0a;
+constexpr std::uint8_t KSdata4 = 0x0b;
+constexpr std::uint8_t KSdata8 = 0x0c;
+constexpr std::uint8_t KPcrel = 0x10;
+constexpr std::uint8_t KTextrel = 0x20;
+constexpr std::uint8_t KDatarel = 0x30;
+constexpr std::uint8_t KFuncrel = 0x40;
+constexpr std::uint8_t KAligned = 0x50;
+constexpr std::uint8_t KIndirect = 0x80;
 
-constexpr std::uint64_t kMaximumEntries = 4u << 20;
-constexpr std::uint64_t kMaximumRecordBytes = 1u << 20;
-constexpr std::size_t kMaximumAugmentationBytes = 4096;
+constexpr std::uint64_t KMaximumEntries = 4U << 20;
+constexpr std::uint64_t KMaximumRecordBytes = 1U << 20;
+constexpr std::size_t KMaximumAugmentationBytes = 4096;
 
 template <typename T>
 bool read(const ImageView &image, std::uint64_t rva, T &out)
@@ -100,7 +100,7 @@ bool addSigned(std::uint64_t base, std::int64_t offset, std::uint64_t &out)
 {
     if (offset >= 0) {
         const auto positive = static_cast<std::uint64_t>(offset);
-        if (positive > (std::numeric_limits<std::uint64_t>::max)() - base) {
+        if (positive > std::numeric_limits<std::uint64_t>::max() - base) {
             return false;
         }
         out = base + positive;
@@ -125,7 +125,7 @@ bool readRawEncoded(const ImageView &image, std::uint8_t format, std::uint8_t ad
 {
     const std::uint64_t start = cursor;
     switch (format) {
-    case kAbsptr:
+    case KAbsptr:
         if (address_size == 4) {
             std::uint32_t value = 0;
             if (!read(image, cursor, value) || !advance(cursor, 4, limit)) {
@@ -143,12 +143,12 @@ bool readRawEncoded(const ImageView &image, std::uint8_t format, std::uint8_t ad
             return true;
         }
         return false;
-    case kUleb128:
+    case KUleb128:
         return readUleb(image, cursor, limit, out.unsigned_value);
-    case kSleb128:
+    case KSleb128:
         out.is_signed = true;
         return readSleb(image, cursor, limit, out.signed_value);
-    case kUdata2: {
+    case KUdata2: {
         std::uint16_t value = 0;
         if (!read(image, cursor, value) || !advance(cursor, 2, limit)) {
             return false;
@@ -156,7 +156,7 @@ bool readRawEncoded(const ImageView &image, std::uint8_t format, std::uint8_t ad
         out.unsigned_value = value;
         return true;
     }
-    case kUdata4: {
+    case KUdata4: {
         std::uint32_t value = 0;
         if (!read(image, cursor, value) || !advance(cursor, 4, limit)) {
             return false;
@@ -164,7 +164,7 @@ bool readRawEncoded(const ImageView &image, std::uint8_t format, std::uint8_t ad
         out.unsigned_value = value;
         return true;
     }
-    case kUdata8: {
+    case KUdata8: {
         std::uint64_t value = 0;
         if (!read(image, cursor, value) || !advance(cursor, 8, limit)) {
             return false;
@@ -172,7 +172,7 @@ bool readRawEncoded(const ImageView &image, std::uint8_t format, std::uint8_t ad
         out.unsigned_value = value;
         return true;
     }
-    case kSdata2: {
+    case KSdata2: {
         std::int16_t value = 0;
         if (!read(image, cursor, value) || !advance(cursor, 2, limit)) {
             return false;
@@ -181,7 +181,7 @@ bool readRawEncoded(const ImageView &image, std::uint8_t format, std::uint8_t ad
         out.signed_value = value;
         return true;
     }
-    case kSdata4: {
+    case KSdata4: {
         std::int32_t value = 0;
         if (!read(image, cursor, value) || !advance(cursor, 4, limit)) {
             return false;
@@ -190,7 +190,7 @@ bool readRawEncoded(const ImageView &image, std::uint8_t format, std::uint8_t ad
         out.signed_value = value;
         return true;
     }
-    case kSdata8: {
+    case KSdata8: {
         std::int64_t value = 0;
         if (!read(image, cursor, value) || !advance(cursor, 8, limit)) {
             return false;
@@ -210,12 +210,12 @@ bool readEncoded(const ImageView &image, std::uint8_t encoding, std::uint8_t add
                  std::optional<std::uint64_t> function_base, std::uint64_t &cursor, std::uint64_t limit,
                  std::uint64_t &out)
 {
-    if (encoding == kOmit) {
+    if (encoding == KOmit) {
         return false;
     }
-    if ((encoding & 0x70) == kAligned) {
+    if ((encoding & 0x70) == KAligned) {
         const std::uint64_t alignment = address_size;
-        if (alignment == 0 || cursor > (std::numeric_limits<std::uint64_t>::max)() - (alignment - 1)) {
+        if (alignment == 0 || cursor > std::numeric_limits<std::uint64_t>::max() - (alignment - 1)) {
             return false;
         }
         cursor = (cursor + alignment - 1) & ~(alignment - 1);
@@ -231,18 +231,18 @@ bool readEncoded(const ImageView &image, std::uint8_t encoding, std::uint8_t add
     std::uint64_t base = 0;
     switch (application) {
     case 0:
-    case kAligned:
+    case KAligned:
         break;
-    case kPcrel:
+    case KPcrel:
         base = field;
         break;
-    case kTextrel:
+    case KTextrel:
         if (!bases.has_text) {
             return false;
         }
         base = bases.text;
         break;
-    case kDatarel:
+    case KDatarel:
         if (section_base) {
             base = *section_base;
         }
@@ -253,7 +253,7 @@ bool readEncoded(const ImageView &image, std::uint8_t encoding, std::uint8_t add
             return false;
         }
         break;
-    case kFuncrel:
+    case KFuncrel:
         if (!function_base) {
             return false;
         }
@@ -268,12 +268,12 @@ bool readEncoded(const ImageView &image, std::uint8_t encoding, std::uint8_t add
         }
     }
     else {
-        if (raw.unsigned_value > (std::numeric_limits<std::uint64_t>::max)() - base) {
+        if (raw.unsigned_value > std::numeric_limits<std::uint64_t>::max() - base) {
             return false;
         }
         value = base + raw.unsigned_value;
     }
-    if ((encoding & kIndirect) != 0) {
+    if ((encoding & KIndirect) != 0) {
         if (address_size == 4) {
             std::uint32_t indirect = 0;
             if (!read(image, value, indirect)) {
@@ -302,7 +302,7 @@ struct Record {
 
 std::optional<Record> readRecord(const ImageView &image, std::uint64_t record_rva)
 {
-    if (record_rva > (std::numeric_limits<std::uint64_t>::max)() - 4) {
+    if (record_rva > std::numeric_limits<std::uint64_t>::max() - 4) {
         return std::nullopt;
     }
     std::uint32_t length32 = 0;
@@ -312,14 +312,14 @@ std::optional<Record> readRecord(const ImageView &image, std::uint64_t record_rv
     std::uint64_t content = record_rva + 4;
     std::uint64_t length = length32;
     bool dwarf64 = false;
-    if (length32 == 0xffffffffu) {
-        if (!read(image, content, length) || content > (std::numeric_limits<std::uint64_t>::max)() - 8) {
+    if (length32 == 0xffffffffU) {
+        if (!read(image, content, length) || content > std::numeric_limits<std::uint64_t>::max() - 8) {
             return std::nullopt;
         }
         content += 8;
         dwarf64 = true;
     }
-    if (length == 0 || length > kMaximumRecordBytes || content > (std::numeric_limits<std::uint64_t>::max)() - length) {
+    if (length == 0 || length > KMaximumRecordBytes || content > std::numeric_limits<std::uint64_t>::max() - length) {
         return std::nullopt;
     }
     const std::uint64_t end = content + length;
@@ -327,12 +327,12 @@ std::optional<Record> readRecord(const ImageView &image, std::uint64_t record_rv
     if (!read(image, end - 1, last)) {
         return std::nullopt;
     }
-    return Record{content, end, dwarf64};
+    return Record{.content = content, .end = end, .dwarf64 = dwarf64};
 }
 
 struct CieInfo {
     std::uint8_t address_size = 8;
-    std::uint8_t fde_encoding = kAbsptr;
+    std::uint8_t fde_encoding = KAbsptr;
     bool has_z_augmentation = false;
 };
 
@@ -419,7 +419,7 @@ std::optional<CieInfo> parseCie(const ImageView &image, std::uint64_t cie_rva, E
         return augmentation.empty() ? std::optional(info) : std::nullopt;
     }
     std::uint64_t augmentation_length = 0;
-    if (!readUleb(image, cursor, record->end, augmentation_length) || augmentation_length > kMaximumAugmentationBytes ||
+    if (!readUleb(image, cursor, record->end, augmentation_length) || augmentation_length > KMaximumAugmentationBytes ||
         augmentation_length > record->end - cursor) {
         return std::nullopt;
     }
@@ -435,7 +435,7 @@ std::optional<CieInfo> parseCie(const ImageView &image, std::uint64_t cie_rva, E
         }
         case 'R':
             if (!read(image, cursor, info.fde_encoding) || !advance(cursor, 1, augmentation_end) ||
-                info.fde_encoding == kOmit) {
+                info.fde_encoding == KOmit) {
                 return std::nullopt;
             }
             break;
@@ -509,22 +509,23 @@ std::optional<FunctionRange> parseFde(const ImageView &image, std::uint64_t fde_
     if (!readRawEncoded(image, cie.fde_encoding & 0x0f, cie.address_size, cursor, record->end, raw_range)) {
         return std::nullopt;
     }
-    const std::uint64_t length =
-        raw_range.is_signed ? (raw_range.signed_value > 0 ? static_cast<std::uint64_t>(raw_range.signed_value) : 0)
-                            : raw_range.unsigned_value;
-    if (length == 0 || length > (std::numeric_limits<std::uint64_t>::max)() - initial ||
-        length > (std::numeric_limits<std::size_t>::max)() ||
+    std::uint64_t length = raw_range.unsigned_value;
+    if (raw_range.is_signed) {
+        length = raw_range.signed_value > 0 ? static_cast<std::uint64_t>(raw_range.signed_value) : 0;
+    }
+    if (length == 0 || length > std::numeric_limits<std::uint64_t>::max() - initial ||
+        length > std::numeric_limits<std::size_t>::max() ||
         !image.executable(initial, static_cast<std::size_t>(length))) {
         return std::nullopt;
     }
     if (cie.has_z_augmentation) {
         std::uint64_t augmentation_length = 0;
         if (!readUleb(image, cursor, record->end, augmentation_length) ||
-            augmentation_length > kMaximumAugmentationBytes || !advance(cursor, augmentation_length, record->end)) {
+            augmentation_length > KMaximumAugmentationBytes || !advance(cursor, augmentation_length, record->end)) {
             return std::nullopt;
         }
     }
-    return FunctionRange{initial, initial + length, initial};
+    return FunctionRange{.begin = initial, .end = initial + length, .root = initial};
 }
 
 }  // namespace
@@ -540,13 +541,13 @@ std::vector<FunctionRange> parseEhFrameHeader(const ImageView &image, std::uint6
         }
         return ranges;
     };
-    if (header_size < 4 || header_rva > (std::numeric_limits<std::uint64_t>::max)() - header_size) {
+    if (header_size < 4 || header_rva > std::numeric_limits<std::uint64_t>::max() - header_size) {
         return finish({});
     }
     const std::uint64_t limit = header_rva + header_size;
     std::array<std::uint8_t, 4> header{};
-    if (!image.read(header_rva, header.data(), header.size()) || header[0] != 1 || header[1] == kOmit ||
-        header[2] == kOmit || header[3] == kOmit) {
+    if (!image.read(header_rva, header.data(), header.size()) || header[0] != 1 || header[1] == KOmit ||
+        header[2] == KOmit || header[3] == KOmit) {
         return finish({});
     }
     std::uint64_t cursor = header_rva + 4;
@@ -556,7 +557,7 @@ std::vector<FunctionRange> parseEhFrameHeader(const ImageView &image, std::uint6
     }
     std::uint64_t count = 0;
     if (!readEncoded(image, header[2], 8, header_rva, bases, std::nullopt, cursor, limit, count) || count == 0 ||
-        count > kMaximumEntries) {
+        count > KMaximumEntries) {
         return finish({});
     }
     local.table_entries = static_cast<std::size_t>(count);
@@ -607,7 +608,7 @@ std::vector<FunctionRange> parseEhFrameHeader(const ImageView &image, std::uint6
         std::vector<FunctionRange> recovered;
         std::uint64_t record_rva = eh_frame;
         bool terminated = false;
-        for (std::uint64_t record_count = 0; record_count <= kMaximumEntries && record_rva < eh_frame_end;
+        for (std::uint64_t record_count = 0; record_count <= KMaximumEntries && record_rva < eh_frame_end;
              ++record_count) {
             std::uint32_t length32 = 0;
             if (!read(image, record_rva, length32)) {
@@ -651,7 +652,7 @@ std::vector<FunctionRange> parseEhFrameHeader(const ImageView &image, std::uint6
         }
     }
 
-    std::sort(candidates.begin(), candidates.end(), [](const FunctionRange &a, const FunctionRange &b) {
+    std::ranges::sort(candidates, [](const FunctionRange &a, const FunctionRange &b) {
         return a.begin != b.begin ? a.begin < b.begin : a.end < b.end;
     });
     std::vector<FunctionRange> unique;
@@ -713,7 +714,7 @@ std::vector<FunctionRange> parseEhFrameHeader(const ImageView &image, std::uint6
 
 const FunctionRange *functionContaining(const std::vector<FunctionRange> &ranges, std::uint64_t rva)
 {
-    auto it = std::upper_bound(ranges.begin(), ranges.end(), rva,
+    auto it = std::upper_bound(ranges.begin(), ranges.end(), rva,  // NOLINT(modernize-use-ranges)
                                [](std::uint64_t value, const FunctionRange &r) { return value < r.begin; });
     if (it == ranges.begin()) {
         return nullptr;

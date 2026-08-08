@@ -9,14 +9,13 @@
 namespace spark {
 
 struct WebSocketClientTestAccess {
-    static void startExitedWorker(WebSocketClient &client, std::mutex &mutex, std::condition_variable &cv,
-                                  bool &exited)
+    static void startExitedWorker(WebSocketClient &client, std::mutex &mutex, std::condition_variable &cv, bool &exited)
     {
         client.running_.store(true);
         client.thread_ = std::thread([&client, &mutex, &cv, &exited]() {
             client.running_.store(false);
             {
-                std::lock_guard<std::mutex> lock(mutex);
+                std::scoped_lock lock(mutex);
                 exited = true;
             }
             cv.notify_one();
