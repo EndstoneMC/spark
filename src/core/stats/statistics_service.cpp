@@ -158,6 +158,24 @@ void StatisticsService::recordPlayerCountAt(long players,
     gauges_[index] = sample;
 }
 
+void StatisticsService::recordWorldGauges(int entities, int chunks)
+{
+    recordWorldGaugesAt(entities, chunks, last_observation_steady_ms_);
+}
+
+void StatisticsService::recordWorldGaugesAt(int entities, int chunks,
+                                            std::int64_t steady_ms)
+{
+    if (!started_ || gauge_size_ == 0) {
+        return;
+    }
+    std::size_t index =
+        (gauge_begin_ + gauge_size_ - 1) % gauges_.size();
+    gauges_[index].entities = entities;
+    gauges_[index].chunks = chunks;
+    gauges_[index].world_gauges_set = true;
+}
+
 std::int64_t StatisticsService::effectiveStart(std::int64_t now_ms,
                                                std::int64_t window_ms) const
 {
@@ -465,6 +483,12 @@ std::map<std::int32_t, WindowStats> StatisticsService::profileWindows(
                     (stats.end_time_ms - start_unix_ms_)) {
                 stats.players_present = true;
                 stats.players = gauge.players;
+                if (gauge.world_gauges_set) {
+                    stats.entities_present = true;
+                    stats.entities = gauge.entities;
+                    stats.chunks_present = true;
+                    stats.chunks = gauge.chunks;
+                }
             }
         }
         result.emplace(static_cast<std::int32_t>(window), stats);

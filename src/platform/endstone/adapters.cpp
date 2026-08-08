@@ -1,5 +1,6 @@
 #include "platform/endstone/adapters.h"
 
+#include <atomic>
 #include <chrono>
 #include <map>
 #include <memory>
@@ -138,6 +139,15 @@ PlayerPingProvider *EndstoneMetadataProvider::playerPingProvider()
     return ping_provider_.get();
 }
 
+std::pair<int, int> EndstoneMetadataProvider::worldGauges()
+{
+    if (!world_gauges_) {
+        world_gauges_ = std::make_unique<EndstoneWorldGaugeProvider>(plugin_, server_);
+        world_gauges_->init();
+    }
+    return world_gauges_->worldGauges();
+}
+
 // --- EndstoneNotifier ---
 
 void EndstoneNotifier::notify(const std::string &sender_name, const std::string &text)
@@ -169,6 +179,85 @@ std::map<std::string, int> EndstonePlayerPingProvider::poll()
         }
     }
     return result;
+}
+
+// --- EndstoneWorldGaugeProvider ---
+
+namespace {
+
+constexpr std::int64_t kReconcileIntervalMs = 30000;
+
+std::int64_t steadyNowMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+}  // namespace
+
+void EndstoneWorldGaugeProvider::init()
+{
+    if (initialized_) {
+        return;
+    }
+    initialized_ = true;
+
+    plugin_.registerEvent<::endstone::ActorSpawnEvent>(
+        [this](::endstone::ActorSpawnEvent &event) {
+            if (event.getActor().asPlayer() == nullptr) {
+                entity_count_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }, ::endstone::EventPriority::Monitor);
+
+    plugin_.registerEvent<::endstone::ActorRemoveEvent>(
+        [this](::endstone::ActorRemoveEvent &event) {
+            if (event.getActor().asPlayer() == nullptr) {
+                entity_count_.fetch_sub(1, std::memory_order_relaxed);
+            }
+        }, ::endstone::EventPriority::Monitor);
+
+    plugin_.registerEvent<::endstone::ChunkLoadEvent>(
+        [this](::endstone::ChunkLoadEvent &) {
+            chunk_count_.fetch_add(1, std::memory_order_relaxed);
+        }, ::endstone::EventPriority::Monitor);
+
+    plugin_.registerEvent<::endstone::ChunkUnloadEvent>(
+        [this](::endstone::ChunkUnloadEvent &) {
+            chunk_count_.fetch_sub(1, std::memory_order_relaxed);
+        }, ::endstone::EventPriority::Monitor);
+
+    reconcile();
+}
+
+std::pair<int, int> EndstoneWorldGaugeProvider::worldGauges()
+{
+    std::int64_t now = steadyNowMs();
+    if (now - last_reconcile_steady_ms_ >= kReconcileIntervalMs) {
+        reconcile();
+    }
+    return {entity_count_.load(std::memory_order_relaxed),
+            chunk_count_.load(std::memory_order_relaxed)};
+}
+
+void EndstoneWorldGaugeProvider::reconcile()
+{
+    last_reconcile_steady_ms_ = steadyNowMs();
+
+    int entities = 0;
+    int chunks = 0;
+    if (::endstone::Level *level = server_.getLevel()) {
+        for (::endstone::Dimension *dimension : level->getDimensions()) {
+            for (::endstone::Actor *actor : dimension->getActors()) {
+                if (actor && actor->asPlayer() == nullptr) {
+                    ++entities;
+                }
+            }
+            chunks += static_cast<int>(dimension->getLoadedChunks().size());
+        }
+    }
+    entity_count_.store(entities, std::memory_order_relaxed);
+    chunk_count_.store(chunks, std::memory_order_relaxed);
 }
 
 }  // namespace spark::endstone_adapter

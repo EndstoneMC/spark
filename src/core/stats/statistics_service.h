@@ -80,6 +80,7 @@ public:
         std::int64_t profile_start_unix_ms,
         std::int64_t profile_end_unix_ms) const;
     void recordPlayerCount(long players);
+    void recordWorldGauges(int entities, int chunks);
 
     // Deterministic clock/CPU entry points used by the offline self-test.
     void startAt(std::int64_t steady_ms, std::int64_t unix_ms,
@@ -87,6 +88,7 @@ public:
     void recordTickAt(double duration_ms, std::int64_t steady_ms);
     void recordCpuSnapshot(const CpuSnapshot &current);
     void recordPlayerCountAt(long players, std::int64_t steady_ms);
+    void recordWorldGaugesAt(int entities, int chunks, std::int64_t steady_ms);
     StatisticsSnapshot snapshotAt(std::int64_t steady_ms) const;
 
     std::int64_t unixTimeFor(std::int64_t steady_ms) const;
@@ -114,6 +116,9 @@ private:
     struct GaugeSample {
         std::int64_t steady_ms = 0;
         int players = 0;
+        int entities = 0;
+        int chunks = 0;
+        bool world_gauges_set = false;
     };
 
     RollingValue tpsFor(std::int64_t now_ms, std::int64_t window_ms) const;

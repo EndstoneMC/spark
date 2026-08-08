@@ -1275,6 +1275,92 @@ bool verifyStatisticsService()
     return true;
 }
 
+bool verifyWorldGaugeStatistics()
+{
+    spark::CpuSnapshot cpu;
+    cpu.valid = true;
+    cpu.process_ticks_per_second = 100.0;
+    cpu.cpu_threads = 2;
+    cpu.wall_ms = 0;
+
+    auto svc = std::make_unique<spark::StatisticsService>();
+    svc->startAt(0, 5'000'000, cpu);
+    svc->recordPlayerCountAt(1, 0);
+    svc->recordWorldGaugesAt(10, 20, 0);
+    svc->recordTickAt(5.0, 100);
+    svc->recordTickAt(5.0, 600);
+    cpu.process_ticks += 20;
+    cpu.system_busy += 20;
+    cpu.system_total += 100;
+    cpu.wall_ms = 1'000;
+    svc->recordCpuSnapshot(cpu);
+    svc->recordPlayerCountAt(2, 1'000);
+    svc->recordWorldGaugesAt(15, 25, 1'000);
+    svc->recordTickAt(5.0, 1'100);
+    svc->recordTickAt(5.0, 1'600);
+    cpu.process_ticks += 40;
+    cpu.system_busy += 40;
+    cpu.system_total += 100;
+    cpu.wall_ms = 2'000;
+    svc->recordCpuSnapshot(cpu);
+    svc->recordPlayerCountAt(3, 2'000);
+    svc->recordWorldGaugesAt(20, 30, 2'000);
+
+    const auto windows = svc->profileWindows(5'000'000, 5'002'000);
+    auto first = windows.find(0);
+    auto second = windows.find(1);
+    // The gauge loop picks the last sample within each window's end time,
+    // matching the existing players behavior.
+    if (windows.size() != 2 || first == windows.end() || second == windows.end() ||
+        !first->second.entities_present || first->second.entities != 15 ||
+        !first->second.chunks_present || first->second.chunks != 25 ||
+        !second->second.entities_present || second->second.entities != 20 ||
+        !second->second.chunks_present || second->second.chunks != 30) {
+        std::fprintf(stderr,
+                     "world gauge statistics: entities/chunks not correct "
+                     "(first ents=%d chunks=%d; second ents=%d chunks=%d)\n",
+                     first == windows.end() ? -1 : first->second.entities,
+                     first == windows.end() ? -1 : first->second.chunks,
+                     second == windows.end() ? -1 : second->second.entities,
+                     second == windows.end() ? -1 : second->second.chunks);
+        return false;
+    }
+    return true;
+}
+
+bool verifyWorldGaugeAbsentWhenNotRecorded()
+{
+    spark::CpuSnapshot cpu;
+    cpu.valid = true;
+    cpu.process_ticks_per_second = 100.0;
+    cpu.cpu_threads = 2;
+    cpu.wall_ms = 0;
+
+    auto svc = std::make_unique<spark::StatisticsService>();
+    svc->startAt(0, 6'000'000, cpu);
+    svc->recordPlayerCountAt(1, 0);
+    svc->recordTickAt(5.0, 100);
+    svc->recordTickAt(5.0, 600);
+    cpu.process_ticks += 20;
+    cpu.system_busy += 20;
+    cpu.system_total += 100;
+    cpu.wall_ms = 1'000;
+    svc->recordCpuSnapshot(cpu);
+
+    const auto windows = svc->profileWindows(6'000'000, 6'001'000);
+    auto first = windows.find(0);
+    if (windows.size() != 1 || first == windows.end() ||
+        first->second.entities_present || first->second.chunks_present) {
+        std::fprintf(stderr,
+                     "world gauge absent: entities_present=%d chunks_present=%d "
+                     "(expected both false)\n",
+                     first == windows.end() ? -1 : first->second.entities_present,
+                     first == windows.end() ? -1 : first->second.chunks_present);
+        return false;
+    }
+    return true;
+}
+
 std::string escapeRegex(const std::string &text)
 {
     std::string escaped;
@@ -2384,8 +2470,11 @@ int main(int argc, char **argv)
     }
 
     if (argc > 1 && std::string(argv[1]) == "--statistics-only") {
-        return verifyStatisticsService() && verifySystemResourceStats() ? 0
-                                                                        : 1;
+        return verifyStatisticsService() && verifySystemResourceStats() &&
+                       verifyWorldGaugeStatistics() &&
+                       verifyWorldGaugeAbsentWhenNotRecorded()
+                   ? 0
+                   : 1;
     }
 
     int seconds = 4;
@@ -2408,6 +2497,8 @@ int main(int argc, char **argv)
     if (!verifyArgumentParsing() || !verifyThreadSelectorSemantics() ||
         !verifyTickMonitor() || !verifyStatisticsService() ||
         !verifySystemResourceStats() ||
+        !verifyWorldGaugeStatistics() ||
+        !verifyWorldGaugeAbsentWhenNotRecorded() ||
         !verifyThreadDiscovery() ||
         !verifyMultiThreadSerialization() || !verifyStatisticsSerialization() ||
         !verifyUploadFailure() || !verifyCaptureLifecycle() ||

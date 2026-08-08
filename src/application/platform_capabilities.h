@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <utility>
 
 #include "core/profiler/profiler.h"
 #include "core/stats/ping_statistics.h"
@@ -31,6 +32,9 @@ public:
     // Runtime queries used by /spark health (not export-specific).
     virtual std::int64_t serverUptimeSeconds() = 0;
     virtual long playerCount() = 0;
+    // Returns {entity_count, loaded_chunk_count} for rolling statistics.
+    // Default returns {0, 0} when world gauges are not available.
+    virtual std::pair<int, int> worldGauges() { return {0, 0}; }
     // Returns the player ping provider, or nullptr if ping is not available.
     virtual PlayerPingProvider *playerPingProvider() = 0;
 };

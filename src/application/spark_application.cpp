@@ -132,6 +132,8 @@ void SparkApplication::onTick(double mspt)
     server_heartbeat_.beat();
     if (statistics_.onTick(mspt)) {
         statistics_.recordPlayerCount(metadata_provider_.playerCount());
+        auto [entities, chunks] = metadata_provider_.worldGauges();
+        statistics_.recordWorldGauges(entities, chunks);
     }
     // Poll ping every ~10 seconds (200 ticks at 20 TPS).
     if (++tick_counter_ % 200 == 0) {
