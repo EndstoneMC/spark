@@ -5,6 +5,7 @@
 
 #include "application/command/command_sender.h"
 #include "application/platform_capabilities.h"
+#include "core/activity/activity_log.h"
 #include "core/command/arguments.h"
 #include "core/stats/network_monitor.h"
 #include "core/stats/ping_statistics.h"
@@ -35,6 +36,12 @@ public:
     // Returns the current network interface snapshots for profile export.
     std::map<std::string, NetworkInterfaceSnapshot> networkSnapshots() const;
 
+    // Sets a callback that returns the activity log, or nullptr if not available.
+    void setActivityLogProvider(std::function<ActivityLog *()> provider)
+    {
+        activity_log_provider_ = std::move(provider);
+    }
+
 private:
     void sendPerformanceReport(CommandSender &sender, const StatisticsSnapshot &stats);
     void uploadHealthReport(CommandSender &sender);
@@ -43,6 +50,7 @@ private:
     ProfileMetadataProvider &metadata_provider_;
     std::unique_ptr<PingStatistics> ping_statistics_;
     NetworkMonitor network_monitor_;
+    std::function<ActivityLog *()> activity_log_provider_;
 };
 
 }  // namespace spark

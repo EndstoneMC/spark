@@ -6,6 +6,7 @@ namespace spark {
 
 SparkApplication::SparkApplication(std::string bds_executable_sha256,
                                    std::filesystem::path profile_storage_dir,
+                                   std::filesystem::path activity_log_file,
                                    MainThreadDispatcher &dispatcher,
                                    ProfileMetadataProvider &metadata_provider,
                                    ResultNotifier &notifier)
@@ -17,11 +18,16 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
                 std::move(profile_storage_dir),
                 dispatcher_, metadata_provider_, notifier_),
       health_(statistics_, metadata_provider_),
+      activity_log_(std::move(activity_log_file)),
+      activity_command_(activity_log_),
       tick_monitor_(notifier_)
 {
+    activity_log_.load();
     registerCommands();
     profiler_.setPingSamplesProvider([this]() { return health_.pingSamples(); });
     profiler_.setNetworkSnapshotProvider([this]() { return health_.networkSnapshots(); });
+    profiler_.setActivityLogProvider([this]() -> ActivityLog * { return &activity_log_; });
+    health_.setActivityLogProvider([this]() -> ActivityLog * { return &activity_log_; });
 }
 
 void SparkApplication::registerCommands()
@@ -57,6 +63,11 @@ void SparkApplication::registerCommands()
         "health", "performance and host resource report",
         [this](CommandSender &sender, const Arguments &args) {
             health_.cmdHealth(sender, args);
+        });
+    registry_.registerCommand(
+        "activity", "show recent profiler and health report activity",
+        [this](CommandSender &sender, const Arguments &args) {
+            activity_command_.cmdActivity(sender, args);
         });
     registry_.registerCommand(
         "tickmonitor", "report unusually long ticks",

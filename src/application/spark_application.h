@@ -6,12 +6,14 @@
 #include <string>
 #include <vector>
 
+#include "application/activity/activity_command.h"
 #include "application/command/command_registry.h"
 #include "application/command/command_sender.h"
 #include "application/health/health_command.h"
 #include "application/platform_capabilities.h"
 #include "application/profiler/profiler_service.h"
 #include "application/tick_monitor/tick_monitor_command.h"
+#include "core/activity/activity_log.h"
 #include "core/stats/statistics_service.h"
 
 namespace spark {
@@ -23,6 +25,7 @@ class SparkApplication {
 public:
     SparkApplication(std::string bds_executable_sha256,
                      std::filesystem::path profile_storage_dir,
+                     std::filesystem::path activity_log_file,
                      MainThreadDispatcher &dispatcher,
                      ProfileMetadataProvider &metadata_provider,
                      ResultNotifier &notifier);
@@ -43,6 +46,7 @@ public:
     StatisticsService &statistics() { return statistics_; }
     CommandRegistry &registry() { return registry_; }
     HealthCommand &health() { return health_; }
+    ActivityLog &activityLog() { return activity_log_; }
 
 private:
     void registerCommands();
@@ -54,6 +58,8 @@ private:
 
     ProfilerService profiler_;
     HealthCommand health_;
+    ActivityLog activity_log_;
+    ActivityCommand activity_command_;
     TickMonitorCommand tick_monitor_;
     CommandRegistry registry_;
     std::uint64_t tick_counter_ = 0;

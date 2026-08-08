@@ -46,6 +46,7 @@ void CommandRegistry::sendHelp(CommandSender &sender) const
     sender.sendMessage(kColorGray + "       --save-to-file (plugins/spark/profiles), --comment <text>");
     sender.sendMessage(kColorGray + "Ping: --player <username>");
     sender.sendMessage(kColorGray + "Health: --upload (upload a health report to the spark viewer)");
+    sender.sendMessage(kColorGray + "Activity: --page <number>");
 }
 
 }  // namespace spark

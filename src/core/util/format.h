@@ -17,6 +17,8 @@ inline const std::string kColorGreen = "\xc2\xa7""a";    // §a
 inline const std::string kColorYellow = "\xc2\xa7""e";   // §e
 inline const std::string kColorRed = "\xc2\xa7""c";      // §c
 inline const std::string kColorReset = "\xc2\xa7""r";    // §r
+inline const std::string kColorWhite = "\xc2\xa7""f";    // §f
+inline const std::string kColorDarkGray = "\xc2\xa7""8"; // §8
 
 std::string formatDuration(std::int64_t seconds);
 std::string formatBytes(std::uint64_t bytes);

@@ -53,6 +53,7 @@ public:
         app_ = std::make_unique<spark::SparkApplication>(
             bds_executable_sha256_,
             spark::profileStorageDirectory(getDataFolder()),
+            getDataFolder() / "activity.json",
             *dispatcher_, *metadata_provider_, *notifier_);
 
         app_->statistics().start();
@@ -132,8 +133,7 @@ ENDSTONE_PLUGIN("spark", "0.4.1", SparkPlugin)
 
     command("spark")
         .description("spark profiler")
-        .usages("/spark",
-                "/spark (tps|ping|health|activity|tickmonitor)<module: SparkStatusModule> [flags: message]",
+        .usages("/spark", "/spark (tps|ping|health|activity|tickmonitor)<module: SparkStatusModule>",
                 "/spark (profiler)<module: SparkProfilerModule> "
                 "(start|stop|info|cancel)[action: SparkProfilerAction] [flags: message]")
         .permissions("endstone.command.spark");

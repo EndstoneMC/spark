@@ -168,6 +168,7 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
         return;
     }
     start_sender_name_ = sender.getName();
+    start_sender_is_player_ = sender.isPlayer();
 
     if (options.alloc) {
         if (options.alloc_live_only) {
@@ -251,7 +252,7 @@ void ProfilerService::cmdStop(CommandSender &sender, const Arguments &args)
         comment = comments.front();
     }
     sender.sendMessage("{}Stopping the profiler and finalizing results, please wait...", kColorGold);
-    finishProfiler(sender.getName(), save, comment);
+    finishProfiler(sender.getName(), sender.isPlayer(), save, comment);
 }
 
 void ProfilerService::cmdInfo(CommandSender &sender)
@@ -396,8 +397,8 @@ void ProfilerService::cmdCancel(CommandSender &sender)
     }
 }
 
-void ProfilerService::finishProfiler(const std::string &sender_name, bool save,
-                                     const std::string &comment)
+void ProfilerService::finishProfiler(const std::string &sender_name, bool sender_is_player,
+                                     bool save, const std::string &comment)
 {
     std::string stop_error;
     if (!profiler_.stopSampling(stop_error)) {
@@ -432,6 +433,7 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool save,
 
     pending_save_ = save;
     pending_sender_ = sender_name;
+    pending_sender_is_player_ = sender_is_player;
 
     exporting_.store(true);
     export_thread_ = std::thread([this]() { runExport(); });
@@ -461,6 +463,21 @@ void ProfilerService::announceResult()
                                : "Profiler stopped.";
     notifier_.notify(pending_sender_, headline);
     notifier_.notify(pending_sender_, pending_result_);
+
+    if (activity_log_provider_) {
+        ActivityLog *log = activity_log_provider_();
+        if (log) {
+            const std::int64_t now_ms = nowMs();
+            if (pending_outcome_ == ExportOutcome::Uploaded) {
+                log->add(Activity::url(pending_sender_, pending_sender_is_player_, now_ms,
+                                       "Profiler", pending_result_));
+            } else if (pending_outcome_ == ExportOutcome::Saved) {
+                log->add(Activity::file(pending_sender_, pending_sender_is_player_, now_ms,
+                                        "Profiler", pending_result_));
+            }
+        }
+    }
+
     exporting_.store(false);
 }
 
@@ -477,7 +494,7 @@ void ProfilerService::onTick(double mspt)
     std::int64_t auto_end = profiler_.autoEndTimeMs();
     if (auto_end > 0 && nowMs() >= auto_end) {
         bool save = profiler_.options().save_to_file;
-        finishProfiler(start_sender_name_, save, std::string());
+        finishProfiler(start_sender_name_, start_sender_is_player_, save, std::string());
     }
 }
 

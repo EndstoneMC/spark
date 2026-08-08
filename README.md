@@ -29,6 +29,7 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 | `/spark ping`                  | Show player ping RTT statistics (min/median/p95/max).    |
 | `/spark health`                 | Add process and host resources to the performance report.  |
 | `/spark health --upload`        | Upload a health report to the spark viewer.                |
+| `/spark activity`               | Show recent profiler and health report activity.           |
 | `/spark tickmonitor`            | Report ticks that exceed a duration or baseline change.   |
 
 By default, stopping a profiler uploads the generated profile to spark's bytebin
@@ -93,6 +94,15 @@ follows Windows commit limit semantics. On Linux, these values use `VmSize` and
 same statistics, platform metadata, system resources, 15-minute time-window
 history, and plugin list, then uploads it to the spark viewer. The viewer link
 is printed in chat.
+
+### `/spark activity`
+
+`/spark activity` shows a paginated list of recent profiler uploads, saved
+profiles, and health report uploads. Each entry records who triggered it, when
+it happened, and the resulting URL or file path. The log is persisted in
+`activity.json` in the plugin data folder across server restarts. URL entries
+expire after 60 days; file entries are kept indefinitely. Use `--page <number>`
+to navigate beyond the first page (4 entries per page).
 
 ### `/spark ping`
 

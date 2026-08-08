@@ -13,6 +13,7 @@
 #include "application/command/command_sender.h"
 #include "application/platform_capabilities.h"
 #include "application/profiler/profile_exporter.h"
+#include "core/activity/activity_log.h"
 #include "core/command/arguments.h"
 #include "core/profiler/profiler.h"
 #include "core/stats/network_monitor.h"
@@ -62,6 +63,12 @@ public:
         network_snapshot_provider_ = std::move(provider);
     }
 
+    // Sets a callback that returns the activity log, or nullptr if not available.
+    void setActivityLogProvider(std::function<ActivityLog *()> provider)
+    {
+        activity_log_provider_ = std::move(provider);
+    }
+
     // Lifecycle.
     void shutdown();
     bool shutdownBackend(std::string &error) { return profiler_.shutdown(error); }
@@ -70,8 +77,8 @@ public:
 
 private:
     void sendAllocationHookCoverage(CommandSender &sender);
-    void finishProfiler(const std::string &sender_name, bool save,
-                        const std::string &comment);
+    void finishProfiler(const std::string &sender_name, bool sender_is_player,
+                        bool save, const std::string &comment);
     void runExport();
     void announceResult();
 
@@ -88,16 +95,19 @@ private:
 
     std::atomic<bool> exporting_{false};
     std::string start_sender_name_ = "CONSOLE";
+    bool start_sender_is_player_ = false;
     std::thread export_thread_;
 
     // Export params, set on the main thread before runExport() runs on export_thread_.
     ExportContext pending_ctx_;
     bool pending_save_ = false;
     std::string pending_sender_ = "CONSOLE";
+    bool pending_sender_is_player_ = false;
     std::string pending_result_;
     ExportOutcome pending_outcome_ = ExportOutcome::Failed;
     std::function<std::vector<int>()> ping_samples_provider_;
     std::function<std::map<std::string, NetworkInterfaceSnapshot>()> network_snapshot_provider_;
+    std::function<ActivityLog *()> activity_log_provider_;
 };
 
 }  // namespace spark

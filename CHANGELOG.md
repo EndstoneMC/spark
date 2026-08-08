@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `/spark health --upload` to generate and upload a spark `HealthData`
   report (platform metadata, system resources, 15-minute time-window history,
   and plugin list) to the spark viewer.
+- Add `/spark activity` command with persisted activity log (profiler uploads,
+  saved profiles, and health report uploads), JSON storage with atomic writes
+  and corruption-safe loading, 60-day URL expiry, and `--page` pagination.
 - Preserve exact sampled native PCs and their independently validated function
   roots in forward-compatible profile fields for offline normalization metrics.
 - Resolve Linux vtable labels for shared implementations by parsing Itanium RTTI

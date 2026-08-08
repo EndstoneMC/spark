@@ -297,9 +297,16 @@ void HealthCommand::uploadHealthReport(CommandSender &sender)
                                               kHealthContentType,
                                               std::string("endstone-spark/") + kVersion);
         if (result.ok) {
+            std::string url = std::string(kViewerUrl) + result.key;
             sender.sendMessage("{}Health report uploaded!{} {}",
-                               kColorGold, kColorGray,
-                               std::string(kViewerUrl) + result.key);
+                               kColorGold, kColorGray, url);
+            if (activity_log_provider_) {
+                ActivityLog *log = activity_log_provider_();
+                if (log) {
+                    log->add(Activity::url(sender.getName(), sender.isPlayer(),
+                                           now_ms, "Health report", url));
+                }
+            }
         } else {
             sender.sendErrorMessage("Health report upload failed: {}", result.error);
         }

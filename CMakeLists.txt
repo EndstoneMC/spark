@@ -95,6 +95,7 @@ endif ()
 # --- platform-independent core: profiler, stats, proto, net (no Endstone) ---
 add_library(spark_core STATIC
         src/core/util/format.cpp
+        src/core/activity/activity_log.cpp
         src/core/command/arguments.cpp
         src/core/profiler/profiler.cpp
         src/core/stats/executable_hash.cpp
@@ -120,6 +121,7 @@ endif ()
 
 # --- application layer: command dispatch, session orchestration, export (no Endstone) ---
 add_library(spark_application STATIC
+        src/application/activity/activity_command.cpp
         src/application/command/command_registry.cpp
         src/application/health/health_command.cpp
         src/application/profiler/profile_exporter.cpp
