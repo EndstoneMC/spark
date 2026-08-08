@@ -1687,7 +1687,7 @@ std::uint64_t AllocationSampler::droppedTickEvents() const
 {
     return impl_->dropped_tick_events.load(std::memory_order_relaxed);
 }
-std::uint64_t AllocationSampler::tickEventCapacity() const
+std::uint64_t AllocationSampler::tickEventCapacity()
 {
     return kTickEventCapacity;
 }
@@ -1699,7 +1699,7 @@ std::uint64_t AllocationSampler::eventQueueHighWaterMark() const
 {
     return impl_->events.high_water.load(std::memory_order_relaxed);
 }
-std::uint64_t AllocationSampler::eventQueueCapacity() const
+std::uint64_t AllocationSampler::eventQueueCapacity()
 {
     return kEventCapacity;
 }
@@ -1723,7 +1723,7 @@ std::uint64_t AllocationSampler::peakLiveSamples() const
 {
     return impl_->peak_live_samples.load(std::memory_order_relaxed);
 }
-std::uint64_t AllocationSampler::liveIndexCapacity() const
+std::uint64_t AllocationSampler::liveIndexCapacity()
 {
     return kEventCapacity;
 }
@@ -1731,7 +1731,7 @@ std::uint64_t AllocationSampler::sampledThreadCount() const
 {
     return impl_->thread_trees.size();
 }
-std::uint64_t AllocationSampler::threadRootCapacity() const
+std::uint64_t AllocationSampler::threadRootCapacity()
 {
     return kMaxSampledThreads + 1;
 }
@@ -1747,11 +1747,11 @@ std::uint64_t AllocationSampler::hookedModuleCount() const
 {
     return impl_->hooks.hookedModuleCount();
 }
-std::uint64_t AllocationSampler::skippedModuleCount() const
+std::uint64_t AllocationSampler::skippedModuleCount()
 {
     return impl_->hooks.skippedModuleCount();
 }
-std::uint64_t AllocationSampler::failedModuleCount() const
+std::uint64_t AllocationSampler::failedModuleCount()
 {
     return impl_->hooks.failedModuleCount();
 }
@@ -1759,11 +1759,11 @@ std::uint64_t AllocationSampler::moduleRegistryCount() const
 {
     return impl_->modules.size();
 }
-std::uint64_t AllocationSampler::moduleRegistryCapacity() const
+std::uint64_t AllocationSampler::moduleRegistryCapacity()
 {
     return kMaxAllocationModules;
 }
-std::uint64_t AllocationSampler::profileNodeCapacity() const
+std::uint64_t AllocationSampler::profileNodeCapacity()
 {
     return kMaxProfileNodes;
 }

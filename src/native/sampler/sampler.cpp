@@ -26,7 +26,7 @@ namespace {
 #ifdef _WIN32
 constexpr std::size_t KLeadingDrop = 0;
 #else
-constexpr std::size_t kLeadingDrop = 2;
+constexpr std::size_t KLeadingDrop = 2;
 #endif
 
 }  // namespace
