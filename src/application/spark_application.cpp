@@ -42,7 +42,8 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256,
 void SparkApplication::registerCommands()
 {
     registry_.registerCommand(
-        "profiler", "start/stop/info/cancel/viewer/trust-viewer an execution or allocation profile",
+        {"profiler", "sampler"}, "start/stop/info/cancel/viewer/trust-viewer an execution or allocation profile",
+        "spark.profiler",
         [this](CommandSender &sender, const Arguments &args) {
             const std::string &action = args.subCommand();
             if (action == "start") {
@@ -65,27 +66,32 @@ void SparkApplication::registerCommands()
             }
         });
     registry_.registerCommand(
-        "tps", "rolling TPS, MSPT percentiles, and CPU usage",
+        {"tps", "cpu"}, "rolling TPS, MSPT percentiles, and CPU usage",
+        "spark.tps",
         [this](CommandSender &sender, const Arguments &) {
             health_.cmdTps(sender);
         });
     registry_.registerCommand(
-        "ping", "player ping RTT statistics",
+        {"ping"}, "player ping RTT statistics",
+        "spark.ping",
         [this](CommandSender &sender, const Arguments &args) {
             health_.cmdPing(sender, args);
         });
     registry_.registerCommand(
-        "health", "performance and host resource report",
+        {"health", "healthreport", "ht"}, "performance and host resource report",
+        "spark.health",
         [this](CommandSender &sender, const Arguments &args) {
             health_.cmdHealth(sender, args);
         });
     registry_.registerCommand(
-        "activity", "show recent profiler and health report activity",
+        {"activity", "activitylog", "log"}, "show recent profiler and health report activity",
+        "spark.activity",
         [this](CommandSender &sender, const Arguments &args) {
             activity_command_.cmdActivity(sender, args);
         });
     registry_.registerCommand(
-        "tickmonitor", "report unusually long ticks",
+        {"tickmonitor", "tickmonitoring"}, "report unusually long ticks",
+        "spark.tickmonitor",
         [this](CommandSender &sender, const Arguments &args) {
             tick_monitor_.cmdTickMonitor(sender, args);
         });

@@ -7,10 +7,11 @@
 
 namespace spark {
 
-void CommandRegistry::registerCommand(std::string alias, std::string description,
-                                       Handler handler)
+void CommandRegistry::registerCommand(std::vector<std::string> aliases, std::string description,
+                                       std::string permission, Handler handler)
 {
-    commands_.push_back({std::move(alias), std::move(description), std::move(handler)});
+    commands_.push_back({std::move(aliases), std::move(description),
+                         std::move(permission), std::move(handler)});
 }
 
 bool CommandRegistry::dispatch(CommandSender &sender,
@@ -22,10 +23,16 @@ bool CommandRegistry::dispatch(CommandSender &sender,
     }
     const std::string &alias = tokens[0];
     for (const auto &cmd : commands_) {
-        if (cmd.alias == alias) {
-            std::vector<std::string> rest(tokens.begin() + 1, tokens.end());
-            cmd.handler(sender, Arguments(rest));
-            return true;
+        for (const auto &a : cmd.aliases) {
+            if (a == alias) {
+                if (!cmd.permission.empty() && !sender.hasPermission(cmd.permission)) {
+                    sender.sendErrorMessage("You do not have permission to use this command.");
+                    return true;
+                }
+                std::vector<std::string> rest(tokens.begin() + 1, tokens.end());
+                cmd.handler(sender, Arguments(rest));
+                return true;
+            }
         }
     }
     sendHelp(sender);
@@ -36,7 +43,7 @@ void CommandRegistry::sendHelp(CommandSender &sender) const
 {
     sender.sendMessage(kColorGold + "endstone-spark " + kColorGray + "v" + spark::kVersion);
     for (const auto &cmd : commands_) {
-        sender.sendMessage(kColorYellow + "/spark " + cmd.alias + " " +
+        sender.sendMessage(kColorYellow + "/spark " + cmd.aliases[0] + " " +
                            kColorGray + "- " + cmd.description);
     }
     sender.sendMessage(kColorGray + "Modes: --alloc, --alloc-live-only");

@@ -40,7 +40,10 @@ under `plugins/spark/profiles/` as a `.sparkprofile` file instead. If an upload
 fails, Spark automatically preserves the compressed profile in the same directory
 and reports the local path.
 
-Permission: `endstone.command.spark` (operators by default).
+Permission: `endstone.command.spark` (operators by default) is the umbrella
+permission. Per-command permissions are also available: `spark.profiler`,
+`spark.tps`, `spark.ping`, `spark.health`, `spark.activity`, and
+`spark.tickmonitor`.
 
 ### Viewing and reading a profile
 

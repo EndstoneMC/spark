@@ -16,6 +16,10 @@ public:
     virtual std::string getName() const = 0;
     virtual bool isPlayer() const = 0;
 
+    // Returns true if the sender has the given permission.
+    // Default returns true for non-platform contexts (e.g. tests).
+    virtual bool hasPermission(const std::string & /*name*/) const { return true; }
+
     template <typename... Args>
     void sendMessage(const std::string &fmt, Args &&...args)
     {

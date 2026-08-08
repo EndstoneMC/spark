@@ -58,6 +58,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pending live viewer client. Untrusted clients receive an UNTRUSTED connect
   response; trusted clients receive ACCEPTED and gain access to the live
   sampler data stream. Trusted public keys are persisted in `config.json`.
+- Add command aliases matching upstream spark: `sampler` for `profiler`, `cpu`
+  for `tps`, `healthreport` and `ht` for `health`, `activitylog` and `log` for
+  `activity`, `tickmonitoring` for `tickmonitor`.
+- Add per-command permissions (`spark.profiler`, `spark.tps`, `spark.ping`,
+  `spark.health`, `spark.activity`, `spark.tickmonitor`) in addition to the
+  umbrella `endstone.command.spark` permission.
 
 ### Fixed
 

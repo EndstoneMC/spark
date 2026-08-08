@@ -20,6 +20,7 @@ public:
 
     std::string getName() const override { return sender_.getName(); }
     bool isPlayer() const override { return sender_.asPlayer() != nullptr; }
+    bool hasPermission(const std::string &name) const override { return sender_.hasPermission(name); }
 
 private:
     void sendImpl(const std::string &message) override { sender_.sendMessage(message); }

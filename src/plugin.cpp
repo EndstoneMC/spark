@@ -147,12 +147,37 @@ ENDSTONE_PLUGIN("spark", "0.4.1", SparkPlugin)
 
     command("spark")
         .description("spark profiler")
-        .usages("/spark", "/spark (tps|ping|health|activity|tickmonitor)<module: SparkStatusModule>",
-                "/spark (profiler)<module: SparkProfilerModule> "
+        .usages("/spark",
+                "/spark (tps|cpu|ping|health|healthreport|ht|activity|activitylog|log|tickmonitor|tickmonitoring)<module: SparkStatusModule> [flags: message]",
+                "/spark (profiler|sampler)<module: SparkProfilerModule> "
                 "(start|stop|info|cancel|viewer|trust-viewer)[action: SparkProfilerAction] [flags: message]")
         .permissions("endstone.command.spark");
 
     permission("endstone.command.spark")
         .description("Allows use of the spark profiler")
+        .default_(endstone::PermissionDefault::Operator);
+
+    permission("spark.profiler")
+        .description("Allows use of /spark profiler")
+        .default_(endstone::PermissionDefault::Operator);
+
+    permission("spark.tps")
+        .description("Allows use of /spark tps")
+        .default_(endstone::PermissionDefault::Operator);
+
+    permission("spark.ping")
+        .description("Allows use of /spark ping")
+        .default_(endstone::PermissionDefault::Operator);
+
+    permission("spark.health")
+        .description("Allows use of /spark health")
+        .default_(endstone::PermissionDefault::Operator);
+
+    permission("spark.activity")
+        .description("Allows use of /spark activity")
+        .default_(endstone::PermissionDefault::Operator);
+
+    permission("spark.tickmonitor")
+        .description("Allows use of /spark tickmonitor")
         .default_(endstone::PermissionDefault::Operator);
 }

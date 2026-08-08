@@ -11,13 +11,14 @@
 namespace spark {
 
 // Registers spark subcommands and dispatches by alias.
-// Each command has a primary alias, a one-line description (for help text),
-// and a handler that receives the sender and parsed arguments.
+// Each command has one or more aliases (first is primary), a one-line
+// description (for help text), a permission node, and a handler.
 class CommandRegistry {
 public:
     using Handler = std::function<void(CommandSender &, const Arguments &)>;
 
-    void registerCommand(std::string alias, std::string description, Handler handler);
+    void registerCommand(std::vector<std::string> aliases, std::string description,
+                         std::string permission, Handler handler);
 
     // Returns true if a command matched and was executed.
     bool dispatch(CommandSender &sender, const std::vector<std::string> &tokens) const;
@@ -26,8 +27,9 @@ public:
 
 private:
     struct Entry {
-        std::string alias;
+        std::vector<std::string> aliases;
         std::string description;
+        std::string permission;
         Handler handler;
     };
     std::vector<Entry> commands_;
