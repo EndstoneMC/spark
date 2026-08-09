@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <queue>
@@ -41,6 +42,7 @@ public:
 private:
     friend struct WebSocketClientTestAccess;
 
+    bool startReceiveWorker();
     void runReceiveLoop();
 
     std::string channel_id_;
@@ -58,6 +60,8 @@ private:
 
     MessageCallback message_cb_;
     CloseCallback close_cb_;
+    std::string incoming_message_for_testing_;
+    std::atomic<std::uint64_t> *resource_cleanup_count_for_testing_ = nullptr;
 };
 
 }  // namespace spark

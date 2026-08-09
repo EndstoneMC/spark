@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <memory>
 
 #include <curl/curl.h>
 
@@ -13,6 +14,52 @@ namespace {
 struct CreateResponse {
     std::string data;
 };
+
+struct CurlEasyDeleter {
+    std::atomic<std::uint64_t> *cleanup_count = nullptr;
+
+    void operator()(CURL *curl) const
+    {
+        if (curl != nullptr) {
+            curl_easy_cleanup(curl);
+            if (cleanup_count != nullptr) {
+                cleanup_count->fetch_add(1, std::memory_order_release);
+            }
+        }
+    }
+};
+
+class CurlHeaderList {
+public:
+    explicit CurlHeaderList(std::atomic<std::uint64_t> *cleanup_count) : cleanup_count_(cleanup_count) {}
+    ~CurlHeaderList()
+    {
+        if (headers_ != nullptr) {
+            curl_slist_free_all(headers_);
+            if (cleanup_count_ != nullptr) {
+                cleanup_count_->fetch_add(1, std::memory_order_release);
+            }
+        }
+    }
+
+    CurlHeaderList(const CurlHeaderList &) = delete;
+    CurlHeaderList &operator=(const CurlHeaderList &) = delete;
+
+    void append(const char *value)
+    {
+        if (curl_slist *updated = curl_slist_append(headers_, value)) {
+            headers_ = updated;
+        }
+    }
+
+    [[nodiscard]] curl_slist *get() const { return headers_; }
+
+private:
+    curl_slist *headers_ = nullptr;
+    std::atomic<std::uint64_t> *cleanup_count_ = nullptr;
+};
+
+using CurlEasyPtr = std::unique_ptr<CURL, CurlEasyDeleter>;
 
 size_t writeCallback(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
@@ -95,17 +142,7 @@ std::string WebSocketClient::connect(const std::string &host, const std::string 
     // Step 2: Connect via WebSocket.
     local_close_requested_.store(false);
     running_.store(true);
-    try {
-        thread_ = std::thread([this] {
-            try {
-                runReceiveLoop();
-            }
-            catch (...) {
-                running_.store(false);
-            }
-        });
-    }
-    catch (...) {
+    if (!startReceiveWorker()) {
         running_.store(false);
         return {};
     }
@@ -118,6 +155,24 @@ std::string WebSocketClient::connect(const std::string &host, const std::string 
     }
 
     return channel_id_;
+}
+
+bool WebSocketClient::startReceiveWorker()
+{
+    try {
+        thread_ = std::thread([this] {
+            try {
+                runReceiveLoop();
+            }
+            catch (...) {
+                running_.store(false);
+            }
+        });
+    }
+    catch (...) {
+        return false;
+    }
+    return true;
 }
 
 void WebSocketClient::send(const std::string &message)
@@ -153,27 +208,29 @@ void WebSocketClient::close()
 
 void WebSocketClient::runReceiveLoop()
 {
-    CURL *curl = curl_easy_init();
+    CurlEasyPtr curl(curl_easy_init(), CurlEasyDeleter{resource_cleanup_count_for_testing_});
     if (!curl) {
         running_.store(false);
         return;
     }
 
     std::string ws_url = "wss://" + host_ + "/" + channel_id_;
-    struct curl_slist *headers = nullptr;
+    CurlHeaderList headers(resource_cleanup_count_for_testing_);
     if (!user_agent_.empty()) {
         std::string ua_header = "User-Agent: " + user_agent_;
-        headers = curl_slist_append(headers, ua_header.c_str());
+        headers.append(ua_header.c_str());
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL, ws_url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);  // WebSocket mode
+    curl_easy_setopt(curl.get(), CURLOPT_URL, ws_url.c_str());
+    curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers.get());
+    curl_easy_setopt(curl.get(), CURLOPT_CONNECT_ONLY, 2L);  // WebSocket mode
 
-    CURLcode rc = curl_easy_perform(curl);
+    if (!incoming_message_for_testing_.empty() && message_cb_) {
+        message_cb_(incoming_message_for_testing_);
+    }
+
+    CURLcode rc = curl_easy_perform(curl.get());
     if (rc != CURLE_OK) {
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
         running_.store(false);
         return;
     }
@@ -194,7 +251,7 @@ void WebSocketClient::runReceiveLoop()
             while (!to_send.empty()) {
                 const auto &msg = to_send.front();
                 size_t sent = 0;
-                curl_ws_send(curl, msg.data(), msg.size(), &sent, 0, CURLWS_TEXT);
+                curl_ws_send(curl.get(), msg.data(), msg.size(), &sent, 0, CURLWS_TEXT);
                 to_send.pop();
             }
         }
@@ -202,7 +259,7 @@ void WebSocketClient::runReceiveLoop()
         // Try to receive.
         size_t recv = 0;
         const struct curl_ws_frame *frame = nullptr;
-        CURLcode r = curl_ws_recv(curl, recv_buf, sizeof(recv_buf), &recv, &frame);
+        CURLcode r = curl_ws_recv(curl.get(), recv_buf, sizeof(recv_buf), &recv, &frame);
         if (r == CURLE_OK && recv > 0 && frame) {
             pending_recv.append(recv_buf, recv);
             if (frame->bytesleft == 0) {
@@ -227,11 +284,9 @@ void WebSocketClient::runReceiveLoop()
     if (local_close_requested_.exchange(false)) {
         size_t sent = 0;
         const char *close_msg = "";
-        curl_ws_send(curl, close_msg, 0, &sent, 0, CURLWS_CLOSE);
+        curl_ws_send(curl.get(), close_msg, 0, &sent, 0, CURLWS_CLOSE);
     }
 
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
     running_.store(false);
 }
 
