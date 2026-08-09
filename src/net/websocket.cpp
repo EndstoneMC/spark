@@ -93,8 +93,22 @@ std::string WebSocketClient::connect(const std::string &host, const std::string 
     }
 
     // Step 2: Connect via WebSocket.
+    local_close_requested_.store(false);
     running_.store(true);
-    thread_ = std::thread(&WebSocketClient::runReceiveLoop, this);
+    try {
+        thread_ = std::thread([this] {
+            try {
+                runReceiveLoop();
+            }
+            catch (...) {
+                running_.store(false);
+            }
+        });
+    }
+    catch (...) {
+        running_.store(false);
+        return {};
+    }
 
     // Give the connection a brief moment to establish.
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -121,7 +135,13 @@ void WebSocketClient::send(const std::string &message)
 
 void WebSocketClient::close()
 {
+    if (running_.load()) {
+        local_close_requested_.store(true);
+    }
     const bool was_running = running_.exchange(false);
+    if (!was_running) {
+        local_close_requested_.store(false);
+    }
     send_cv_.notify_all();
     if (thread_.joinable() && thread_.get_id() != std::this_thread::get_id()) {
         thread_.join();
@@ -204,8 +224,7 @@ void WebSocketClient::runReceiveLoop()
         }
     }
 
-    // Send close frame.
-    if (running_.load()) {
+    if (local_close_requested_.exchange(false)) {
         size_t sent = 0;
         const char *close_msg = "";
         curl_ws_send(curl, close_msg, 0, &sent, 0, CURLWS_CLOSE);

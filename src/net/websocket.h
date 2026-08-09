@@ -48,6 +48,7 @@ private:
     std::string user_agent_;
 
     std::atomic<bool> running_{false};
+    std::atomic<bool> local_close_requested_{false};
     std::thread thread_;
 
     std::mutex send_mutex_;
