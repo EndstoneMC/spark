@@ -163,6 +163,48 @@ void test_validation()
     std::printf("  [PASS] validation\n");
 }
 
+void test_endpoint_validation()
+{
+    auto dir = tempDir();
+    auto path = dir / "endpoint_validation.toml";
+    const std::vector<std::string> valid = {
+        "viewerUrl = \"http://localhost:8080/viewer\"\n",
+        "bytebinUrl = \"https://10.0.0.8:8443/content/\"\n",
+        "bytesocksHost = \"localhost:9443\"\n",
+    };
+    for (const auto &text : valid) {
+        writeFile(path, text);
+        SparkConfig config(path);
+        assert(config.load());
+    }
+
+    const std::vector<std::string> invalid = {
+        "viewerUrl = \"ftp://viewer.example.com/\"\n",
+        "viewerUrl = \"https:///missing-host\"\n",
+        "viewerUrl = \"https://user@example.com/\"\n",
+        "viewerUrl = \"https://viewer.example.com/?token=value\"\n",
+        "bytebinUrl = \"https://upload.example.com/\npath\"\n",
+        "bytesocksHost = \"relay.example.com/path\"\n",
+        "bytesocksHost = \"relay.example.com:invalid\"\n",
+        "bytesocksHost = \"relay.example.com 443\"\n",
+    };
+    for (const auto &text : invalid) {
+        writeFile(path, text);
+        const std::string &original = text;
+        SparkConfig config(path);
+        const bool loaded = config.loadOrCreate();
+        if (loaded) {
+            std::fprintf(stderr, "accepted invalid endpoint: %s", text.c_str());
+        }
+        assert(!loaded);
+        std::ifstream in(path, std::ios::binary);
+        const std::string preserved((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        assert(preserved == original);
+        assert(config.viewer_url == "https://spark.lucko.me/");
+    }
+    std::printf("  [PASS] endpoint validation\n");
+}
+
 void test_toml_unknown_field()
 {
     auto dir = tempDir();
@@ -301,6 +343,7 @@ int main()
     test_toml_wrong_type();
     test_bootstrap_preserves_invalid_file();
     test_validation();
+    test_endpoint_validation();
     test_toml_unknown_field();
     test_toml_partial();
     test_save_creates_toml();

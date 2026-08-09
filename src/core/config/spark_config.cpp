@@ -1,5 +1,6 @@
 #include "core/config/spark_config.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <limits>
@@ -8,11 +9,68 @@
 #include <toml.hpp>
 #include <type_traits>
 
+#include <curl/curl.h>
+
 namespace spark {
 
 namespace {
 
 constexpr std::int64_t KMaxBackgroundProfilerIntervalMs = 1000;
+
+bool hasInvalidEndpointCharacters(std::string_view value)
+{
+    return std::ranges::any_of(value, [](unsigned char ch) { return ch <= 0x20 || ch == 0x7f; });
+}
+
+bool hasUrlPart(CURLU *url, CURLUPart part)
+{
+    char *value = nullptr;
+    const CURLUcode result = curl_url_get(url, part, &value, 0);
+    if (value != nullptr) {
+        curl_free(value);
+    }
+    return result == CURLUE_OK;
+}
+
+bool validHttpBaseUrl(std::string_view value)
+{
+    if (value.empty() || hasInvalidEndpointCharacters(value)) {
+        return false;
+    }
+    const auto scheme_end = value.find("://");
+    if (scheme_end == std::string_view::npos || scheme_end + 3 >= value.size() || value[scheme_end + 3] == '/') {
+        return false;
+    }
+    CURLU *url = curl_url();
+    if (url == nullptr) {
+        return false;
+    }
+    const std::string text(value);
+    const CURLUcode parsed = curl_url_set(url, CURLUPART_URL, text.c_str(), 0);
+    char *scheme = nullptr;
+    char *host = nullptr;
+    const bool valid = parsed == CURLUE_OK && curl_url_get(url, CURLUPART_SCHEME, &scheme, 0) == CURLUE_OK &&
+                       curl_url_get(url, CURLUPART_HOST, &host, 0) == CURLUE_OK && host != nullptr && host[0] != '\0' &&
+                       (std::string_view(scheme) == "http" || std::string_view(scheme) == "https") &&
+                       !hasUrlPart(url, CURLUPART_USER) && !hasUrlPart(url, CURLUPART_PASSWORD) &&
+                       !hasUrlPart(url, CURLUPART_QUERY) && !hasUrlPart(url, CURLUPART_FRAGMENT);
+    if (scheme != nullptr) {
+        curl_free(scheme);
+    }
+    if (host != nullptr) {
+        curl_free(host);
+    }
+    curl_url_cleanup(url);
+    return valid;
+}
+
+bool validWebSocketAuthority(std::string_view value)
+{
+    if (value.empty() || hasInvalidEndpointCharacters(value) || value.find_first_of("/?#@") != std::string_view::npos) {
+        return false;
+    }
+    return validHttpBaseUrl("https://" + std::string(value) + "/");
+}
 
 std::string escapeString(std::string_view s)
 {
@@ -111,8 +169,8 @@ bool SparkConfig::load()
         last_error_ = "Invalid type for a spark configuration value - using defaults";
         return false;
     }
-    if (viewer_url.empty() || bytebin_url.empty() || bytesocks_host.empty()) {
-        last_error_ = "Spark endpoint values must not be empty - using defaults";
+    if (!validHttpBaseUrl(viewer_url) || !validHttpBaseUrl(bytebin_url) || !validWebSocketAuthority(bytesocks_host)) {
+        last_error_ = "Invalid Spark network endpoint - using defaults";
         return false;
     }
     if (interval < 1 || interval > KMaxBackgroundProfilerIntervalMs || interval > std::numeric_limits<int>::max()) {
@@ -128,6 +186,12 @@ bool SparkConfig::load()
         return false;
     }
 
+    if (viewer_url.back() != '/') {
+        viewer_url.push_back('/');
+    }
+    if (bytebin_url.back() != '/') {
+        bytebin_url.push_back('/');
+    }
     this->viewer_url = std::move(viewer_url);
     this->bytebin_url = std::move(bytebin_url);
     this->bytesocks_host = std::move(bytesocks_host);
