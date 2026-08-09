@@ -2566,19 +2566,28 @@ bool verifyAllocationThreadSelection()
     spark::AllocationSamplerConfig retained = exact;
     retained.live_only = true;
     retained.thread_patterns = {"spark-live-src"};
+    std::atomic<std::uint64_t> observed_identities{0};
+    retained.observed_thread_identities_for_testing = &observed_identities;
     if (!sampler.start(retained, error)) {
         std::fprintf(stderr, "allocation thread selection: live-only start failed: %s\n", error.c_str());
         return false;
     }
     std::atomic<void *> retained_pointer{nullptr};
     std::atomic<void *> released_pointer{nullptr};
+    std::atomic<bool> identity_observed{false};
     std::thread allocator([&] {
         setCurrentThreadName("spark-live-src");
         retained_pointer.store(std::malloc(8192), std::memory_order_release);
         released_pointer.store(std::malloc(4096), std::memory_order_release);
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        identity_observed.store(waitForCondition(
+            [&] { return observed_identities.load(std::memory_order_acquire) != 0; }, std::chrono::seconds(2)));
     });
     allocator.join();
+    if (!identity_observed.load(std::memory_order_acquire)) {
+        std::fprintf(stderr, "allocation thread selection: aggregator did not observe the live allocator thread\n");
+        sampler.stop(error);
+        return false;
+    }
     std::thread releaser([&] {
         setCurrentThreadName("spark-live-free");
         void *pointer = released_pointer.load(std::memory_order_acquire);

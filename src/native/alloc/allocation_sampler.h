@@ -1,6 +1,7 @@
 #ifndef ENDSTONE_SPARK_ALLOCATION_SAMPLER_H
 #define ENDSTONE_SPARK_ALLOCATION_SAMPLER_H
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -32,6 +33,7 @@ struct AllocationSamplerConfig {
     std::uint32_t aggregator_delay_ms_for_testing = 0;
     std::uint32_t thread_state_limit_for_testing = 0;
     bool force_live_lock_contention_for_testing = false;
+    std::atomic<std::uint64_t> *observed_thread_identities_for_testing = nullptr;
 };
 
 enum class AllocationHookStatus {

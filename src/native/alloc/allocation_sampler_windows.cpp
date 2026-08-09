@@ -2180,7 +2180,10 @@ struct AllocationSampler::Impl {
     void processEvent(AllocationEvent *event)
     {
         if (event->thread_observation) {
-            thread_filter.resolve(event->thread_id, event->os_thread_id);
+            const AllocationThreadSelection selection = thread_filter.resolve(event->thread_id, event->os_thread_id);
+            if (selection.selected && config.observed_thread_identities_for_testing != nullptr) {
+                config.observed_thread_identities_for_testing->fetch_add(1, std::memory_order_release);
+            }
             return;
         }
         Sample sample;
