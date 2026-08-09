@@ -728,8 +728,7 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
         else {
             notifier_.notify(sender_name, "Profiler stop failed: " + stop_error);
         }
-        // The export thread will not run, so restore the background profiler
-        // here instead of leaving it permanently stopped.
+        // Restore the background profiler when export cannot start.
         background_started_ = false;
         if (restart_background_after_export_) {
             restart_background_after_export_ = false;

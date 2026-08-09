@@ -83,9 +83,7 @@ bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
 
         HANDLE process = GetCurrentProcess();
         std::size_t n = 0;
-        // The suspended CONTEXT is already a valid sample. Keep its instruction
-        // pointer even when StackWalk64 cannot unwind a caller (for example in
-        // optimized system/runtime code without usable unwind metadata).
+        // Keep the suspended instruction pointer when caller unwinding fails.
         if (context.Rip != 0) {
             out.ips[n++] = static_cast<cpptrace::frame_ptr>(context.Rip);
         }

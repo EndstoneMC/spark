@@ -12,10 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatically recover profiling data after a BDS crash or forced process
   termination. During execution and allocation profiling sessions (including the
   background profiler), samples are written to a crash-safe recovery journal under
-  `plugins/spark/profiles/recovery/`. On the next startup, the journal is replayed
-  into a complete `.sparkprofile` file saved under `plugins/spark/profiles/`, and
-  the recovery directory is cleaned for the new session. Both Windows and Linux
-  are supported.
+  `plugins/spark/profiles/recovery/`. On the next startup, an unclean supported
+  session is replayed into a `.sparkprofile` file under `plugins/spark/profiles/`.
+  The recovery directory is cleaned after a successful save. Both Windows and
+  Linux are supported.
 - Detect main-thread stalls with an independent watchdog thread that monitors a
   monotonic heartbeat updated every tick. When the server thread stops ticking for
   more than 5 seconds, stall begin/end events are recorded in the recovery journal
@@ -86,9 +86,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tick-distance, compression settings, etc.) in profile metadata via
   `SamplerMetadata.server_configurations` using a strict whitelist that excludes
   level-seed, passcodes, and any credential-like fields.
-- Migrate configuration file format from JSON to TOML with explanatory comments.
-  `config.toml` is user-owned and never rewritten at runtime; trusted viewer keys
-  are stored separately in `trusted-viewers.json`.
 - Pretty-print `activity.json` with 2-space indentation for readability.
 
 ### Fixed
@@ -178,8 +175,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SHA256withRSA signing, and signature verification. Windows builds no longer
   depend on or compile OpenSSL; Linux continues to use OpenSSL.
 - Implement `disableResponseBroadcast` config option: when false (default),
-  profiler and health responses are broadcast to all online operators with
-  spark permission; when true, only the command sender receives the response.
+  result notifications are broadcast to online players with spark permission;
+  when true, only the command sender receives the response.
 - **BREAKING**: Include sleeping threads in execution profiles by default,
   replacing `--include-sleeping` with `--ignore-sleeping` to opt out.
 - Group sampled threads by pool name by default (matching upstream spark's

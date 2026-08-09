@@ -119,9 +119,7 @@ public:
     const Heartbeat &samplerHeartbeat() const { return sampler_.samplerHeartbeat(); }
     const Heartbeat &aggregatorHeartbeat() const { return sampler_.aggregatorHeartbeat(); }
 
-    // Sets the directory for crash-safe recovery journals.  Must be called
-    // before start().  When set, an execution profiling session creates a
-    // RecoveryWriter that journals module/thread/sample/tick records.
+    // Sets the recovery journal directory before start().
     void setRecoveryDirectory(std::filesystem::path dir) { recovery_dir_ = std::move(dir); }
 
     void journalStallBegin(std::uint64_t detected_ns, std::uint64_t last_tick_ns);

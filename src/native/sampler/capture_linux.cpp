@@ -110,8 +110,7 @@ bool Capture::arm()
         return false;
     }
 
-    // Warm up the safe path so the first real sample doesn't fault in lazy loader
-    // state inside the handler.
+    // Warm the safe path before the first signal-handler capture.
     cpptrace::frame_ptr warm[8];
     std::size_t n = cpptrace::safe_generate_raw_trace(warm, 8);
     if (n > 0) {

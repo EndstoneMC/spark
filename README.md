@@ -73,7 +73,7 @@ Conflicting or unsafe evidence is omitted rather than displayed as tentative.
 
 Profiles may contain one root per selected native thread. Execution-profile
 weights are elapsed sampled microseconds; allocation-profile weights are sampled
-requested bytes. The metadata pages report the BDS hash and version, loaded
+requested bytes. The metadata pages report the available BDS hash and version, loaded
 plugins, configured interval and filters, TPS/MSPT/CPU windows, and any sampling,
 queue, unwind, or allocation-hook drops that make a profile incomplete.
 
@@ -201,9 +201,9 @@ final output.
   frames use evidence-tagged guesses recovered from PE exception data, MSVC RTTI,
   vtables, thunks, and decoded string references. A failed caller unwind therefore
   shortens the sample instead of discarding it.
-* Samples aggregate into per-thread call trees, serialize to spark's protobuf,
-  gzip, and either upload to bytebin or write a local `.sparkprofile` file under
-  `plugins/spark/profiles/`.
+* Samples aggregate into per-thread call trees and serialize to spark's protobuf.
+  Bytebin uploads are gzip-compressed; local `.sparkprofile` files under
+  `plugins/spark/profiles/` contain raw protobuf.
   Symbolization and output processing run on a background thread so the server
   tick never stalls.
   Execution samples use the measured elapsed time between sampling points, excluding
@@ -219,9 +219,9 @@ final output.
   Per-second windows include exact time bounds, tick count/rate, MSPT median/max,
   CPU, the latest low-cost player count, and rolling entity/chunk gauges maintained
   from platform events and bounded reconciliation without a per-second world scan.
-* Every profile includes the SHA-256 of the running BDS executable, allowing an
-  offline analyst to select the exact matching binary without receiving the
-  server owner's executable, paths, configuration, or world data.
+* Profiles include the SHA-256 of the running BDS executable when available,
+  allowing an offline analyst to select the exact matching binary without
+  receiving the executable contents.
 
 ### Native allocation profiler
 
@@ -290,11 +290,12 @@ segmented journal file under `plugins/spark/profiles/recovery/`. The journal
 uses CRC32-validated records (via zlib) so that a truncated tail from an
 unclean shutdown is recoverable up to the last complete record.
 
-On the next plugin startup, spark checks for an existing recovery journal. If
-one is found, it replays the journal into a call tree, runs normal
-symbolization, and saves a `.sparkprofile` file under
-`plugins/spark/profiles/`. The recovery directory is then cleaned for the new
-session. A message is printed to the console with the saved file path.
+On the next plugin startup, spark replays an unclean supported session into a
+call tree, runs normal symbolization, and saves a `.sparkprofile` file under
+`plugins/spark/profiles/`. Cleanly ended sessions are discarded, and allocation
+live-only sessions are not recovered because the journal lacks free/realloc
+lifecycle state. The journal is removed after a successful save and retained if
+the save fails.
 
 A separate watchdog thread monitors a monotonic heartbeat updated every server
 tick. If the main thread stops ticking for more than 5 seconds, stall
@@ -306,20 +307,21 @@ the profiler, ensuring that stall evidence is preserved for diagnosis.
 
 Spark reads a `config.toml` file from the plugin data directory on startup. If the
 file does not exist, spark writes one with default values and explanatory comments.
-The file is user-owned: spark never rewrites it during normal operation. Missing or
-invalid fields make Spark report the configuration error and use defaults for that
-startup, while preserving the file byte-for-byte. Unknown fields are silently ignored.
+The file is user-owned: spark never rewrites it during normal operation. Missing
+fields use their defaults. Any invalid value makes Spark report the configuration
+error and use all defaults for that startup while preserving the file byte-for-byte.
+Unknown fields are silently ignored.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `viewerUrl` | string | `"https://spark.lucko.me/"` | Base URL for the spark viewer. |
-| `bytebinUrl` | string | `"https://spark-usercontent.lucko.me/"` | Bytebin upload endpoint for profiles and health reports. |
-| `bytesocksHost` | string | `"spark-usersockets.lucko.me"` | WebSocket host for the live viewer. |
+| `viewerUrl` | string | `"https://spark.lucko.me/"` | HTTP(S) base URL for the spark viewer. |
+| `bytebinUrl` | string | `"https://spark-usercontent.lucko.me/"` | HTTP(S) bytebin endpoint for profiles and health reports. |
+| `bytesocksHost` | string | `"spark-usersockets.lucko.me"` | Live-viewer WebSocket host with an optional port, but no scheme or path. |
 | `backgroundProfiler` | bool | `true` | Whether to auto-start a background execution profiler. |
-| `backgroundProfilerInterval` | int | `10` | Background profiler sampling interval in milliseconds. |
+| `backgroundProfilerInterval` | int | `10` | Background sampling interval in milliseconds (`1`-`1000`). |
 | `backgroundProfilerThreadGrouper` | string | `"by-pool"` | Thread grouping mode: `by-pool`, `by-name`, or `as-one`. |
 | `backgroundProfilerThreadDumper` | string | `"default"` | Thread selection: `default` (server thread) or `all`. |
-| `disableResponseBroadcast` | bool | `false` | Disable broadcasting profiler responses to all operators. |
+| `disableResponseBroadcast` | bool | `false` | Restrict result notifications to the originating player. |
 
 Trusted viewer public keys are stored separately in `trusted-viewers.json` (a
 JSON array of base64-encoded X.509 keys). The `trust-viewer` command appends to

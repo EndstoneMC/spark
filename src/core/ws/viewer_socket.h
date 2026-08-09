@@ -37,9 +37,7 @@ public:
     // Returns the viewer URL on success, or empty string on failure.
     std::string open(const UploadCallback &upload);
 
-    // Called on window rotation: upload new data and send the payload ID.
-    // The upload callback runs on the caller's thread.  For the main-thread
-    // path, prefer enqueueUpdate() + sendUpdate() to move I/O off-thread.
+    // Uploads on the caller's thread and sends the new payload ID.
     void processWindowRotate(const UploadCallback &upload);
 
     // Send a pre-uploaded payload ID to all connected viewers.  Thread-safe

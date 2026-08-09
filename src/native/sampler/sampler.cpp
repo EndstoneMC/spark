@@ -22,8 +22,7 @@
 namespace spark {
 
 namespace {
-// Leading frames to discard. Linux drops the SIGPROF handler and signal-return trampoline;
-// Windows StackWalk64 reads the real context so nothing is dropped.
+// Linux drops the signal handler and return trampoline; Windows drops nothing.
 #ifdef _WIN32
 constexpr std::size_t KLeadingDrop = 0;
 #else
@@ -155,7 +154,7 @@ void Sampler::pauseForExport()
     if (aggregator_thread_.joinable()) {
         aggregator_thread_.join();
     }
-    // Intentionally do NOT disarm Capture or reset session data.
+    // Keep capture armed and session data intact for resume.
 }
 
 bool Sampler::resumeAfterExport()
@@ -163,8 +162,6 @@ bool Sampler::resumeAfterExport()
     if (running_.load()) {
         return true;
     }
-    // Capture backend is still armed from the original start(); session data
-    // (tree, thread_trees, modules, start_time_) is preserved.
     if (!startServiceThreads()) {
         last_error_ = "the sampler service threads could not be resumed";
         return false;
@@ -365,8 +362,7 @@ void Sampler::samplerLoop()
             if (sample.frames.empty()) {
                 break;
             }
-            // Drop inter-tick and worker wait states so they don't swamp a
-            // wall-clock profile when sleeping threads are excluded.
+            // Exclude wait states when sleeping threads are ignored.
             if (config_.ignore_sleeping && isSleepFrame(sample.frames.front().raw_address)) {
                 break;
             }

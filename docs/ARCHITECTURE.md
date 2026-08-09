@@ -1,6 +1,6 @@
 # Architecture
 
-Endstone Spark is a native statistical profiler for Minecraft Bedrock Dedicated Server (BDS). It samples native execution and allocation call stacks, aggregates them into spark-compatible profiles, and uploads or saves them. The plugin also maintains a 15-minute rolling statistics history for TPS, MSPT, CPU, and system resources.
+Endstone Spark is a native statistical profiler for Minecraft Bedrock Dedicated Server (BDS). It samples native execution and allocation call stacks, aggregates them into spark-compatible profiles, and uploads or saves them. The plugin also maintains a 15-minute rolling history for TPS, MSPT, CPU, player counts, and world gauges.
 
 ## Source Tree
 
@@ -76,7 +76,7 @@ platform/endstone -> application -> core -> native -> (external libs)
 
 ### Execution Sampler (`native/sampler/`)
 
-Captures native thread stacks at a bounded interval. Linux uses `SIGPROF` with cpptrace's safe raw-trace path; Windows suspends the target thread and walks it with `StackWalk64`. Samples are enqueued to a lock-free bounded queue and aggregated on a background thread.
+Captures native thread stacks at a bounded interval. Linux uses `SIGPROF` with cpptrace's safe raw-trace path; Windows suspends the target thread and walks it with `StackWalk64`. Samples are enqueued to a lock-free queue and aggregated on a background thread.
 
 ### Allocation Profiler (`native/alloc/`)
 
@@ -92,7 +92,7 @@ Maintains bounded rolling TPS, MSPT, CPU, player-count, and world-gauge historie
 
 ### Crash Recovery (`core/recovery/`)
 
-`RecoveryWriter` journals module, thread, sample, and tick records to segmented files via a bounded lock-free queue. `StallWatchdog` monitors the main-thread heartbeat on an independent thread and triggers recovery on stall. On startup, `RecoveryPlayer` replays the journal to reconstruct and export a profile from a crashed or stalled session.
+`RecoveryWriter` journals module, thread, sample, and tick records to segmented files via a bounded lock-free queue. `StallWatchdog` monitors the main-thread heartbeat on an independent thread and journals stall begin/end events. On startup, `RecoveryPlayer` replays an unclean supported session and exports a recovered profile.
 
 ### Live Viewer (`core/ws/`)
 

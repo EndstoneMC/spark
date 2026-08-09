@@ -220,28 +220,28 @@ void SparkConfig::writeTemplate(std::ostream &out) const
     out << "# spark configuration file\n";
     out << "# https://spark.lucko.me/docs/Configuration\n";
     out << "\n";
-    out << "# URL of the spark viewer\n";
+    out << "# HTTP(S) base URL of the spark viewer\n";
     out << "viewerUrl = \"" << escapeString(viewer_url) << "\"\n";
     out << "\n";
-    out << "# URL of the bytebin upload endpoint\n";
+    out << "# HTTP(S) bytebin upload endpoint\n";
     out << "bytebinUrl = \"" << escapeString(bytebin_url) << "\"\n";
     out << "\n";
-    out << "# Host of the bytesocks websocket\n";
+    out << "# Bytesocks host[:port] without a scheme or path\n";
     out << "bytesocksHost = \"" << escapeString(bytesocks_host) << "\"\n";
     out << "\n";
     out << "# Whether the background profiler should run\n";
     out << "backgroundProfiler = " << (background_profiler_enabled ? "true" : "false") << "\n";
     out << "\n";
-    out << "# Background profiler sampling interval in milliseconds\n";
+    out << "# Background sampling interval in milliseconds (1-1000)\n";
     out << "backgroundProfilerInterval = " << background_profiler_interval << "\n";
     out << "\n";
-    out << "# Thread grouping strategy for the background profiler\n";
+    out << "# Thread grouping: by-pool, by-name, or as-one\n";
     out << "backgroundProfilerThreadGrouper = \"" << escapeString(background_profiler_thread_grouper) << "\"\n";
     out << "\n";
-    out << "# Thread dumper for the background profiler\n";
+    out << "# Thread selection: default or all\n";
     out << "backgroundProfilerThreadDumper = \"" << escapeString(background_profiler_thread_dumper) << "\"\n";
     out << "\n";
-    out << "# Disable broadcasting profiler results to all players\n";
+    out << "# Restrict result notifications to the originating player\n";
     out << "disableResponseBroadcast = " << (disable_response_broadcast ? "true" : "false") << "\n";
 }
 

@@ -1081,9 +1081,7 @@ struct AllocationSampler::Impl {
             restoreDetachedAllocation(previous);
         }
         if (new_pointer != nullptr && requested_size != 0) {
-            // Allocation mode measures successful allocation requests. This avoids
-            // an extra _msize heap query on every sample-path allocation and matches
-            // the profiler's pressure-oriented semantics better than usable size.
+            // Allocation weights use successful requested bytes, not usable heap size.
             recordAllocation(new_pointer, static_cast<std::uint64_t>(requested_size));
         }
         return new_pointer;
@@ -1385,8 +1383,7 @@ struct AllocationSampler::Impl {
         ::ReleaseSRWLockExclusive(&live_index_locks[shard]);
 
         if (replaced != nullptr) {
-            // Reuse proves that the previous allocation ended even when its
-            // deallocation bypassed the covered free entry points.
+            // Pointer reuse retires lifecycle records missed by covered frees.
             retireAllocation(replaced, monotonicMs());
         }
         return inserted;
@@ -1435,9 +1432,7 @@ struct AllocationSampler::Impl {
         }
         sampling_points.fetch_add(sample_points, std::memory_order_relaxed);
 
-        // Each sampling point represents one configured interval. Unlike the old
-        // accumulated-byte scheme, bytes from preceding allocations are not
-        // attributed to the allocation that happens to cross the threshold.
+        // Each sampling point contributes one configured interval.
         const std::uint64_t weight = saturatingMultiply(sample_points, interval);
 
         PSLIST_ENTRY live_entry = ::InterlockedPopEntrySList(&free_live_allocations);
@@ -2560,9 +2555,7 @@ AllocationSampler::~AllocationSampler()
     if (!error.empty()) {
         std::fprintf(stderr, "[spark] allocation sampler shutdown failed: %s\n", error.c_str());
     }
-    // Unloading this DLL with an unproven hook/trampoline state is never safe.
-    // Do not pin or leak old plugin code: fail closed so the process cannot
-    // continue into a reload with stale allocator entry points.
+    // Unsafe hook state cannot survive plugin unload.
     std::abort();
 }
 

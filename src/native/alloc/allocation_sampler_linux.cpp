@@ -878,8 +878,7 @@ struct AllocationSampler::Impl {
         ::pthread_rwlock_unlock(&live_index_locks[shard]);
 
         if (replaced != nullptr) {
-            // Reuse proves that the previous allocation ended even when its
-            // deallocation bypassed a patched import slot.
+            // Pointer reuse retires lifecycle records missed by patched imports.
             retireAllocation(replaced, monotonicMs());
         }
         return inserted;
@@ -1011,9 +1010,7 @@ struct AllocationSampler::Impl {
     bool resolveAllocator(const char *name, Function &function, bool required, std::string &error)
     {
         ::dlerror();
-        // Resolve the process-wide effective allocator before import slots are
-        // patched. RTLD_DEFAULT preserves LD_PRELOAD interposition instead of
-        // forcing allocations into libc and potentially mixing allocator domains.
+        // Preserve LD_PRELOAD interposition when resolving the effective allocator.
         function = reinterpret_cast<Function>(::dlsym(RTLD_DEFAULT, name));
         const char *failure = ::dlerror();
         if (function == nullptr && required) {
