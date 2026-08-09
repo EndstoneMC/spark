@@ -105,10 +105,9 @@ public:
     void requestStop() { sampling_stop_requested_.store(true, std::memory_order_release); }
     std::string exportData(const ExportContext &ctx) const;
 
-    // Export while the profiler is still running. Pauses sampler threads,
-    // serializes, then resumes. Returns empty string if not running or
-    // if the allocation sampler is active (live export not supported there).
+    // Export while the profiler is still running.
     std::string liveExport(const ExportContext &ctx);
+    bool setCurrentThreadAllocationTrackingSuppressed(bool suppressed) noexcept;
 
     // Convenience (used by the self-test): stopSampling() + exportData().
     std::string stop(const ExportContext &ctx);
@@ -135,6 +134,7 @@ private:
     const CallTree &activeTree() const;
     const ModuleTable &activeModules() const;
     std::uint64_t activeNumberOfTicks() const;
+    std::string exportData(const ExportContext &ctx, const AllocationSnapshot *allocation_snapshot) const;
     void stopRecoveryWriter();
 
     Sampler sampler_;

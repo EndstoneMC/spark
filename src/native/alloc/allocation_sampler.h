@@ -64,6 +64,17 @@ struct AllocationHookCapability {
     std::string detail;
 };
 
+struct AllocationSnapshot {
+    CallTree tree;
+    std::map<std::uint64_t, ThreadCallTree> thread_trees;
+    ModuleTable modules{};
+    std::uint64_t number_of_ticks = 0;
+    std::uint64_t sample_count = 0;
+    std::uint64_t sampled_bytes = 0;
+    std::uint64_t retained_average_age_ms = 0;
+    std::uint64_t retained_maximum_age_ms = 0;
+};
+
 // Native allocation sampler. Tree weights are allocation bytes; lifecycle tracking
 // spans all covered threads so realloc/free may occur on a different thread.
 class AllocationSampler {
@@ -86,6 +97,9 @@ public:
     bool shutdown(std::string &error);
 
     void onTick(double mspt_ms);
+
+    bool snapshot(AllocationSnapshot &snapshot, std::string &error);
+    bool setCurrentThreadTrackingSuppressed(bool suppressed) noexcept;
 
     // Sets the recovery sink for crash-safe journaling.  Must be called
     // before start().  All RecoverySink methods are non-blocking.

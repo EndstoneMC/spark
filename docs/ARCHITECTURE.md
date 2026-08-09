@@ -80,7 +80,7 @@ Captures native thread stacks at a bounded interval. Linux uses `SIGPROF` with c
 
 ### Allocation Profiler (`native/alloc/`)
 
-Samples allocation stacks by requested bytes. Windows uses funchook for supported UCRT and heap entry points; Linux redirects supported ELF allocator imports. Hook callbacks enqueue bounded records for later processing. The hook path is free of allocations, string construction, and unbounded containers.
+Samples allocation stacks by requested bytes. Windows uses funchook for supported UCRT and heap entry points; Linux redirects supported ELF allocator imports. Hook callbacks enqueue bounded records for later processing. Live exports deep-copy cumulative aggregator state or rebuild a temporary retained tree from the authoritative live index without stopping hooks. The hook path is free of allocations, string construction, and unbounded containers.
 
 ### Symbol Guesser (`native/symbol/`)
 

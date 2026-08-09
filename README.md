@@ -126,13 +126,15 @@ Run the command again to disable the monitor.
 
 ### Live viewer
 
-`/spark profiler open` opens a real-time spark viewer while an execution
-profiler is running. It connects to the spark WebSocket relay, uploads sampler
-data every 10 seconds, and displays the viewer URL in chat. The viewer stays
-live until the profiler is stopped, cancelled, or times out. Allocation profiles
-do not support the live viewer. Relay connection, compression, and uploads run
-asynchronously; command completion and failures are reported back on the server
-thread without waiting for a network timeout.
+`/spark profiler open` opens a real-time spark viewer while an execution or
+allocation profiler is running. It connects to the spark WebSocket relay,
+uploads sampler data every 10 seconds, and displays the viewer URL in chat. A
+normal `--alloc` viewer is cumulative from session start; an
+`--alloc-live-only` viewer shows sampled allocations retained at each update.
+The viewer stays live until the profiler is stopped, cancelled, or times out.
+Relay connection, compression, and uploads run asynchronously; command
+completion and failures are reported back on the server thread without waiting
+for a network timeout.
 
 When the automatic background profiler is enabled, a valid foreground start
 pauses it. An invalid start leaves it running. Explicitly stopping and exporting
@@ -177,8 +179,8 @@ response with access to the data stream.
   (Linux task state or Windows per-thread CPU cycle deltas). Without this flag,
   sleeping threads are included in the sample set.
 * `--alloc` — record sampled native allocation call stacks instead of execution time.
-* `--alloc-live-only` — record only sampled allocations retained at stop for leak
-  analysis; this implies `--alloc`.
+* `--alloc-live-only` — record only sampled allocations currently retained for
+  leak analysis; this implies `--alloc`.
 
 Multi-thread execution profiles treat the interval as a global stack-walk budget and
 rotate fairly through matching threads. `/spark profiler stop` also accepts
@@ -244,9 +246,10 @@ created by a selected thread.
 
 `--alloc-live-only` follows sampled allocations through realloc and free calls,
 including releases from other threads, and reports only allocations still live
-when profiling stops. It is intended to identify retained-memory and leak
-candidates; repeated profiles are needed to distinguish growth from legitimate
-long-lived state.
+at export time. This applies to each Live Viewer update and the final stopped
+profile. It is intended to identify retained-memory and leak candidates;
+repeated profiles are needed to distinguish growth from legitimate long-lived
+state.
 
 Windows intercepts process-wide UCRT and process-heap entry points with funchook.
 Linux atomically redirects supported allocator relocations in the main executable

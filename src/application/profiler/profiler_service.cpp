@@ -238,6 +238,7 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
     if (timeout <= 0) {
         sender.sendMessage("It runs in the background until stopped.");
         sender.sendMessage("To stop and finalize the profile, run: {}/spark profiler stop", kColorGray);
+        sender.sendMessage("To view the profile while it runs, run: {}/spark profiler open", kColorGray);
     }
     else {
         if (timeout < 30) {
@@ -444,11 +445,6 @@ void ProfilerService::cmdOpen(CommandSender &sender)
         sender.sendMessage("The profiler isn't running! Start it first with: {}/spark profiler start", kColorGray);
         return;
     }
-    if (profiler_.mode() == spark::ProfileMode::Allocation) {
-        sender.sendMessage("Live viewer is not supported for allocation profiles.");
-        return;
-    }
-
     auto key_pair = Crypto::generateKeyPair();
     if (key_pair.public_key_x509.empty()) {
         sender.sendErrorMessage("Failed to generate cryptographic key pair for the live viewer.");
@@ -645,14 +641,23 @@ ExportContext ProfilerService::captureLiveContext(std::int64_t now_ms)
 
 std::string ProfilerService::uploadSamplerData(const ExportContext &context)
 {
-    std::string body = buildLiveSamplerData(context);
-    if (body.empty()) {
-        return {};
+    const bool tracking_was_suppressed = profiler_.setCurrentThreadAllocationTrackingSuppressed(true);
+    try {
+        std::string body = buildLiveSamplerData(context);
+        if (body.empty()) {
+            profiler_.setCurrentThreadAllocationTrackingSuppressed(tracking_was_suppressed);
+            return {};
+        }
+        std::string compressed = gzipCompress(body);
+        UploadResult result =
+            uploadToBytebin(compressed, bytebin_url_, kSamplerContentType, std::string("endstone-spark/") + kVersion);
+        profiler_.setCurrentThreadAllocationTrackingSuppressed(tracking_was_suppressed);
+        return result.ok ? result.key : std::string();
     }
-    std::string compressed = gzipCompress(body);
-    UploadResult result =
-        uploadToBytebin(compressed, bytebin_url_, kSamplerContentType, std::string("endstone-spark/") + kVersion);
-    return result.ok ? result.key : std::string();
+    catch (...) {
+        profiler_.setCurrentThreadAllocationTrackingSuppressed(tracking_was_suppressed);
+        throw;
+    }
 }
 
 std::string ProfilerService::buildLiveSamplerData(const ExportContext &context)

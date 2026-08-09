@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased][Unreleased]
 
+### Added
+
+- Support continuously updating Live Viewer sessions for `--alloc` and
+  `--alloc-live-only` profiles.
+
 ## [0.5.0][0.5.0] - 2026-08-09
 
 ### Added

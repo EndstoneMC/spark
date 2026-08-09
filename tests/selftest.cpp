@@ -75,6 +75,28 @@ struct ProfilerTestAccess {
         profiler.stop_requested_hook_ = std::move(hook);
     }
     static bool samplerRunning(const Profiler &profiler) { return profiler.sampler_.running(); }
+    static bool allocationSamplerRunning(const Profiler &profiler) { return profiler.allocation_sampler_.running(); }
+    static bool allocationHooksInstalled(const Profiler &profiler)
+    {
+        return profiler.allocation_sampler_.hooksInstalled();
+    }
+    static std::uint64_t allocationLifecycleDropped(const Profiler &profiler)
+    {
+        return profiler.allocation_sampler_.lifecycleDropped();
+    }
+    static std::uint64_t allocationContentionDropped(const Profiler &profiler)
+    {
+        return profiler.allocation_sampler_.contentionDropped();
+    }
+    static bool backendRunning(const Profiler &profiler)
+    {
+        return profiler.mode_ == ProfileMode::Allocation ? profiler.allocation_sampler_.running()
+                                                         : profiler.sampler_.running();
+    }
+    static bool allocationSnapshot(Profiler &profiler, AllocationSnapshot &snapshot, std::string &error)
+    {
+        return profiler.allocation_sampler_.snapshot(snapshot, error);
+    }
     static std::uint64_t samplerServiceStarts(const Profiler &profiler)
     {
         return profiler.sampler_.service_start_count_.load(std::memory_order_relaxed);
@@ -134,6 +156,10 @@ struct ProfilerServiceTestAccess {
     {
         return ProfilerTestAccess::samplerRunning(service.profiler_);
     }
+    static bool backendRunning(const ProfilerService &service)
+    {
+        return ProfilerTestAccess::backendRunning(service.profiler_);
+    }
     static std::uint64_t samplerServiceStarts(const ProfilerService &service)
     {
         return ProfilerTestAccess::samplerServiceStarts(service.profiler_);
@@ -157,6 +183,7 @@ struct ProfilerServiceTestAccess {
         service.viewer_sender_name_ = "Console";
     }
     static bool hasViewerSocket(const ProfilerService &service) { return service.viewer_socket_ != nullptr; }
+    static std::shared_ptr<ViewerSocket> viewerSocket(const ProfilerService &service) { return service.viewer_socket_; }
 };
 
 struct ViewerSocketTestAccess {
@@ -1538,90 +1565,95 @@ bool verifyLiveExportStopCancel(std::uint64_t worker_tid)
 {
     using namespace std::chrono_literals;
 
-    for (int operation = 0; operation < 2; ++operation) {
-        spark::Profiler profiler;
-        spark::ProfilerOptions options;
-        options.interval_ms = 1;
-        std::string error;
-        if (!profiler.start(options, worker_tid, error)) {
-            return false;
-        }
-
-        std::mutex mutex;
-        std::condition_variable cv;
-        bool paused = false;
-        bool release = false;
-        bool stop_requested = false;
-        spark::ProfilerTestAccess::setLiveExportPausedHook(profiler, [&] {
-            std::unique_lock lock(mutex);
-            paused = true;
-            cv.notify_all();
-            cv.wait(lock, [&] { return release; });
-        });
-        spark::ProfilerTestAccess::setStopRequestedHook(profiler, [&] {
-            std::scoped_lock lock(mutex);
-            stop_requested = true;
-            cv.notify_all();
-        });
-
-        std::atomic<bool> live_ok{false};
-        const std::uint64_t service_starts = spark::ProfilerTestAccess::samplerServiceStarts(profiler);
-        std::thread live([&] {
-            try {
-                live_ok.store(!profiler.liveExport({}).empty());
-            }
-            catch (...) {
-                live_ok.store(false);
-            }
-        });
-        {
-            std::unique_lock lock(mutex);
-            if (!cv.wait_for(lock, 2s, [&] { return paused; })) {
-                release = true;
-                cv.notify_all();
-                live.join();
+    for (int mode = 0; mode < 2; ++mode) {
+        for (int operation = 0; operation < 2; ++operation) {
+            spark::Profiler profiler;
+            spark::ProfilerOptions options;
+            options.interval_ms = 1;
+            options.alloc = mode == 1;
+            options.allocation_interval_bytes = 1;
+            std::string error;
+            if (!profiler.start(options, worker_tid, error)) {
                 return false;
             }
-        }
 
-        std::atomic<bool> finish_ok{false};
-        std::thread finish([&] {
-            std::string finish_error;
-            if (operation == 0) {
-                if (profiler.stopSampling(finish_error)) {
-                    finish_ok.store(!profiler.exportData({}).empty());
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool paused = false;
+            bool release = false;
+            bool stop_requested = false;
+            spark::ProfilerTestAccess::setLiveExportPausedHook(profiler, [&] {
+                std::unique_lock lock(mutex);
+                paused = true;
+                cv.notify_all();
+                cv.wait(lock, [&] { return release; });
+            });
+            spark::ProfilerTestAccess::setStopRequestedHook(profiler, [&] {
+                std::scoped_lock lock(mutex);
+                stop_requested = true;
+                cv.notify_all();
+            });
+
+            std::atomic<bool> live_ok{false};
+            const std::uint64_t service_starts = spark::ProfilerTestAccess::samplerServiceStarts(profiler);
+            std::thread live([&] {
+                try {
+                    live_ok.store(!profiler.liveExport({}).empty());
+                }
+                catch (...) {
+                    live_ok.store(false);
+                }
+            });
+            {
+                std::unique_lock lock(mutex);
+                if (!cv.wait_for(lock, 2s, [&] { return paused; })) {
+                    release = true;
+                    cv.notify_all();
+                    live.join();
+                    return false;
                 }
             }
-            else {
-                finish_ok.store(profiler.cancel(finish_error));
-            }
-        });
-        {
-            std::unique_lock lock(mutex);
-            if (!cv.wait_for(lock, 2s, [&] { return stop_requested; })) {
+
+            std::atomic<bool> finish_ok{false};
+            std::thread finish([&] {
+                std::string finish_error;
+                if (operation == 0) {
+                    if (profiler.stopSampling(finish_error)) {
+                        finish_ok.store(!profiler.exportData({}).empty());
+                    }
+                }
+                else {
+                    finish_ok.store(profiler.cancel(finish_error));
+                }
+            });
+            {
+                std::unique_lock lock(mutex);
+                if (!cv.wait_for(lock, 2s, [&] { return stop_requested; })) {
+                    release = true;
+                    cv.notify_all();
+                    live.join();
+                    finish.join();
+                    return false;
+                }
                 release = true;
-                cv.notify_all();
-                live.join();
-                finish.join();
+            }
+            cv.notify_all();
+            live.join();
+            finish.join();
+            spark::ProfilerTestAccess::setLiveExportPausedHook(profiler, {});
+            spark::ProfilerTestAccess::setStopRequestedHook(profiler, {});
+
+            if (!live_ok.load() || !finish_ok.load() || profiler.running() ||
+                spark::ProfilerTestAccess::samplerServiceStarts(profiler) != service_starts ||
+                spark::ProfilerTestAccess::backendRunning(profiler)) {
+                std::fprintf(stderr, "live lifecycle: stopped session was resumed (mode=%d operation=%d)\n", mode,
+                             operation);
                 return false;
             }
-            release = true;
-        }
-        cv.notify_all();
-        live.join();
-        finish.join();
-        spark::ProfilerTestAccess::setLiveExportPausedHook(profiler, {});
-        spark::ProfilerTestAccess::setStopRequestedHook(profiler, {});
-
-        if (!live_ok.load() || !finish_ok.load() || profiler.running() ||
-            spark::ProfilerTestAccess::samplerServiceStarts(profiler) != service_starts ||
-            spark::ProfilerTestAccess::samplerRunning(profiler)) {
-            std::fprintf(stderr, "live lifecycle: stopped session was resumed (operation=%d)\n", operation);
-            return false;
-        }
-        if (!profiler.start(options, worker_tid, error) || !profiler.cancel(error)) {
-            std::fprintf(stderr, "live lifecycle: new session could not start after operation %d\n", operation);
-            return false;
+            if (!profiler.start(options, worker_tid, error) || !profiler.cancel(error)) {
+                std::fprintf(stderr, "live lifecycle: new session could not start after operation %d\n", operation);
+                return false;
+            }
         }
     }
     return true;
@@ -1813,6 +1845,68 @@ bool verifyViewerDisconnectKeepsProfilerRunning(std::uint64_t worker_tid)
         std::fprintf(stderr, "live viewer disconnect stopped the profiler\n");
     }
     return healthy;
+}
+
+bool verifyAllocationViewerLifecycle(std::uint64_t worker_tid)
+{
+    using namespace std::chrono_literals;
+
+    spark::StatisticsService statistics;
+    spark::TrustedViewersState trusted_viewers(std::filesystem::temp_directory_path() /
+                                               "spark-allocation-viewers.json");
+    TestDispatcher dispatcher;
+    TestMetadataProvider metadata_provider;
+    TestNotifier notifier;
+    TestCommandSender sender;
+    spark::ProfilerService service(statistics, {}, std::filesystem::temp_directory_path(), {}, {}, {}, false, 10,
+                                   "by-pool", "default", trusted_viewers, dispatcher, metadata_provider, notifier);
+    spark::ProfilerOptions options;
+    options.alloc = true;
+    options.allocation_interval_bytes = 1;
+    std::string error;
+    if (!spark::ProfilerServiceTestAccess::start(service, options, worker_tid, error)) {
+        return false;
+    }
+
+    spark::ProfilerServiceTestAccess::setViewerOpenFunction(
+        service, [](spark::ViewerSocket &socket, const spark::ViewerSocket::UploadCallback &) {
+            spark::ViewerSocketTestAccess::markOpen(socket);
+            return std::string("https://spark.lucko.me/test");
+        });
+    service.cmdOpen(sender);
+    if (!waitForCondition(
+            [&] {
+                return !spark::ProfilerServiceTestAccess::viewerOpenPending(service) &&
+                       spark::ProfilerServiceTestAccess::hasViewerSocket(service);
+            },
+            3s)) {
+        service.shutdown();
+        return false;
+    }
+
+    std::shared_ptr<spark::ViewerSocket> first = spark::ProfilerServiceTestAccess::viewerSocket(service);
+    spark::ViewerSocketTestAccess::terminate(*first, spark::WebSocketClient::TerminationKind::RemoteClose);
+    service.onTick(1.0);
+    if (!service.running() || !spark::ProfilerServiceTestAccess::backendRunning(service) ||
+        spark::ProfilerServiceTestAccess::hasViewerSocket(service)) {
+        service.shutdown();
+        return false;
+    }
+
+    service.cmdOpen(sender);
+    if (!waitForCondition(
+            [&] {
+                return !spark::ProfilerServiceTestAccess::viewerOpenPending(service) &&
+                       spark::ProfilerServiceTestAccess::hasViewerSocket(service);
+            },
+            3s)) {
+        service.shutdown();
+        return false;
+    }
+    service.cmdCancel(sender);
+    const bool valid = !service.running() && !spark::ProfilerServiceTestAccess::backendRunning(service);
+    service.shutdown();
+    return valid;
 }
 
 bool verifyWorkerExceptionBoundaries(std::uint64_t worker_tid)
@@ -3361,6 +3455,179 @@ bool verifyRetainedAllocationProfile()
     }
     return true;
 }
+
+bool verifyAllocationLiveExport()
+{
+    using namespace std::chrono_literals;
+
+    spark::Profiler profiler;
+    spark::ProfilerOptions options;
+    options.alloc = true;
+    options.allocation_interval_bytes = 4096;
+    std::string error;
+    if (!profiler.start(options, spark::currentNativeThreadId(), error)) {
+        std::fprintf(stderr, "allocation live export: start failed: %s\n", error.c_str());
+        return false;
+    }
+
+    void *first_allocation = std::malloc(4096);
+    if (first_allocation == nullptr) {
+        profiler.cancel(error);
+        return false;
+    }
+    static_cast<volatile unsigned char *>(first_allocation)[0] = 1;
+    if (!waitForCondition([&] { return profiler.sampleCount() != 0; }, 2s)) {
+        std::free(first_allocation);
+        profiler.cancel(error);
+        return false;
+    }
+
+    spark::AllocationSnapshot first;
+    if (!spark::ProfilerTestAccess::allocationSnapshot(profiler, first, error) || first.sample_count == 0 ||
+        first.sampled_bytes == 0) {
+        std::fprintf(stderr, "allocation live export: first snapshot failed: %s\n", error.c_str());
+        std::free(first_allocation);
+        profiler.cancel(error);
+        return false;
+    }
+
+    void *second_allocation = std::malloc(8192);
+    if (second_allocation == nullptr) {
+        std::free(first_allocation);
+        profiler.cancel(error);
+        return false;
+    }
+    static_cast<volatile unsigned char *>(second_allocation)[0] = 2;
+    if (!waitForCondition([&] { return profiler.sampleCount() > first.sample_count; }, 2s)) {
+        std::free(second_allocation);
+        std::free(first_allocation);
+        profiler.cancel(error);
+        return false;
+    }
+
+    spark::AllocationSnapshot second;
+    const std::string live_profile = profiler.liveExport({});
+    if (!spark::ProfilerTestAccess::allocationSnapshot(profiler, second, error) || live_profile.empty() ||
+        live_profile.find("Allocation backend") == std::string::npos || second.sample_count < first.sample_count ||
+        second.sampled_bytes < first.sampled_bytes || !spark::ProfilerTestAccess::allocationSamplerRunning(profiler) ||
+        !spark::ProfilerTestAccess::allocationHooksInstalled(profiler)) {
+        std::fprintf(stderr, "allocation live export: cumulative snapshot or sampler state was invalid\n");
+        std::free(second_allocation);
+        std::free(first_allocation);
+        profiler.cancel(error);
+        return false;
+    }
+
+    if (!profiler.stopSampling(error)) {
+        std::free(second_allocation);
+        std::free(first_allocation);
+        return false;
+    }
+    const std::string final_profile = profiler.exportData({});
+    const bool valid = !final_profile.empty() && profiler.sampleCount() >= second.sample_count &&
+                       profiler.sampledAllocationBytes() >= second.sampled_bytes &&
+                       spark::ProfilerTestAccess::allocationHooksInstalled(profiler);
+    std::free(second_allocation);
+    std::free(first_allocation);
+    return profiler.shutdown(error) && valid;
+}
+
+bool verifyRetainedAllocationLiveExport()
+{
+    using namespace std::chrono_literals;
+
+    spark::Profiler profiler;
+    spark::ProfilerOptions options;
+    options.alloc = true;
+    options.alloc_live_only = true;
+    options.allocation_interval_bytes = 1;
+    std::string error;
+    if (!profiler.start(options, spark::currentNativeThreadId(), error)) {
+        std::fprintf(stderr, "retained live export: start failed: %s\n", error.c_str());
+        return false;
+    }
+
+    void *retained = std::malloc(1024 * 1024);
+    void *released = std::malloc(512 * 1024);
+    if (retained == nullptr || released == nullptr) {
+        std::free(retained);
+        std::free(released);
+        profiler.cancel(error);
+        return false;
+    }
+    static_cast<volatile unsigned char *>(retained)[0] = 1;
+    static_cast<volatile unsigned char *>(released)[0] = 2;
+    if (!waitForCondition([&] { return profiler.liveAllocationSamples() >= 2; }, 2s)) {
+        std::fprintf(stderr, "retained live export: allocations were not tracked\n");
+        std::free(released);
+        std::free(retained);
+        profiler.cancel(error);
+        return false;
+    }
+
+    spark::AllocationSnapshot before_free;
+    if (!spark::ProfilerTestAccess::allocationSnapshot(profiler, before_free, error) || before_free.sample_count < 2) {
+        std::fprintf(stderr, "retained live export: initial snapshot failed: %s (samples=%llu)\n", error.c_str(),
+                     static_cast<unsigned long long>(before_free.sample_count));
+        std::free(released);
+        std::free(retained);
+        profiler.cancel(error);
+        return false;
+    }
+    std::free(released);
+    if (!waitForCondition([&] { return profiler.freedAllocationSamples() != 0; }, 2s)) {
+        std::fprintf(stderr, "retained live export: free was not tracked\n");
+        std::free(retained);
+        profiler.cancel(error);
+        return false;
+    }
+
+    spark::AllocationSnapshot after_free;
+    if (!spark::ProfilerTestAccess::allocationSnapshot(profiler, after_free, error) ||
+        after_free.sampled_bytes >= before_free.sampled_bytes) {
+        std::fprintf(stderr, "retained live export: free was not reflected\n");
+        std::free(retained);
+        profiler.cancel(error);
+        return false;
+    }
+
+    void *resized = std::realloc(retained, 2 * 1024 * 1024);
+    if (resized == nullptr) {
+        std::fprintf(stderr, "retained live export: realloc failed\n");
+        std::free(retained);
+        profiler.cancel(error);
+        return false;
+    }
+    retained = resized;
+    spark::AllocationSnapshot after_realloc;
+    spark::AllocationSnapshot repeated;
+    const std::string live_profile = profiler.liveExport({});
+    if (!spark::ProfilerTestAccess::allocationSnapshot(profiler, after_realloc, error) ||
+        !spark::ProfilerTestAccess::allocationSnapshot(profiler, repeated, error) || live_profile.empty() ||
+        live_profile.find("Allocation live-only") == std::string::npos ||
+        after_realloc.sampled_bytes < after_free.sampled_bytes || repeated.sample_count != after_realloc.sample_count ||
+        repeated.sampled_bytes != after_realloc.sampled_bytes ||
+        !spark::ProfilerTestAccess::allocationSamplerRunning(profiler) ||
+        !spark::ProfilerTestAccess::allocationHooksInstalled(profiler)) {
+        std::fprintf(stderr, "retained live export: realloc or repeated snapshot was invalid\n");
+        std::free(retained);
+        profiler.cancel(error);
+        return false;
+    }
+
+    if (!profiler.stopSampling(error)) {
+        std::fprintf(stderr, "retained live export: stop failed: %s (lifecycle=%llu, contention=%llu)\n", error.c_str(),
+                     static_cast<unsigned long long>(spark::ProfilerTestAccess::allocationLifecycleDropped(profiler)),
+                     static_cast<unsigned long long>(spark::ProfilerTestAccess::allocationContentionDropped(profiler)));
+        std::free(retained);
+        return false;
+    }
+    const std::string final_profile = profiler.exportData({});
+    const bool valid = !final_profile.empty() && profiler.sampleCount() == repeated.sample_count &&
+                       profiler.sampledAllocationBytes() == repeated.sampled_bytes;
+    std::free(retained);
+    return profiler.shutdown(error) && valid;
+}
 #endif
 
 #ifdef __linux__
@@ -3450,6 +3717,14 @@ int main(int argc, char **argv)
             std::fprintf(stderr, "allocation-only: retained profile test failed\n");
             return 1;
         }
+        if (!verifyAllocationLiveExport()) {
+            std::fprintf(stderr, "allocation-only: live export test failed\n");
+            return 1;
+        }
+        if (!verifyRetainedAllocationLiveExport()) {
+            std::fprintf(stderr, "allocation-only: retained live export test failed\n");
+            return 1;
+        }
         if (!verifyAllocationThreadSelection()) {
             std::fprintf(stderr, "allocation-only: thread selection test failed\n");
             return 1;
@@ -3509,9 +3784,9 @@ int main(int argc, char **argv)
         !verifyLiveExportStopCancel(GWorkerTid.load()) || !verifyLiveExportTimeout(GWorkerTid.load()) ||
         !verifyViewerShutdownDuringLiveExport(GWorkerTid.load()) ||
         !verifyViewerDisconnectKeepsProfilerRunning(GWorkerTid.load()) ||
-        !verifyWorkerExceptionBoundaries(GWorkerTid.load()) || !verifyAsyncNetworkCommands(GWorkerTid.load()) ||
-        !verifyBackgroundCommandValidation(GWorkerTid.load()) || !verifyRecoveryWriterLifetime(GWorkerTid.load()) ||
-        !verifyUploadFailure() || !verifyCaptureLifecycle() ||
+        !verifyAllocationViewerLifecycle(GWorkerTid.load()) || !verifyWorkerExceptionBoundaries(GWorkerTid.load()) ||
+        !verifyAsyncNetworkCommands(GWorkerTid.load()) || !verifyBackgroundCommandValidation(GWorkerTid.load()) ||
+        !verifyRecoveryWriterLifetime(GWorkerTid.load()) || !verifyUploadFailure() || !verifyCaptureLifecycle() ||
 #ifdef __linux__
         !verifyDelayedSignalLifecycle() || !verifyActiveCaptureTeardown(GWorkerTid.load()) ||
 #endif
@@ -3522,13 +3797,15 @@ int main(int argc, char **argv)
         !verifyByteSampling() || !verifyStopResponsiveness() || !verifySessionIsolation(GWorkerTid.load()) ||
         !verifyTickFiltering(GWorkerTid.load())
 #ifdef _WIN32
-        || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile() || !verifyAllocationThreadSelection() ||
+        || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile() || !verifyAllocationLiveExport() ||
+        !verifyRetainedAllocationLiveExport() || !verifyAllocationThreadSelection() ||
         !verifyProcessWideAllocationSampling() || !verifyAllocationContentionPolicy() ||
         !verifyAllocationResourcePressure()
 #elif defined(__linux__)
         || !verifyLinuxImportHooks() || !verifyAllocationLifecycle() || !verifyRetainedAllocationProfile() ||
-        !verifyAllocationThreadSelection() || !verifyProcessWideAllocationSampling() ||
-        !verifyAllocationContentionPolicy() || !verifyAllocationResourcePressure()
+        !verifyAllocationLiveExport() || !verifyRetainedAllocationLiveExport() || !verifyAllocationThreadSelection() ||
+        !verifyProcessWideAllocationSampling() || !verifyAllocationContentionPolicy() ||
+        !verifyAllocationResourcePressure()
 #endif
     ) {
         GRun.store(false);

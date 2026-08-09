@@ -37,6 +37,17 @@ bool AllocationSampler::shutdown(std::string &error)
 
 void AllocationSampler::onTick(double) {}
 
+bool AllocationSampler::snapshot(AllocationSnapshot &, std::string &error)
+{
+    error = "native allocation profiling is not supported on this platform";
+    return false;
+}
+
+bool AllocationSampler::setCurrentThreadTrackingSuppressed(bool) noexcept
+{
+    return false;
+}
+
 void AllocationSampler::setRecoverySink(RecoverySink *) {}
 
 const CallTree &AllocationSampler::tree() const

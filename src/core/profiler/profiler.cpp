@@ -260,6 +260,11 @@ const std::vector<AllocationHookCapability> &Profiler::allocationHookCapabilitie
     return allocation_sampler_.hookCapabilities();
 }
 
+bool Profiler::setCurrentThreadAllocationTrackingSuppressed(bool suppressed) noexcept
+{
+    return allocation_sampler_.setCurrentThreadTrackingSuppressed(suppressed);
+}
+
 std::size_t Profiler::allocationHookTargetCount() const
 {
     return allocation_sampler_.hookTargetCount();
@@ -504,12 +509,18 @@ std::uint64_t Profiler::activeNumberOfTicks() const
 
 std::string Profiler::exportData(const ExportContext &ctx) const
 {
+    return exportData(ctx, nullptr);
+}
+
+std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnapshot *allocation_snapshot) const
+{
     ProfileMetadata meta;
     meta.start_time_ms = start_time_ms_;
     meta.end_time_ms = end_time_ms_ > 0 ? end_time_ms_ : nowMs();
     meta.interval = interval_;
     meta.mode = mode_;
-    meta.number_of_ticks = static_cast<std::int32_t>(activeNumberOfTicks());
+    meta.number_of_ticks = static_cast<std::int32_t>(
+        allocation_snapshot != nullptr ? allocation_snapshot->number_of_ticks : activeNumberOfTicks());
     meta.endstone_version = ctx.endstone_version;
     meta.minecraft_version = ctx.minecraft_version;
     if (mode_ == ProfileMode::Allocation) {
@@ -564,8 +575,8 @@ std::string Profiler::exportData(const ExportContext &ctx) const
             std::to_string(allocation_sampler_.successfulAllocationCalls());
         meta.extra_platform_metadata["Allocation sampling points hit (process-wide)"] =
             std::to_string(allocation_sampler_.samplingPoints());
-        meta.extra_platform_metadata["Allocation profile samples accepted"] =
-            std::to_string(allocation_sampler_.sampleCount());
+        meta.extra_platform_metadata["Allocation profile samples accepted"] = std::to_string(
+            allocation_snapshot != nullptr ? allocation_snapshot->sample_count : allocation_sampler_.sampleCount());
         meta.extra_platform_metadata["Allocation samples excluded by thread selector"] =
             std::to_string(allocation_sampler_.filteredSamples());
         meta.extra_platform_metadata["Allocation thread name lookup failures"] =
@@ -599,7 +610,8 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         meta.extra_platform_metadata["Allocation live index capacity"] =
             std::to_string(spark::AllocationSampler::liveIndexCapacity());
         meta.extra_platform_metadata["Allocation sampled thread roots"] =
-            std::to_string(allocation_sampler_.sampledThreadCount());
+            std::to_string(allocation_snapshot != nullptr ? allocation_snapshot->thread_trees.size()
+                                                          : allocation_sampler_.sampledThreadCount());
         meta.extra_platform_metadata["Allocation thread root capacity"] =
             std::to_string(spark::AllocationSampler::threadRootCapacity());
         meta.extra_platform_metadata["Allocation overflow threads"] =
@@ -630,8 +642,8 @@ std::string Profiler::exportData(const ExportContext &ctx) const
             std::to_string(allocation_sampler_.lifecycleDropped());
         meta.extra_platform_metadata["Allocation lock contention records dropped"] =
             std::to_string(allocation_sampler_.contentionDropped());
-        meta.extra_platform_metadata["Allocation profile sampled bytes"] =
-            std::to_string(allocation_sampler_.sampledBytes());
+        meta.extra_platform_metadata["Allocation profile sampled bytes"] = std::to_string(
+            allocation_snapshot != nullptr ? allocation_snapshot->sampled_bytes : allocation_sampler_.sampledBytes());
         meta.extra_platform_metadata["Allocation observed request bytes (process-wide)"] =
             std::to_string(allocation_sampler_.observedBytes());
         meta.extra_platform_metadata["Allocation interval bytes"] = std::to_string(interval_);
@@ -647,12 +659,14 @@ std::string Profiler::exportData(const ExportContext &ctx) const
         meta.extra_platform_metadata["Allocation thread selection"] = jsonString(thread_selection);
         if (options_.alloc_live_only) {
             meta.extra_platform_metadata["Allocation analysis"] =
-                jsonString("retained sampled allocations at profile stop; candidates "
+                jsonString("retained sampled allocations at export time; candidates "
                            "require repeated growth verification");
             meta.extra_platform_metadata["Allocation retained average age ms"] =
-                std::to_string(allocation_sampler_.retainedAverageAgeMs());
+                std::to_string(allocation_snapshot != nullptr ? allocation_snapshot->retained_average_age_ms
+                                                              : allocation_sampler_.retainedAverageAgeMs());
             meta.extra_platform_metadata["Allocation retained maximum age ms"] =
-                std::to_string(allocation_sampler_.retainedMaximumAgeMs());
+                std::to_string(allocation_snapshot != nullptr ? allocation_snapshot->retained_maximum_age_ms
+                                                              : allocation_sampler_.retainedMaximumAgeMs());
         }
 
         const auto &capabilities = allocation_sampler_.hookCapabilities();
@@ -713,19 +727,24 @@ std::string Profiler::exportData(const ExportContext &ctx) const
     }
 
     if (mode_ == ProfileMode::Allocation) {
+        const auto &thread_trees =
+            allocation_snapshot != nullptr ? allocation_snapshot->thread_trees : allocation_sampler_.threadTrees();
+        const CallTree &tree = allocation_snapshot != nullptr ? allocation_snapshot->tree : allocation_sampler_.tree();
+        const ModuleTable &modules =
+            allocation_snapshot != nullptr ? allocation_snapshot->modules : allocation_sampler_.modules();
         std::vector<std::pair<std::uint64_t, std::pair<std::string, const CallTree *>>> input;
-        for (const auto &[id, thread] : allocation_sampler_.threadTrees()) {
+        for (const auto &[id, thread] : thread_trees) {
             input.emplace_back(id, std::make_pair(thread.thread_name, &thread.tree));
             if (!meta.all_threads && !meta.regex_threads && id != 0) {
                 meta.thread_ids.push_back(static_cast<std::int64_t>(id));
             }
         }
         if (input.empty()) {
-            input.emplace_back(0, std::make_pair(meta.thread_name, &allocation_sampler_.tree()));
+            input.emplace_back(0, std::make_pair(meta.thread_name, &tree));
         }
         auto [threads, owned_trees, owned_labels] = groupThreads(std::move(input), options_.thread_grouper);
         std::vector<FrameKey> keys = collectFrameKeys(threads);
-        auto resolved = resolveFrames(allocation_sampler_.modules(), keys);
+        auto resolved = resolveFrames(modules, keys);
         addSymbolGuessMetadata(meta);
         return buildSamplerData(meta, threads, resolved);
     }
@@ -766,7 +785,28 @@ std::string Profiler::liveExport(const ExportContext &ctx)
         return {};
     }
     if (mode_ == ProfileMode::Allocation) {
-        return {};
+        const bool tracking_was_suppressed = allocation_sampler_.setCurrentThreadTrackingSuppressed(true);
+        try {
+            AllocationSnapshot snapshot;
+            std::string snapshot_error;
+            if (!allocation_sampler_.snapshot(snapshot, snapshot_error)) {
+                allocation_sampler_.setCurrentThreadTrackingSuppressed(tracking_was_suppressed);
+                if (!snapshot_error.empty()) {
+                    throw std::runtime_error(snapshot_error);
+                }
+                return {};
+            }
+            if (live_export_paused_hook_) {
+                live_export_paused_hook_();
+            }
+            std::string data = exportData(ctx, &snapshot);
+            allocation_sampler_.setCurrentThreadTrackingSuppressed(tracking_was_suppressed);
+            return data;
+        }
+        catch (...) {
+            allocation_sampler_.setCurrentThreadTrackingSuppressed(tracking_was_suppressed);
+            throw;
+        }
     }
     sampler_.pauseForExport();
     std::string sampler_error;
