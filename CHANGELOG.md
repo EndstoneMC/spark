@@ -93,6 +93,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Remove expired call-tree nodes and thread roots from continuous background
+  profiles instead of retaining dead topology beyond the one-hour history window.
+- Serialize live snapshots with profiler lifecycle transitions so stop, cancel,
+  timeout, and shutdown cannot resume an ended sampling session.
+- Contain exceptions at every production worker entry and recover export/viewer
+  state when dispatch or background processing fails.
+- Preserve Linux signal-handler synchronization when bounded capture teardown
+  cannot prove that an active handler has completed.
+- Include the strict allowlisted server configuration map in health reports and
+  validate configured HTTP/WebSocket endpoint syntax before applying it.
+- Send a bounded WebSocket close frame during ordinary local viewer shutdown.
 - Bound continuous background profile history to the upstream one-hour retention
   window while preserving complete finite foreground profiles.
 - Keep live viewer metadata capture on the server thread and move relay setup,

@@ -37,7 +37,7 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 By default, stopping a profiler uploads the generated profile to spark's bytebin
 and prints the viewer link. With `--save-to-file`, the profile is written locally
 under `plugins/spark/profiles/` as a `.sparkprofile` file instead. If an upload
-fails, Spark automatically preserves the compressed profile in the same directory
+fails, Spark automatically preserves the raw protobuf profile in the same directory
 and reports the local path.
 
 Permission: `endstone.command.spark` (operators by default) is the umbrella
@@ -217,8 +217,8 @@ final output.
   `/spark tps` and `/spark health` also read this snapshot, so commands and
   profiles cannot silently use different TPS, MSPT, or CPU definitions.
   Per-second windows include exact time bounds, tick count/rate, MSPT median/max,
-  CPU, and the latest low-cost player count. Entity and chunk histories are omitted
-  because obtaining them would require a main-thread world scan every second.
+  CPU, the latest low-cost player count, and rolling entity/chunk gauges maintained
+  from platform events and bounded reconciliation without a per-second world scan.
 * Every profile includes the SHA-256 of the running BDS executable, allowing an
   offline analyst to select the exact matching binary without receiving the
   server owner's executable, paths, configuration, or world data.
