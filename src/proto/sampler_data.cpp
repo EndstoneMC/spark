@@ -808,6 +808,15 @@ std::string buildHealthData(const HealthData &data)
         // generated_time (5)
         mw.int64(5, data.generated_time_ms);
 
+        // server_configurations (6): map<string, string>
+        for (const auto &[key, value] : data.server_configurations) {
+            std::string entry;
+            ProtoWriter ew(entry);
+            ew.string(1, key);
+            ew.string(2, value);
+            mw.message(6, entry);
+        }
+
         // sources (7): map<string, PluginOrModMetadata>
         for (const PluginInfo &pl : data.plugins) {
             std::string pm;

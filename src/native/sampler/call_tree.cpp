@@ -50,19 +50,25 @@ std::uint64_t CallTree::sampleCount() const
 
 namespace {
 
-void pruneNode(CallTree::Node &node, std::int32_t minimum_window)  // NOLINT(misc-no-recursion)
+bool pruneNode(CallTree::Node &node, std::int32_t minimum_window)  // NOLINT(misc-no-recursion)
 {
     node.times.erase(node.times.begin(), node.times.lower_bound(minimum_window));
-    for (auto &[key, child] : node.children) {
-        pruneNode(*child, minimum_window);
+    for (auto it = node.children.begin(); it != node.children.end();) {
+        if (pruneNode(*it->second, minimum_window)) {
+            it = node.children.erase(it);
+        }
+        else {
+            ++it;
+        }
     }
+    return node.times.empty() && node.children.empty();
 }
 
 }  // namespace
 
-void CallTree::pruneBefore(std::int32_t minimum_window)
+bool CallTree::pruneBefore(std::int32_t minimum_window)
 {
-    pruneNode(root_, minimum_window);
+    return pruneNode(root_, minimum_window);
 }
 
 namespace {

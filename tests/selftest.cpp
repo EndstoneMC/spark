@@ -20,6 +20,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -65,6 +66,32 @@ namespace spark {
 
 struct ProfilerTestAccess {
     static void expire(Profiler &profiler) { profiler.auto_end_time_ms_ = 1; }
+    static void setLiveExportPausedHook(Profiler &profiler, std::function<void()> hook)
+    {
+        profiler.live_export_paused_hook_ = std::move(hook);
+    }
+    static void setStopRequestedHook(Profiler &profiler, std::function<void()> hook)
+    {
+        profiler.stop_requested_hook_ = std::move(hook);
+    }
+    static bool samplerRunning(const Profiler &profiler) { return profiler.sampler_.running(); }
+    static std::uint64_t samplerServiceStarts(const Profiler &profiler)
+    {
+        return profiler.sampler_.service_start_count_.load(std::memory_order_relaxed);
+    }
+    static bool stopRequested(const Profiler &profiler)
+    {
+        return profiler.sampling_stop_requested_.load(std::memory_order_acquire);
+    }
+};
+
+struct CaptureTestAccess {
+#ifdef __linux__
+    static void setHandlerGate(std::atomic<bool> *entered, std::atomic<bool> *release)
+    {
+        Capture::setHandlerGateForTesting(entered, release);
+    }
+#endif
 };
 
 struct ProfilerServiceTestAccess {
@@ -81,6 +108,11 @@ struct ProfilerServiceTestAccess {
         return service.buildLiveSamplerData(service.captureLiveContext(now_ms));
     }
 
+    static std::string liveExport(ProfilerService &service, const ExportContext &context)
+    {
+        return service.profiler_.liveExport(context);
+    }
+
     static void cancel(ProfilerService &service) { service.profiler_.cancel(); }
     static void expire(ProfilerService &service) { ProfilerTestAccess::expire(service.profiler_); }
     static std::uint64_t sampleCount(const ProfilerService &service) { return service.profiler_.sampleCount(); }
@@ -89,6 +121,35 @@ struct ProfilerServiceTestAccess {
         std::function<std::string(ViewerSocket &, const ViewerSocket::UploadCallback &)> open_function)
     {
         service.viewer_open_fn_ = std::move(open_function);
+    }
+    static void setLiveExportPausedHook(ProfilerService &service, std::function<void()> hook)
+    {
+        ProfilerTestAccess::setLiveExportPausedHook(service.profiler_, std::move(hook));
+    }
+    static void setStopRequestedHook(ProfilerService &service, std::function<void()> hook)
+    {
+        ProfilerTestAccess::setStopRequestedHook(service.profiler_, std::move(hook));
+    }
+    static bool samplerRunning(const ProfilerService &service)
+    {
+        return ProfilerTestAccess::samplerRunning(service.profiler_);
+    }
+    static std::uint64_t samplerServiceStarts(const ProfilerService &service)
+    {
+        return ProfilerTestAccess::samplerServiceStarts(service.profiler_);
+    }
+    static bool stopRequested(const ProfilerService &service)
+    {
+        return ProfilerTestAccess::stopRequested(service.profiler_);
+    }
+    static bool viewerOpenPending(const ProfilerService &service)
+    {
+        std::scoped_lock lock(service.viewer_update_mutex_);
+        return service.viewer_open_pending_;
+    }
+    static bool exportCompletionPending(const ProfilerService &service)
+    {
+        return service.export_completion_pending_.load();
     }
 };
 
@@ -102,21 +163,57 @@ struct HealthCommandTestAccess {
     }
 
     static bool uploading(const HealthCommand &health) { return health.uploading_.load(); }
+
+    static HealthData capture(HealthCommand &health, const CommandSender &sender, std::int64_t now_ms)
+    {
+        return health.captureHealthData(sender, now_ms);
+    }
 };
 
 struct SamplerTestAccess {
+    static void setSamplerThreadHook(Sampler &sampler, std::function<void()> hook)
+    {
+        sampler.sampler_thread_hook_ = std::move(hook);
+    }
+
+    static bool workersJoinable(const Sampler &sampler)
+    {
+        return sampler.sampler_thread_.joinable() || sampler.aggregator_thread_.joinable();
+    }
+
+    static std::size_t countNodes(const CallTree::Node &node)  // NOLINT(misc-no-recursion)
+    {
+        std::size_t count = node.children.size();
+        for (const auto &[key, child] : node.children) {
+            count += countNodes(*child);
+        }
+        return count;
+    }
+
     static bool verifyContinuousHistory()
     {
         Sampler continuous;
         continuous.config_.continuous = true;
         Sample sample;
-        sample.thread_id = 1;
-        sample.thread_name = "Server thread";
         sample.weight = 1;
-        sample.frames.push_back({.module = 0, .rva = 1, .raw_address = 1});
         for (std::int32_t window = 0; window <= 7200; ++window) {
+            sample.thread_id = static_cast<std::uint64_t>(window) + 1;
+            sample.thread_name = "Rotating thread";
+            sample.frames = {{.module = 0,
+                              .rva = static_cast<std::uint64_t>(window) + 1,
+                              .raw_address = static_cast<std::uint64_t>(window) + 1}};
             sample.window = window;
             continuous.acceptSample(sample);
+            if (window == 0 || window == 7200) {
+                sample.thread_id = 10'000;
+                sample.thread_name = "Spanning thread";
+                sample.frames = {{.module = 1,
+                                  .rva = static_cast<std::uint64_t>(window == 0 ? 100 : 101),
+                                  .raw_address = static_cast<std::uint64_t>(window == 0 ? 100 : 101)},
+                                 {.module = 1, .rva = 200, .raw_address = 200},
+                                 {.module = 1, .rva = 300, .raw_address = 300}};
+                continuous.acceptSample(sample);
+            }
             continuous.window_ticks_[window] = WindowTickStats{.ticks = 1, .mspt_sum = 1.0, .mspt_max = 1.0};
             continuous.maybePruneTickHistory(window);
         }
@@ -124,21 +221,42 @@ struct SamplerTestAccess {
             continuous.recordTickDecision(tick, true);
         }
         const auto &root = continuous.tree_.root();
-        const auto thread = continuous.thread_trees_.find(1);
+        const auto spanning = continuous.thread_trees_.find(10'000);
+        const FrameKey expired_unique{.module = 0, .rva = 1, .raw_address = 1};
+        const FrameKey expired_nested{.module = 1, .rva = 100, .raw_address = 100};
+        const auto keys = collectFrameKeys(continuous.tree_);
+        std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolved;
+        resolved[expired_unique] = {.class_name = "test", .method_name = "expired-only-frame"};
+        resolved[expired_nested] = {.class_name = "test", .method_name = "expired-nested-frame"};
+        ProfileMetadata metadata;
+        const std::string payload = buildSamplerData(metadata, continuous.tree_, resolved);
         if (root.times.size() != 3601 || root.times.begin()->first != 3600 || root.times.rbegin()->first != 7200 ||
-            continuous.window_ticks_.size() != 3601 || continuous.sampleCount() != 3601 ||
-            thread == continuous.thread_trees_.end() || thread->second.tree.root().times.size() != 3601 ||
+            continuous.window_ticks_.size() != 3601 || continuous.sampleCount() != 3602 ||
+            continuous.thread_trees_.size() != 3602 || spanning == continuous.thread_trees_.end() ||
+            spanning->second.tree.root().times.size() != 1 || countNodes(root) != 3604 ||
+            countNodes(spanning->second.tree.root()) != 3 || std::ranges::find(keys, expired_unique) != keys.end() ||
+            std::ranges::find(keys, expired_nested) != keys.end() ||
+            payload.find("expired-only-frame") != std::string::npos ||
+            payload.find("expired-nested-frame") != std::string::npos ||
             continuous.tick_decisions_.size() > Sampler::kTickDecisionCapacity) {
             return false;
         }
 
+        std::printf("continuous history: windows=7201 retained=3601 nodes=7205 retained=3604 "
+                    "thread_roots=7202 retained=3602\n");
+
         Sampler foreground;
         foreground.config_.continuous = false;
         for (std::int32_t window = 0; window <= 7200; ++window) {
+            sample.thread_id = static_cast<std::uint64_t>(window) + 1;
+            sample.frames = {{.module = 0,
+                              .rva = static_cast<std::uint64_t>(window) + 1,
+                              .raw_address = static_cast<std::uint64_t>(window) + 1}};
             sample.window = window;
             foreground.acceptSample(sample);
         }
-        return foreground.tree_.root().times.size() == 7201 && foreground.sampleCount() == 7201;
+        return foreground.tree_.root().times.size() == 7201 && foreground.sampleCount() == 7201 &&
+               countNodes(foreground.tree_.root()) == 7201 && foreground.thread_trees_.size() == 7201;
     }
 };
 
@@ -263,12 +381,27 @@ bool protoVarintEquals(std::string_view bytes, std::initializer_list<int> path, 
 
 class TestDispatcher : public spark::MainThreadDispatcher {
 public:
-    void runOnMainThread(std::function<void()> task) override { task(); }
+    void runOnMainThread(std::function<void()> task) override
+    {
+        if (reject_.load()) {
+            throw std::runtime_error("dispatcher rejected task");
+        }
+        task();
+    }
+
+    void setReject(bool reject) { reject_.store(reject); }
+
+private:
+    std::atomic<bool> reject_{false};
 };
 
 class TestMetadataProvider : public spark::ProfileMetadataProvider {
 public:
-    void gatherServerMetadata(spark::ExportContext & /*ctx*/, std::int64_t /*now_ms*/) override { checkThread(); }
+    void gatherServerMetadata(spark::ExportContext &ctx, std::int64_t /*now_ms*/) override
+    {
+        checkThread();
+        ctx.server_configurations["server.properties"] = R"({"max-players":"20"})";
+    }
     void gatherWorldMetadata(spark::ExportContext & /*ctx*/) override { checkThread(); }
     std::int64_t serverUptimeSeconds() override { return 0; }
     std::int64_t playerCount() override { return 0; }
@@ -304,6 +437,32 @@ private:
     void sendImpl(const std::string &message) override { messages.push_back(message); }
     void errorImpl(const std::string &message) override { errors.push_back(message); }
 };
+
+bool verifyHealthServerConfigurations()
+{
+    spark::StatisticsService statistics;
+    TestMetadataProvider metadata_provider;
+    TestDispatcher dispatcher;
+    TestNotifier notifier;
+    TestCommandSender sender;
+    spark::HealthCommand health(statistics, metadata_provider, {}, {}, dispatcher, notifier);
+    const spark::HealthData data = spark::HealthCommandTestAccess::capture(health, sender, 1234);
+    const std::string payload = spark::buildHealthData(data);
+
+    ProtoField metadata;
+    ProtoField entry;
+    ProtoField key;
+    ProtoField value;
+    if (!findProtoField(payload, 1, metadata) || !findProtoField(metadata.bytes, 6, entry) ||
+        !findProtoField(entry.bytes, 1, key) || !findProtoField(entry.bytes, 2, value) ||
+        key.bytes != "server.properties" || value.bytes != R"({"max-players":"20"})" ||
+        payload.find("level-seed") != std::string::npos ||
+        payload.find("server-authoritative-secret") != std::string::npos) {
+        std::fprintf(stderr, "health metadata: allowlisted server configuration was not encoded safely\n");
+        return false;
+    }
+    return true;
+}
 
 #ifdef _WIN32
 void __cdecl ignoreInvalidParameter(const wchar_t * /*unused*/, const wchar_t * /*unused*/, const wchar_t * /*unused*/,
@@ -453,6 +612,43 @@ bool verifyCaptureLifecycle()
 }
 
 #ifdef __linux__
+bool verifyActiveCaptureTeardown(std::uint64_t worker_tid)
+{
+    using namespace std::chrono_literals;
+
+    if (!spark::Capture::arm()) {
+        return false;
+    }
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    spark::CaptureTestAccess::setHandlerGate(&entered, &release);
+    spark::CaptureBuffer buffer;
+    std::thread capture([&] { spark::Capture::captureThread(worker_tid, buffer); });
+    if (!waitForCondition([&] { return entered.load(std::memory_order_acquire); }, 2s)) {
+        release.store(true, std::memory_order_release);
+        capture.join();
+        spark::CaptureTestAccess::setHandlerGate(nullptr, nullptr);
+        spark::Capture::disarm();
+        return false;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    const bool unsafe_success = spark::Capture::disarm();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    release.store(true, std::memory_order_release);
+    capture.join();
+    spark::CaptureTestAccess::setHandlerGate(nullptr, nullptr);
+    if (unsafe_success || elapsed > 2s || !spark::Capture::disarm()) {
+        std::fprintf(stderr, "active capture teardown: handler state was not retained safely\n");
+        return false;
+    }
+    if (!spark::Capture::arm() || !spark::Capture::disarm()) {
+        std::fprintf(stderr, "active capture teardown: capture backend did not restart\n");
+        return false;
+    }
+    return true;
+}
+
 bool verifyDelayedSignalLifecycle()
 {
     using namespace std::chrono_literals;
@@ -1253,6 +1449,12 @@ bool verifyLiveProfilerWindowStatistics(std::uint64_t worker_tid)
     }
     spark::ProfilerServiceTestAccess::cancel(service);
 
+    if (!spark::ProfilerServiceTestAccess::start(service, options, worker_tid, error)) {
+        std::fprintf(stderr, "live profiler windows: new session failed after repeated exports\n");
+        return false;
+    }
+    spark::ProfilerServiceTestAccess::cancel(service);
+
     ProtoField time_windows;
     if (!findProtoField(live_data, 6, time_windows) || time_windows.wire_type != 2) {
         std::fprintf(stderr, "live profiler windows: time_windows was absent\n");
@@ -1296,6 +1498,339 @@ bool verifyLiveProfilerWindowStatistics(std::uint64_t worker_tid)
                      windows.size(), statistic_windows.size(), static_cast<int>(has_graph_fields));
         return false;
     }
+    return true;
+}
+
+bool verifyLiveExportStopCancel(std::uint64_t worker_tid)
+{
+    using namespace std::chrono_literals;
+
+    for (int operation = 0; operation < 2; ++operation) {
+        spark::Profiler profiler;
+        spark::ProfilerOptions options;
+        options.interval_ms = 1;
+        std::string error;
+        if (!profiler.start(options, worker_tid, error)) {
+            return false;
+        }
+
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool paused = false;
+        bool release = false;
+        bool stop_requested = false;
+        spark::ProfilerTestAccess::setLiveExportPausedHook(profiler, [&] {
+            std::unique_lock lock(mutex);
+            paused = true;
+            cv.notify_all();
+            cv.wait(lock, [&] { return release; });
+        });
+        spark::ProfilerTestAccess::setStopRequestedHook(profiler, [&] {
+            std::scoped_lock lock(mutex);
+            stop_requested = true;
+            cv.notify_all();
+        });
+
+        std::atomic<bool> live_ok{false};
+        const std::uint64_t service_starts = spark::ProfilerTestAccess::samplerServiceStarts(profiler);
+        std::thread live([&] {
+            try {
+                live_ok.store(!profiler.liveExport({}).empty());
+            }
+            catch (...) {
+                live_ok.store(false);
+            }
+        });
+        {
+            std::unique_lock lock(mutex);
+            if (!cv.wait_for(lock, 2s, [&] { return paused; })) {
+                release = true;
+                cv.notify_all();
+                live.join();
+                return false;
+            }
+        }
+
+        std::atomic<bool> finish_ok{false};
+        std::thread finish([&] {
+            std::string finish_error;
+            if (operation == 0) {
+                if (profiler.stopSampling(finish_error)) {
+                    finish_ok.store(!profiler.exportData({}).empty());
+                }
+            }
+            else {
+                finish_ok.store(profiler.cancel(finish_error));
+            }
+        });
+        {
+            std::unique_lock lock(mutex);
+            if (!cv.wait_for(lock, 2s, [&] { return stop_requested; })) {
+                release = true;
+                cv.notify_all();
+                live.join();
+                finish.join();
+                return false;
+            }
+            release = true;
+        }
+        cv.notify_all();
+        live.join();
+        finish.join();
+        spark::ProfilerTestAccess::setLiveExportPausedHook(profiler, {});
+        spark::ProfilerTestAccess::setStopRequestedHook(profiler, {});
+
+        if (!live_ok.load() || !finish_ok.load() || profiler.running() ||
+            spark::ProfilerTestAccess::samplerServiceStarts(profiler) != service_starts ||
+            spark::ProfilerTestAccess::samplerRunning(profiler)) {
+            std::fprintf(stderr, "live lifecycle: stopped session was resumed (operation=%d)\n", operation);
+            return false;
+        }
+        if (!profiler.start(options, worker_tid, error) || !profiler.cancel(error)) {
+            std::fprintf(stderr, "live lifecycle: new session could not start after operation %d\n", operation);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool verifyLiveExportTimeout(std::uint64_t worker_tid)
+{
+    using namespace std::chrono_literals;
+
+    spark::StatisticsService statistics;
+    spark::TrustedViewersState trusted_viewers(std::filesystem::temp_directory_path() / "spark-timeout-viewers.json");
+    TestDispatcher dispatcher;
+    TestMetadataProvider metadata_provider;
+    TestNotifier notifier;
+    spark::ProfilerService service(statistics, {}, std::filesystem::temp_directory_path(), {}, {}, {}, false, 10,
+                                   "by-pool", "default", trusted_viewers, dispatcher, metadata_provider, notifier);
+    spark::ProfilerOptions options;
+    options.interval_ms = 1;
+    options.save_to_file = true;
+    std::string error;
+    if (!spark::ProfilerServiceTestAccess::start(service, options, worker_tid, error)) {
+        return false;
+    }
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool paused = false;
+    bool release = false;
+    bool stop_requested = false;
+    spark::ProfilerServiceTestAccess::setLiveExportPausedHook(service, [&] {
+        std::unique_lock lock(mutex);
+        paused = true;
+        cv.notify_all();
+        cv.wait(lock, [&] { return release; });
+    });
+    spark::ProfilerServiceTestAccess::setStopRequestedHook(service, [&] {
+        std::scoped_lock lock(mutex);
+        stop_requested = true;
+        cv.notify_all();
+    });
+
+    std::atomic<bool> live_failed{false};
+    const std::uint64_t service_starts = spark::ProfilerServiceTestAccess::samplerServiceStarts(service);
+    std::thread live([&] {
+        try {
+            spark::ProfilerServiceTestAccess::liveExport(service, {});
+        }
+        catch (...) {
+            live_failed.store(true);
+        }
+    });
+    {
+        std::unique_lock lock(mutex);
+        if (!cv.wait_for(lock, 2s, [&] { return paused; })) {
+            release = true;
+            cv.notify_all();
+            live.join();
+            return false;
+        }
+    }
+    spark::ProfilerServiceTestAccess::expire(service);
+    std::thread timeout([&] { service.onTick(1.0); });
+    {
+        std::unique_lock lock(mutex);
+        if (!cv.wait_for(lock, 2s, [&] { return stop_requested; })) {
+            release = true;
+            cv.notify_all();
+            live.join();
+            timeout.join();
+            return false;
+        }
+        release = true;
+    }
+    cv.notify_all();
+    live.join();
+    timeout.join();
+    service.shutdown();
+    if (live_failed.load() || service.running() ||
+        spark::ProfilerServiceTestAccess::samplerServiceStarts(service) != service_starts ||
+        spark::ProfilerServiceTestAccess::samplerRunning(service)) {
+        std::fprintf(stderr, "live lifecycle: timeout resumed a stopped sampler\n");
+        return false;
+    }
+    spark::ProfilerServiceTestAccess::setLiveExportPausedHook(service, {});
+    spark::ProfilerServiceTestAccess::setStopRequestedHook(service, {});
+    if (!spark::ProfilerServiceTestAccess::start(service, options, worker_tid, error)) {
+        std::fprintf(stderr, "live lifecycle: new session failed after timeout\n");
+        return false;
+    }
+    spark::ProfilerServiceTestAccess::cancel(service);
+    return true;
+}
+
+bool verifyViewerShutdownDuringLiveExport(std::uint64_t worker_tid)
+{
+    using namespace std::chrono_literals;
+
+    spark::StatisticsService statistics;
+    spark::TrustedViewersState trusted_viewers(std::filesystem::temp_directory_path() / "spark-shutdown-viewers.json");
+    TestDispatcher dispatcher;
+    TestMetadataProvider metadata_provider;
+    TestNotifier notifier;
+    TestCommandSender sender;
+    spark::ProfilerService service(statistics, {}, std::filesystem::temp_directory_path(), {}, {}, {}, false, 10,
+                                   "by-pool", "default", trusted_viewers, dispatcher, metadata_provider, notifier);
+    spark::ProfilerOptions options;
+    options.interval_ms = 1;
+    std::string error;
+    if (!spark::ProfilerServiceTestAccess::start(service, options, worker_tid, error)) {
+        return false;
+    }
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool paused = false;
+    bool release = false;
+    spark::ProfilerServiceTestAccess::setLiveExportPausedHook(service, [&] {
+        std::unique_lock lock(mutex);
+        paused = true;
+        cv.notify_all();
+        cv.wait(lock, [&] { return release; });
+    });
+    spark::ProfilerServiceTestAccess::setViewerOpenFunction(
+        service, [](spark::ViewerSocket &, const spark::ViewerSocket::UploadCallback &upload) {
+            upload("channel");
+            return std::string();
+        });
+    service.cmdOpen(sender);
+    const std::uint64_t service_starts = spark::ProfilerServiceTestAccess::samplerServiceStarts(service);
+    {
+        std::unique_lock lock(mutex);
+        if (!cv.wait_for(lock, 3s, [&] { return paused; })) {
+            return false;
+        }
+    }
+    std::atomic<bool> shutdown_started{false};
+    std::thread shutdown([&] {
+        shutdown_started.store(true);
+        service.shutdown();
+    });
+    if (!waitForCondition(
+            [&] { return shutdown_started.load() && spark::ProfilerServiceTestAccess::stopRequested(service); }, 1s)) {
+        return false;
+    }
+    {
+        std::scoped_lock lock(mutex);
+        release = true;
+    }
+    cv.notify_all();
+    shutdown.join();
+    spark::ProfilerServiceTestAccess::setLiveExportPausedHook(service, {});
+    if (!service.shutdownBackend(error) || service.running() ||
+        spark::ProfilerServiceTestAccess::samplerServiceStarts(service) != service_starts ||
+        spark::ProfilerServiceTestAccess::samplerRunning(service)) {
+        std::fprintf(stderr, "live lifecycle: viewer shutdown left sampler workers alive\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifyWorkerExceptionBoundaries(std::uint64_t worker_tid)
+{
+    using namespace std::chrono_literals;
+
+    spark::Sampler sampler;
+    spark::SamplerConfig sampler_config;
+    sampler_config.interval_us = 1000;
+    sampler.setTarget(worker_tid);
+    spark::SamplerTestAccess::setSamplerThreadHook(sampler, [] { throw std::runtime_error("injected"); });
+    if (!sampler.start(sampler_config) || !waitForCondition([&] { return !sampler.running(); }, 2s)) {
+        return false;
+    }
+    std::string worker_error;
+    if (!sampler.failure(worker_error) || !sampler.stop() || spark::SamplerTestAccess::workersJoinable(sampler)) {
+        std::fprintf(stderr, "worker exception: sampler worker was not contained\n");
+        return false;
+    }
+    spark::SamplerTestAccess::setSamplerThreadHook(sampler, {});
+    if (!sampler.start(sampler_config) || !sampler.stop()) {
+        std::fprintf(stderr, "worker exception: sampler could not restart\n");
+        return false;
+    }
+
+    spark::StatisticsService statistics;
+    spark::TrustedViewersState trusted_viewers(std::filesystem::temp_directory_path() / "spark-worker-viewers.json");
+    TestDispatcher dispatcher;
+    TestMetadataProvider metadata_provider;
+    TestNotifier notifier;
+    TestCommandSender sender;
+    spark::ProfilerService service(statistics, {}, std::filesystem::temp_directory_path(), {}, {}, {}, false, 10,
+                                   "by-pool", "default", trusted_viewers, dispatcher, metadata_provider, notifier);
+    spark::ProfilerOptions options;
+    options.interval_ms = 1;
+    options.save_to_file = true;
+    std::string error;
+    if (!spark::ProfilerServiceTestAccess::start(service, options, worker_tid, error)) {
+        return false;
+    }
+    spark::ProfilerServiceTestAccess::setLiveExportPausedHook(
+        service, [] { throw std::runtime_error("injected live serializer failure"); });
+    spark::ProfilerServiceTestAccess::setViewerOpenFunction(
+        service, [](spark::ViewerSocket &, const spark::ViewerSocket::UploadCallback &upload) {
+            upload("channel");
+            return std::string();
+        });
+    service.cmdOpen(sender);
+    if (!waitForCondition([&] { return !spark::ProfilerServiceTestAccess::viewerOpenPending(service); }, 3s) ||
+        !service.running() || !spark::ProfilerServiceTestAccess::samplerRunning(service)) {
+        std::fprintf(stderr, "worker exception: viewer failure escaped or left sampler paused\n");
+        return false;
+    }
+    spark::ProfilerServiceTestAccess::setLiveExportPausedHook(service, {});
+    spark::ProfilerServiceTestAccess::setViewerOpenFunction(
+        service, [](spark::ViewerSocket &, const spark::ViewerSocket::UploadCallback &) { return std::string(); });
+    service.cmdOpen(sender);
+    if (!waitForCondition([&] { return !spark::ProfilerServiceTestAccess::viewerOpenPending(service); }, 3s)) {
+        return false;
+    }
+
+    dispatcher.setReject(true);
+    service.cmdStop(sender, spark::Arguments({"stop", "--save-to-file"}));
+    if (!waitForCondition([&] { return spark::ProfilerServiceTestAccess::exportCompletionPending(service); }, 3s)) {
+        return false;
+    }
+    dispatcher.setReject(false);
+    service.onTick(1.0);
+    if (service.exporting()) {
+        std::fprintf(stderr, "worker exception: rejected export completion did not recover\n");
+        return false;
+    }
+    service.shutdown();
+
+    spark::HealthCommand health(statistics, metadata_provider, {}, {}, dispatcher, notifier);
+    spark::HealthCommandTestAccess::setUploadFunction(health,
+                                                      [](const std::string &, const std::string &, const std::string &,
+                                                         const std::string &) -> spark::UploadResult { throw 7; });
+    health.cmdHealth(sender, spark::Arguments({"health", "--upload"}));
+    if (!waitForCondition([&] { return !spark::HealthCommandTestAccess::uploading(health); }, 3s)) {
+        std::fprintf(stderr, "worker exception: health worker exception escaped\n");
+        return false;
+    }
+    health.shutdown();
     return true;
 }
 
@@ -2895,11 +3430,14 @@ int main(int argc, char **argv)
         !verifyThreadSelectorSemantics() || !verifyTickMonitor() || !verifyStatisticsService() ||
         !verifySystemResourceStats() || !verifyWorldGaugeStatistics() || !verifyWorldGaugeAbsentWhenNotRecorded() ||
         !verifyThreadDiscovery() || !verifyMultiThreadSerialization() || !verifyStatisticsSerialization() ||
-        !verifyLiveProfilerWindowStatistics(GWorkerTid.load()) || !verifyAsyncNetworkCommands(GWorkerTid.load()) ||
+        !verifyHealthServerConfigurations() || !verifyLiveProfilerWindowStatistics(GWorkerTid.load()) ||
+        !verifyLiveExportStopCancel(GWorkerTid.load()) || !verifyLiveExportTimeout(GWorkerTid.load()) ||
+        !verifyViewerShutdownDuringLiveExport(GWorkerTid.load()) ||
+        !verifyWorkerExceptionBoundaries(GWorkerTid.load()) || !verifyAsyncNetworkCommands(GWorkerTid.load()) ||
         !verifyBackgroundCommandValidation(GWorkerTid.load()) || !verifyRecoveryWriterLifetime(GWorkerTid.load()) ||
         !verifyUploadFailure() || !verifyCaptureLifecycle() ||
 #ifdef __linux__
-        !verifyDelayedSignalLifecycle() ||
+        !verifyDelayedSignalLifecycle() || !verifyActiveCaptureTeardown(GWorkerTid.load()) ||
 #endif
 #ifdef _WIN32
         !verifyWindowsThreadActivityDetection() ||

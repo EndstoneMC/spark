@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -25,6 +26,7 @@
 namespace spark {
 
 struct SamplerTestAccess;
+struct ProfilerTestAccess;
 
 struct SamplerConfig {
     int interval_us = 4000;
@@ -56,13 +58,16 @@ public:
     ~Sampler();
 
     bool start(const SamplerConfig &config);  // arms capture + spawns threads
-    void stop();                              // stops + joins; safe to call once
+    bool stop();                              // stops + joins; safe to call once
 
     // Temporarily stop both service threads without clearing accumulated data
     // or disarming the capture backend. Allows safe concurrent reads from
     // exportData() during a live viewer window rotate.
     void pauseForExport();
-    void resumeAfterExport();
+    bool resumeAfterExport();
+
+    bool running() const { return running_.load(); }
+    bool failure(std::string &error) const;
 
     void setTarget(std::uint64_t tid, std::string name = "Server thread")
     {
@@ -93,6 +98,7 @@ public:
 
 private:
     friend struct SamplerTestAccess;
+    friend struct ProfilerTestAccess;
 
     struct TickEvent {
         std::uint64_t tick_id;
@@ -108,6 +114,8 @@ private:
     void maybePruneHistory(std::int32_t current_window);
     void maybePruneTickHistory(std::int32_t current_window);
     void recordTickDecision(std::uint64_t tick_id, bool keep);
+    void markWorkerFailure() noexcept;
+    bool startServiceThreads();
 
     SamplerConfig config_;
     ThreadSelector thread_selector_;
@@ -119,6 +127,8 @@ private:
     std::atomic<std::uint64_t> sample_count_{0};
     std::atomic<std::uint64_t> sampler_tid_{0};
     std::atomic<std::uint64_t> aggregator_tid_{0};
+    std::atomic<bool> worker_failed_{false};
+    std::atomic<std::uint64_t> service_start_count_{0};
     std::string target_name_ = "Server thread";
     std::chrono::steady_clock::time_point start_time_{};
 
@@ -154,6 +164,8 @@ private:
     // aggregator thread only.
     RecoverySink *recovery_sink_ = nullptr;
     std::unordered_set<std::uint64_t> journaled_threads_;
+    std::function<void()> sampler_thread_hook_;
+    std::function<void()> aggregator_thread_hook_;
 
     static constexpr std::int32_t kHistorySeconds = 60 * 60;
     static constexpr std::int32_t kHistoryPruneIntervalSeconds = 60;

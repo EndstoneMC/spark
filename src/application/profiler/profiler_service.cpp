@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <exception>
 #include <string>
 #include <utility>
 #include <vector>
@@ -48,22 +49,21 @@ ProfilerService::ProfilerService(StatisticsService &statistics, std::string bds_
 
 ProfilerService::~ProfilerService()
 {
-    lifetime_.reset();
-    closeViewerSocket();
-    stopViewerWorker();
-    if (export_thread_.joinable()) {
-        export_thread_.join();
-    }
+    shutdown();
 }
 
 void ProfilerService::shutdown()
 {
+    profiler_.requestStop();
     lifetime_.reset();
     closeViewerSocket();
     stopViewerWorker();
     if (export_thread_.joinable()) {
         export_thread_.join();
     }
+    export_completion_pending_.store(false);
+    exporting_.store(false);
+    restart_background_after_export_ = false;
 }
 
 void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
@@ -468,7 +468,10 @@ void ProfilerService::cmdOpen(CommandSender &sender)
     });
 
     ExportContext context = captureLiveContext(nowMs());
-    startViewerWorker();
+    if (!startViewerWorker()) {
+        sender.sendErrorMessage("Failed to start the live viewer worker.");
+        return;
+    }
     {
         std::scoped_lock lock(viewer_update_mutex_);
         ++viewer_generation_;
@@ -485,16 +488,23 @@ void ProfilerService::cmdOpen(CommandSender &sender)
     sender.sendMessage("{}Opening the live viewer...{}", kColorGold, kColorGray);
 }
 
-void ProfilerService::startViewerWorker()
+bool ProfilerService::startViewerWorker()
 {
     if (viewer_worker_running_.load()) {
-        return;
+        return true;
     }
     if (viewer_update_thread_.joinable()) {
         viewer_update_thread_.join();
     }
     viewer_worker_running_.store(true);
-    viewer_update_thread_ = std::thread([this]() { viewerUpdateLoop(); });
+    try {
+        viewer_update_thread_ = std::thread([this] { viewerUpdateLoop(); });
+    }
+    catch (...) {
+        viewer_worker_running_.store(false);
+        return false;
+    }
+    return true;
 }
 
 void ProfilerService::stopViewerWorker()
@@ -506,63 +516,82 @@ void ProfilerService::stopViewerWorker()
     }
 }
 
-void ProfilerService::viewerUpdateLoop()
+void ProfilerService::viewerUpdateLoop() noexcept
 {
-    while (viewer_worker_running_.load()) {
-        ViewerWorkItem work;
-        {
-            std::unique_lock<std::mutex> lock(viewer_update_mutex_);
-            viewer_update_cv_.wait(lock, [this] { return !viewer_worker_running_.load() || viewer_work_.has_value(); });
-            if (!viewer_worker_running_.load()) {
-                break;
-            }
-            work = std::move(viewer_work_).value_or(ViewerWorkItem{});
-            viewer_work_.reset();
-            viewer_work_active_ = true;
-        }
-
-        if (work.type == ViewerWorkItem::Type::Open) {
-            std::string url;
-            if (viewerGenerationCurrent(work.generation) && profiler_.running()) {
-                url = viewer_open_fn_(*work.socket, [this, &work](const std::string &channel_info_proto) {
-                    if (!viewerGenerationCurrent(work.generation) || !profiler_.running()) {
-                        return std::string();
-                    }
-                    work.context.socket_channel_info_proto = channel_info_proto;
-                    return uploadSamplerData(work.context);
-                });
-            }
+    try {
+        while (viewer_worker_running_.load()) {
+            ViewerWorkItem work;
             {
+                std::unique_lock<std::mutex> lock(viewer_update_mutex_);
+                viewer_update_cv_.wait(lock,
+                                       [this] { return !viewer_worker_running_.load() || viewer_work_.has_value(); });
+                if (!viewer_worker_running_.load()) {
+                    break;
+                }
+                work = std::move(viewer_work_).value_or(ViewerWorkItem{});
+                viewer_work_.reset();
+                viewer_work_active_ = true;
+            }
+
+            if (work.type == ViewerWorkItem::Type::Open) {
+                std::string url;
+                if (viewerGenerationCurrent(work.generation) && profiler_.running()) {
+                    url = viewer_open_fn_(*work.socket, [this, &work](const std::string &channel_info_proto) {
+                        if (!viewerGenerationCurrent(work.generation) || !profiler_.running()) {
+                            return std::string();
+                        }
+                        work.context.socket_channel_info_proto = channel_info_proto;
+                        return uploadSamplerData(work.context);
+                    });
+                }
+                {
+                    std::scoped_lock lock(viewer_update_mutex_);
+                    viewer_work_active_ = false;
+                    if (work.generation == viewer_generation_) {
+                        pending_viewer_url_ = std::move(url);
+                        pending_viewer_sender_ = std::move(work.sender_name);
+                        completed_viewer_socket_ = std::move(work.socket);
+                    }
+                }
+                const std::weak_ptr<int> lifetime = lifetime_;
+                try {
+                    dispatcher_.runOnMainThread([this, lifetime, generation = work.generation]() {
+                        if (lifetime.expired()) {
+                            return;
+                        }
+                        completeViewerOpen(generation);
+                    });
+                }
+                catch (...) {
+                    std::scoped_lock lock(viewer_update_mutex_);
+                    viewer_open_pending_ = false;
+                    completed_viewer_socket_.reset();
+                }
+            }
+            else {
+                if (viewerGenerationCurrent(work.generation) && profiler_.running()) {
+                    std::string bytebin_key = uploadSamplerData(work.context);
+                    if (!bytebin_key.empty() && viewerGenerationCurrent(work.generation)) {
+                        work.socket->sendUpdate(bytebin_key);
+                    }
+                }
                 std::scoped_lock lock(viewer_update_mutex_);
                 viewer_work_active_ = false;
-                if (work.generation == viewer_generation_) {
-                    pending_viewer_url_ = std::move(url);
-                    pending_viewer_sender_ = std::move(work.sender_name);
-                    completed_viewer_socket_ = std::move(work.socket);
-                }
-            }
-            const std::weak_ptr<int> lifetime = lifetime_;
-            try {
-                dispatcher_.runOnMainThread([this, lifetime, generation = work.generation]() {
-                    if (lifetime.expired()) {
-                        return;
-                    }
-                    completeViewerOpen(generation);
-                });
-            }
-            catch (...) {
-                viewer_worker_running_.store(false);
             }
         }
-        else {
-            if (viewerGenerationCurrent(work.generation) && profiler_.running()) {
-                std::string bytebin_key = uploadSamplerData(work.context);
-                if (!bytebin_key.empty() && viewerGenerationCurrent(work.generation)) {
-                    work.socket->sendUpdate(bytebin_key);
-                }
-            }
+    }
+    catch (...) {
+        viewer_worker_running_.store(false);
+        viewer_worker_failed_.store(true, std::memory_order_release);
+        try {
             std::scoped_lock lock(viewer_update_mutex_);
             viewer_work_active_ = false;
+            viewer_open_pending_ = false;
+            viewer_work_.reset();
+            completed_viewer_socket_.reset();
+        }
+        catch (...) {
+            viewer_worker_failed_.store(true, std::memory_order_release);
         }
     }
 }
@@ -735,14 +764,35 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
     }
 
     exporting_.store(true);
-    export_thread_ = std::thread([this]() { runExport(); });
+    try {
+        export_thread_ = std::thread([this] { runExport(); });
+    }
+    catch (...) {
+        exporting_.store(false);
+        if (restart_background_after_export_) {
+            restart_background_after_export_ = false;
+            background_suppressed_ = false;
+            background_started_ = startBackgroundSession();
+        }
+        notifier_.notify(sender_name, "Failed to start the profile export worker.");
+    }
 }
 
-void ProfilerService::runExport()
+void ProfilerService::runExport() noexcept
 {
-    ProfileExporter::Result result = exporter_.exportProfile(profiler_, pending_ctx_, pending_save_);
-    pending_outcome_ = result.outcome;
-    pending_result_ = std::move(result.message);
+    try {
+        ProfileExporter::Result result = exporter_.exportProfile(profiler_, pending_ctx_, pending_save_);
+        pending_outcome_ = result.outcome;
+        pending_result_ = std::move(result.message);
+    }
+    catch (const std::exception &error) {
+        pending_outcome_ = ExportOutcome::Failed;
+        pending_result_ = std::string("Export failed: ") + error.what();
+    }
+    catch (...) {
+        pending_outcome_ = ExportOutcome::Failed;
+        pending_result_ = "Export failed with an unknown error.";
+    }
     const std::weak_ptr<int> lifetime = lifetime_;
     try {
         dispatcher_.runOnMainThread([this, lifetime]() {
@@ -753,8 +803,7 @@ void ProfilerService::runExport()
         });
     }
     catch (...) {
-        exporting_.store(false);
-        throw;
+        export_completion_pending_.store(true, std::memory_order_release);
     }
 }
 
@@ -802,6 +851,12 @@ void ProfilerService::announceResult()
 
 void ProfilerService::onTick(double mspt)
 {
+    if (export_completion_pending_.exchange(false, std::memory_order_acq_rel)) {
+        announceResult();
+    }
+    if (viewer_worker_failed_.exchange(false, std::memory_order_acq_rel)) {
+        closeViewerSocket();
+    }
     if (!background_started_ && !background_suppressed_ && background_enabled_ && main_tid_ != 0 &&
         !profiler_.running() && !exporting_.load()) {
         auto now = nowMs();

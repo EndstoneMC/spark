@@ -75,6 +75,7 @@ struct HealthData {
     StatisticsSnapshot statistics;
     std::int64_t generated_time_ms = 0;
     std::vector<PluginInfo> plugins;
+    std::map<std::string, std::string> server_configurations;
     std::map<std::string, std::string> extra_platform_metadata;
     std::map<std::int32_t, WindowStats> window_stats;
 };

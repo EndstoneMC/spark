@@ -112,13 +112,13 @@ private:
     bool background_suppressed_ = false;
     void sendAllocationHookCoverage(CommandSender &sender);
     void finishProfiler(const std::string &sender_name, bool sender_is_player, bool save, const std::string &comment);
-    void runExport();
+    void runExport() noexcept;
     void announceResult();
     bool startBackgroundSession();
     void closeViewerSocket();
-    void startViewerWorker();
+    bool startViewerWorker();
     void stopViewerWorker();
-    void viewerUpdateLoop();
+    void viewerUpdateLoop() noexcept;
     void completeViewerOpen(std::uint64_t generation);
     ExportContext captureLiveContext(std::int64_t now_ms);
     std::string buildLiveSamplerData(const ExportContext &context);
@@ -137,6 +137,7 @@ private:
     ProfileExporter exporter_;
 
     std::atomic<bool> exporting_{false};
+    std::atomic<bool> export_completion_pending_{false};
     SessionType session_type_ = SessionType::None;
     bool restart_background_after_export_ = false;
     bool background_enabled_ = true;
@@ -177,6 +178,7 @@ private:
     mutable std::mutex viewer_update_mutex_;
     std::condition_variable viewer_update_cv_;
     std::atomic<bool> viewer_worker_running_{false};
+    std::atomic<bool> viewer_worker_failed_{false};
     std::optional<ViewerWorkItem> viewer_work_;
     bool viewer_work_active_ = false;
     bool viewer_open_pending_ = false;

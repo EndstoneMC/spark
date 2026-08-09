@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <regex>
+#include <stdexcept>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -248,9 +249,8 @@ std::uint64_t Profiler::liveAllocationBytes() const
 
 bool Profiler::backendFailure(std::string &error) const
 {
-    if (mode_ != ProfileMode::Allocation) {
-        error.clear();
-        return false;
+    if (mode_ == ProfileMode::Execution) {
+        return sampler_.failure(error);
     }
     return allocation_sampler_.failure(error);
 }
@@ -267,10 +267,12 @@ std::size_t Profiler::allocationHookTargetCount() const
 
 bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std::string &error)
 {
+    std::scoped_lock lifecycle_lock(lifecycle_mutex_);
     if (running_.load()) {
         error = "profiler is already running";
         return false;
     }
+    sampling_stop_requested_.store(false, std::memory_order_release);
 
     if (options.regex && options.threads.empty()) {
         error = "--regex requires at least one --thread pattern";
@@ -408,6 +410,11 @@ void Profiler::onTick(double mspt_ms)
 
 bool Profiler::stopSampling(std::string &error)
 {
+    sampling_stop_requested_.store(true, std::memory_order_release);
+    if (stop_requested_hook_) {
+        stop_requested_hook_();
+    }
+    std::scoped_lock lifecycle_lock(lifecycle_mutex_);
     error.clear();
     if (!running_.load()) {
         return true;
@@ -423,8 +430,16 @@ bool Profiler::stopSampling(std::string &error)
         stopRecoveryWriter();
     }
     else {
-        sampler_.stop();
+        if (!sampler_.stop()) {
+            error = sampler_.lastError();
+            return false;
+        }
         stopRecoveryWriter();
+        if (sampler_.failure(error)) {
+            running_.store(false);
+            end_time_ms_ = requested_end_time_ms;
+            return false;
+        }
     }
     running_.store(false);
     end_time_ms_ = requested_end_time_ms;
@@ -746,15 +761,53 @@ std::string Profiler::stop(const ExportContext &ctx)
 
 std::string Profiler::liveExport(const ExportContext &ctx)
 {
-    if (!running_.load()) {
+    std::scoped_lock lifecycle_lock(lifecycle_mutex_);
+    if (!running_.load() || sampling_stop_requested_.load(std::memory_order_acquire)) {
         return {};
     }
     if (mode_ == ProfileMode::Allocation) {
         return {};
     }
     sampler_.pauseForExport();
-    std::string data = exportData(ctx);
-    sampler_.resumeAfterExport();
+    std::string sampler_error;
+    if (sampler_.failure(sampler_error)) {
+        if (!sampler_.stop()) {
+            throw std::runtime_error(sampler_.lastError());
+        }
+        running_.store(false);
+        stopRecoveryWriter();
+        throw std::runtime_error(sampler_error);
+    }
+    std::string data;
+    try {
+        if (live_export_paused_hook_) {
+            live_export_paused_hook_();
+        }
+        data = exportData(ctx);
+    }
+    catch (...) {
+        if (sampling_stop_requested_.load(std::memory_order_acquire)) {
+            sampler_.stop();
+        }
+        else if (!sampler_.resumeAfterExport()) {
+            sampler_.stop();
+            running_.store(false);
+            stopRecoveryWriter();
+        }
+        throw;
+    }
+    if (sampling_stop_requested_.load(std::memory_order_acquire)) {
+        if (!sampler_.stop()) {
+            throw std::runtime_error(sampler_.lastError());
+        }
+        return data;
+    }
+    if (!sampler_.resumeAfterExport()) {
+        sampler_.stop();
+        running_.store(false);
+        stopRecoveryWriter();
+        throw std::runtime_error("the sampler service threads could not be resumed after live export");
+    }
     return data;
 }
 
@@ -785,6 +838,8 @@ void Profiler::cancel()
 
 bool Profiler::shutdown(std::string &error)
 {
+    sampling_stop_requested_.store(true, std::memory_order_release);
+    std::scoped_lock lifecycle_lock(lifecycle_mutex_);
     error.clear();
     if (running_.load() && mode_ == ProfileMode::Allocation) {
         if (!allocation_sampler_.shutdown(error)) {
@@ -795,7 +850,10 @@ bool Profiler::shutdown(std::string &error)
         return true;
     }
     if (running_.load()) {
-        sampler_.stop();
+        if (!sampler_.stop()) {
+            error = sampler_.lastError();
+            return false;
+        }
         stopRecoveryWriter();
         running_.store(false);
     }

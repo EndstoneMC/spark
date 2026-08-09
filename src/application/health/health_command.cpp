@@ -231,7 +231,12 @@ void HealthCommand::uploadHealthReport(CommandSender &sender)
         const std::string sender_name = sender.getName();
         const bool sender_is_player = sender.isPlayer();
         upload_thread_ = std::thread([this, data = std::move(data), sender_name, sender_is_player, now_ms]() mutable {
-            runHealthUpload(data, sender_name, sender_is_player, now_ms);
+            try {
+                runHealthUpload(data, sender_name, sender_is_player, now_ms);
+            }
+            catch (...) {
+                uploading_.store(false);
+            }
         });
     }
     catch (const std::exception &error) {
@@ -292,6 +297,7 @@ HealthData HealthCommand::captureHealthData(const CommandSender &sender, std::in
 
     data.statistics = ctx.statistics;
     data.plugins = ctx.plugins;
+    data.server_configurations = ctx.server_configurations;
     data.window_stats = ctx.window_stats;
 
     if (!ctx.bds_executable_sha256.empty()) {

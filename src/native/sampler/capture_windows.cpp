@@ -36,17 +36,18 @@ bool Capture::arm()
     return true;
 }
 
-void Capture::disarm()
+bool Capture::disarm()
 {
     {
         std::scoped_lock lock(dbgHelpMutex());
         if (!GArmed) {
-            return;
+            return true;
         }
         GThreadCycles.clear();
         GArmed = false;
     }
     releaseDbgHelp();
+    return true;
 }
 
 bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)

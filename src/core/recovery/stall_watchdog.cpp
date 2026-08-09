@@ -27,14 +27,24 @@ void StallWatchdog::start()
         return;
     }
     state_.store(State::Healthy, std::memory_order_release);
-    thread_ = std::thread([this]() { loop(); });
+    try {
+        thread_ = std::thread([this] {
+            try {
+                loop();
+            }
+            catch (...) {
+                running_.store(false, std::memory_order_release);
+            }
+        });
+    }
+    catch (...) {
+        running_.store(false);
+    }
 }
 
 void StallWatchdog::stop()
 {
-    if (!running_.exchange(false)) {
-        return;
-    }
+    running_.store(false);
     state_.store(State::Stopping, std::memory_order_release);
     if (thread_.joinable()) {
         thread_.join();

@@ -4,10 +4,12 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <thread>
 
 #include <cpptrace/cpptrace.hpp>
 #include <sys/syscall.h>
@@ -28,10 +30,15 @@ constexpr std::uint64_t KComplete = 3;
 std::atomic<std::uint64_t> GState{0};
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
 std::atomic<std::uint32_t> GNextToken{1};
+std::atomic<std::uint32_t> GActiveCaptureCalls{0};
 CaptureBuffer GResult;
 sem_t GDone;
 std::atomic<bool> GArmed{false};
 struct sigaction GPreviousAction{};
+std::atomic<std::atomic<bool> *> GTestHandlerEntered{nullptr};
+std::atomic<std::atomic<bool> *> GTestHandlerRelease{nullptr};
+static_assert(std::atomic<bool>::is_always_lock_free);
+static_assert(std::atomic<std::atomic<bool> *>::is_always_lock_free);
 
 std::uint64_t captureState(std::uint32_t token, std::uint64_t phase)
 {
@@ -47,6 +54,12 @@ void handler(int, siginfo_t *info, void *)
     std::uint64_t expected = captureState(token, KRequested);
     if (!GState.compare_exchange_strong(expected, captureState(token, KCapturing), std::memory_order_acq_rel)) {
         return;
+    }
+    if (auto *entered = GTestHandlerEntered.load(std::memory_order_acquire)) {
+        entered->store(true, std::memory_order_release);
+        auto *release = GTestHandlerRelease.load(std::memory_order_acquire);
+        while (release != nullptr && !release->load(std::memory_order_acquire)) {
+        }
     }
     GResult.count = cpptrace::safe_generate_raw_trace(GResult.ips, CaptureBuffer::kMax, 0);
     GState.store(captureState(token, KComplete), std::memory_order_release);
@@ -110,10 +123,14 @@ bool Capture::arm()
     return true;
 }
 
-void Capture::disarm()
+bool Capture::disarm()
 {
     if (!GArmed.exchange(false)) {
-        return;
+        return true;
+    }
+    if (GActiveCaptureCalls.load(std::memory_order_acquire) != 0) {
+        GArmed.store(true, std::memory_order_release);
+        return false;
     }
     std::uint64_t state = GState.load(std::memory_order_acquire);
     if ((state & KPhaseMask) == KRequested) {
@@ -123,20 +140,34 @@ void Capture::disarm()
     ignored.sa_handler = SIG_IGN;
     sigemptyset(&ignored.sa_mask);
     sigaction(KSignal, &ignored, nullptr);
-    while ((GState.load(std::memory_order_acquire) & KPhaseMask) == KCapturing) {
-        const timespec deadline = deadlineAfterOneSecond();
-        if (sem_timedwait(&GDone, &deadline) != 0 && errno != EINTR) {
-            break;
-        }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while ((GState.load(std::memory_order_acquire) & KPhaseMask) == KCapturing &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if ((GState.load(std::memory_order_acquire) & KPhaseMask) == KCapturing) {
+        GArmed.store(true, std::memory_order_release);
+        return false;
     }
     sigaction(KSignal, &GPreviousAction, nullptr);
     GState.store(0, std::memory_order_release);
     sem_destroy(&GDone);
+    return true;
+}
+
+void Capture::setHandlerGateForTesting(std::atomic<bool> *entered, std::atomic<bool> *release)
+{
+    GTestHandlerRelease.store(release, std::memory_order_release);
+    GTestHandlerEntered.store(entered, std::memory_order_release);
 }
 
 bool Capture::captureThread(std::uint64_t tid, CaptureBuffer &out)
 {
-    if (!GArmed.load()) {
+    GActiveCaptureCalls.fetch_add(1, std::memory_order_acq_rel);
+    struct ActiveCallGuard {
+        ~ActiveCallGuard() { GActiveCaptureCalls.fetch_sub(1, std::memory_order_release); }
+    } active_call_guard;
+    if (!GArmed.load(std::memory_order_acquire)) {
         return false;
     }
     if ((GState.load(std::memory_order_acquire) & KPhaseMask) == KCapturing) {

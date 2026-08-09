@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -101,6 +102,7 @@ public:
     // once sampling has stopped.
     bool stopSampling(std::string &error);
     void stopSampling();  // compatibility helper that discards the error
+    void requestStop() { sampling_stop_requested_.store(true, std::memory_order_release); }
     std::string exportData(const ExportContext &ctx) const;
 
     // Export while the profiler is still running. Pauses sampler threads,
@@ -149,6 +151,10 @@ private:
     std::filesystem::path recovery_dir_;
     mutable std::mutex recovery_mutex_;
     std::unique_ptr<RecoveryWriter> recovery_writer_;
+    mutable std::mutex lifecycle_mutex_;
+    std::atomic<bool> sampling_stop_requested_{false};
+    std::function<void()> live_export_paused_hook_;
+    std::function<void()> stop_requested_hook_;
 };
 
 }  // namespace spark

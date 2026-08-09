@@ -90,15 +90,29 @@ bool RecoveryWriter::start()
 
     enabled_.store(true);
     last_sync_ = std::chrono::steady_clock::now();
-    thread_ = std::thread([this]() { writerLoop(); });
+    try {
+        thread_ = std::thread([this] {
+            try {
+                writerLoop();
+            }
+            catch (...) {
+                running_.store(false, std::memory_order_release);
+                enabled_.store(false, std::memory_order_release);
+            }
+        });
+    }
+    catch (...) {
+        running_.store(false);
+        enabled_.store(false);
+        closeSegment();
+        return false;
+    }
     return true;
 }
 
 void RecoveryWriter::stop()
 {
-    if (!running_.exchange(false)) {
-        return;
-    }
+    running_.store(false);
     cv_.notify_all();
     if (thread_.joinable()) {
         thread_.join();

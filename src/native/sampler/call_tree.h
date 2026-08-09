@@ -34,7 +34,7 @@ public:
 
     // Total profile weight logged (execution microseconds or allocation bytes).
     std::uint64_t sampleCount() const;
-    void pruneBefore(std::int32_t minimum_window);
+    bool pruneBefore(std::int32_t minimum_window);
 
 private:
     static constexpr int kMaxDepth = 300;  // spark.maxStackDepth default

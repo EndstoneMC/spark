@@ -1,12 +1,15 @@
 #ifndef ENDSTONE_SPARK_CAPTURE_H
 #define ENDSTONE_SPARK_CAPTURE_H
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
 #include <cpptrace/cpptrace.hpp>
 
 namespace spark {
+
+struct CaptureTestAccess;
 
 // One captured stack, as raw instruction pointers (leaf..root). Resolving each ip
 // to a module + RVA is done by the sampler thread, off the capture path.
@@ -24,7 +27,7 @@ public:
     // Install the handler / prime cpptrace's signal-safe path. Returns false if
     // async-signal-safe unwinding is unavailable (cpptrace not built with libunwind).
     static bool arm();
-    static void disarm();
+    static bool disarm();
 
     // Capture the stack of the given OS thread id into `out`. Called from the
     // sampler thread. Returns false on timeout/failure.
@@ -32,6 +35,12 @@ public:
 
     // True if the thread is currently on-CPU (for --ignore-sleeping gating).
     static bool isThreadRunning(std::uint64_t tid);
+
+private:
+    friend struct CaptureTestAccess;
+#ifdef __linux__
+    static void setHandlerGateForTesting(std::atomic<bool> *entered, std::atomic<bool> *release);
+#endif
 };
 
 }  // namespace spark

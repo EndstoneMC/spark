@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <string_view>
 #include <utility>
 
@@ -31,33 +32,52 @@ constexpr std::size_t KLeadingDrop = 2;
 
 }  // namespace
 
-Sampler::~Sampler()
+void Sampler::markWorkerFailure() noexcept
 {
-    stop();
+    worker_failed_.store(true, std::memory_order_release);
+    running_.store(false, std::memory_order_release);
+    agg_running_.store(false, std::memory_order_release);
+    wait_cv_.notify_all();
 }
 
-bool Sampler::start(const SamplerConfig &config)
+bool Sampler::failure(std::string &error) const
 {
-    last_error_.clear();
-    if (running_.load()) {
-        last_error_ = "sampler is already running";
+    if (!worker_failed_.load(std::memory_order_acquire)) {
+        error.clear();
         return false;
     }
-    config_ = config;
-    if (!thread_selector_.configure(config_.all_threads, config_.regex_threads, config_.thread_patterns, last_error_)) {
-        return false;
-    }
-    if (!Capture::arm()) {
-        last_error_ = "the platform stack-capture backend could not be initialized";
-        return false;
-    }
+    error = "the sampler service worker failed";
+    return true;
+}
+
+bool Sampler::startServiceThreads()
+{
     try {
-        resetSession();
-        start_time_ = std::chrono::steady_clock::now();
         running_.store(true);
         agg_running_.store(true);
-        aggregator_thread_ = std::thread(&Sampler::aggregatorLoop, this);
-        sampler_thread_ = std::thread(&Sampler::samplerLoop, this);
+        aggregator_thread_ = std::thread([this] {
+            try {
+                if (aggregator_thread_hook_) {
+                    aggregator_thread_hook_();
+                }
+                aggregatorLoop();
+            }
+            catch (...) {
+                markWorkerFailure();
+            }
+        });
+        sampler_thread_ = std::thread([this] {
+            try {
+                if (sampler_thread_hook_) {
+                    sampler_thread_hook_();
+                }
+                samplerLoop();
+            }
+            catch (...) {
+                markWorkerFailure();
+            }
+        });
+        service_start_count_.fetch_add(1, std::memory_order_relaxed);
     }
     catch (...) {
         running_.store(false);
@@ -76,11 +96,39 @@ bool Sampler::start(const SamplerConfig &config)
     return true;
 }
 
-void Sampler::stop()
+Sampler::~Sampler()
 {
-    if (!running_.exchange(false)) {
-        return;
+    if (!stop()) {
+        std::terminate();
     }
+}
+
+bool Sampler::start(const SamplerConfig &config)
+{
+    last_error_.clear();
+    if (running_.load()) {
+        last_error_ = "sampler is already running";
+        return false;
+    }
+    config_ = config;
+    if (!thread_selector_.configure(config_.all_threads, config_.regex_threads, config_.thread_patterns, last_error_)) {
+        return false;
+    }
+    if (!Capture::arm()) {
+        last_error_ = "the platform stack-capture backend could not be initialized";
+        return false;
+    }
+    resetSession();
+    start_time_ = std::chrono::steady_clock::now();
+    if (!startServiceThreads()) {
+        return false;
+    }
+    return true;
+}
+
+bool Sampler::stop()
+{
+    running_.store(false);
     wait_cv_.notify_all();
     if (sampler_thread_.joinable()) {
         sampler_thread_.join();  // no more samples are produced after this
@@ -89,14 +137,16 @@ void Sampler::stop()
     if (aggregator_thread_.joinable()) {
         aggregator_thread_.join();  // drains everything the sampler left behind
     }
-    Capture::disarm();
+    if (!Capture::disarm()) {
+        last_error_ = "the stack-capture handler is still active";
+        return false;
+    }
+    return true;
 }
 
 void Sampler::pauseForExport()
 {
-    if (!running_.exchange(false)) {
-        return;
-    }
+    running_.store(false);
     wait_cv_.notify_all();
     if (sampler_thread_.joinable()) {
         sampler_thread_.join();
@@ -108,17 +158,18 @@ void Sampler::pauseForExport()
     // Intentionally do NOT disarm Capture or reset session data.
 }
 
-void Sampler::resumeAfterExport()
+bool Sampler::resumeAfterExport()
 {
     if (running_.load()) {
-        return;
+        return true;
     }
     // Capture backend is still armed from the original start(); session data
     // (tree, thread_trees, modules, start_time_) is preserved.
-    running_.store(true);
-    agg_running_.store(true);
-    aggregator_thread_ = std::thread(&Sampler::aggregatorLoop, this);
-    sampler_thread_ = std::thread(&Sampler::samplerLoop, this);
+    if (!startServiceThreads()) {
+        last_error_ = "the sampler service threads could not be resumed";
+        return false;
+    }
+    return true;
 }
 
 void Sampler::resetSession()
@@ -144,6 +195,7 @@ void Sampler::resetSession()
     sample_count_.store(0, std::memory_order_relaxed);
     sampler_tid_.store(0, std::memory_order_relaxed);
     aggregator_tid_.store(0, std::memory_order_relaxed);
+    worker_failed_.store(false, std::memory_order_relaxed);
     sampler_heartbeat_.sequence.store(0, std::memory_order_relaxed);
     sampler_heartbeat_.last_ns.store(0, std::memory_order_relaxed);
     aggregator_heartbeat_.sequence.store(0, std::memory_order_relaxed);
@@ -355,9 +407,8 @@ void Sampler::maybePruneHistory(std::int32_t current_window)
     }
     const std::int32_t minimum_window = current_window - kHistorySeconds;
     tree_.pruneBefore(minimum_window);
-    for (auto &[thread_id, thread] : thread_trees_) {
-        thread.tree.pruneBefore(minimum_window);
-    }
+    std::erase_if(thread_trees_,
+                  [minimum_window](auto &entry) { return entry.second.tree.pruneBefore(minimum_window); });
     std::uint64_t removed_samples = 0;
     auto end = window_sample_counts_.lower_bound(minimum_window);
     for (auto it = window_sample_counts_.begin(); it != end; ++it) {
