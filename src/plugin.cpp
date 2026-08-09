@@ -134,7 +134,7 @@ private:
     std::unique_ptr<spark::SparkApplication> app_;
 };
 
-ENDSTONE_PLUGIN("spark", "0.4.1", SparkPlugin)
+ENDSTONE_PLUGIN("spark", "0.5.0", SparkPlugin)
 {
     description = "spark profiler for Endstone - find what's slowing your server down.";
     authors = {"ReallocAll <ReallocAll@outlook.com>"};
