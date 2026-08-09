@@ -151,6 +151,25 @@ struct ProfilerServiceTestAccess {
     {
         return service.export_completion_pending_.load();
     }
+    static void setViewerSocket(ProfilerService &service, std::shared_ptr<ViewerSocket> socket)
+    {
+        service.viewer_socket_ = std::move(socket);
+        service.viewer_sender_name_ = "Console";
+    }
+    static bool hasViewerSocket(const ProfilerService &service) { return service.viewer_socket_ != nullptr; }
+};
+
+struct ViewerSocketTestAccess {
+    static void markOpen(ViewerSocket &socket)
+    {
+        socket.prepareOpen();
+        socket.open_.store(true);
+    }
+
+    static void terminate(ViewerSocket &socket, WebSocketClient::TerminationKind kind)
+    {
+        socket.onTransportClosed({.kind = kind});
+    }
 };
 
 struct HealthCommandTestAccess {
@@ -423,7 +442,21 @@ private:
 
 class TestNotifier : public spark::ResultNotifier {
 public:
-    void notify(const std::string & /*sender_name*/, const std::string & /*text*/) override {}
+    void notify(const std::string & /*sender_name*/, const std::string &text) override
+    {
+        std::scoped_lock lock(mutex_);
+        messages_.push_back(text);
+    }
+
+    bool contains(const std::string &text) const
+    {
+        std::scoped_lock lock(mutex_);
+        return std::ranges::find(messages_, text) != messages_.end();
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::vector<std::string> messages_;
 };
 
 class TestCommandSender : public spark::CommandSender {
@@ -1747,6 +1780,39 @@ bool verifyViewerShutdownDuringLiveExport(std::uint64_t worker_tid)
         return false;
     }
     return true;
+}
+
+bool verifyViewerDisconnectKeepsProfilerRunning(std::uint64_t worker_tid)
+{
+    spark::StatisticsService statistics;
+    spark::TrustedViewersState trusted_viewers(std::filesystem::temp_directory_path() /
+                                               "spark-disconnect-viewers.json");
+    TestDispatcher dispatcher;
+    TestMetadataProvider metadata_provider;
+    TestNotifier notifier;
+    spark::ProfilerService service(statistics, {}, std::filesystem::temp_directory_path(), {}, {}, {}, false, 10,
+                                   "by-pool", "default", trusted_viewers, dispatcher, metadata_provider, notifier);
+    spark::ProfilerOptions options;
+    options.interval_ms = 1;
+    std::string error;
+    if (!spark::ProfilerServiceTestAccess::start(service, options, worker_tid, error)) {
+        return false;
+    }
+
+    auto viewer = std::make_shared<spark::ViewerSocket>(spark::ViewerSocket::Config{}, spark::Crypto::KeyPair{});
+    spark::ViewerSocketTestAccess::markOpen(*viewer);
+    spark::ProfilerServiceTestAccess::setViewerSocket(service, viewer);
+    spark::ViewerSocketTestAccess::terminate(*viewer, spark::WebSocketClient::TerminationKind::RemoteClose);
+    service.onTick(1.0);
+
+    const bool diagnosed = notifier.contains("Live viewer closed: remote endpoint closed the connection");
+    const bool healthy = service.running() && spark::ProfilerServiceTestAccess::samplerRunning(service) && diagnosed &&
+                         !spark::ProfilerServiceTestAccess::hasViewerSocket(service);
+    spark::ProfilerServiceTestAccess::cancel(service);
+    if (!healthy) {
+        std::fprintf(stderr, "live viewer disconnect stopped the profiler\n");
+    }
+    return healthy;
 }
 
 bool verifyWorkerExceptionBoundaries(std::uint64_t worker_tid)
@@ -3442,6 +3508,7 @@ int main(int argc, char **argv)
         !verifyHealthServerConfigurations() || !verifyLiveProfilerWindowStatistics(GWorkerTid.load()) ||
         !verifyLiveExportStopCancel(GWorkerTid.load()) || !verifyLiveExportTimeout(GWorkerTid.load()) ||
         !verifyViewerShutdownDuringLiveExport(GWorkerTid.load()) ||
+        !verifyViewerDisconnectKeepsProfilerRunning(GWorkerTid.load()) ||
         !verifyWorkerExceptionBoundaries(GWorkerTid.load()) || !verifyAsyncNetworkCommands(GWorkerTid.load()) ||
         !verifyBackgroundCommandValidation(GWorkerTid.load()) || !verifyRecoveryWriterLifetime(GWorkerTid.load()) ||
         !verifyUploadFailure() || !verifyCaptureLifecycle() ||

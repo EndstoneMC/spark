@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <utility>
 
 #include "core/util/base64.h"
 #include "net/bytebin.h"
@@ -22,7 +23,7 @@ std::int64_t nowMs()
 }  // namespace
 
 ViewerSocket::ViewerSocket(Config config, Crypto::KeyPair key_pair)
-    : config_(std::move(config)), key_pair_(std::move(key_pair)), open_time_ms_(nowMs())
+    : config_(std::move(config)), key_pair_(std::move(key_pair))
 {
 }
 
@@ -41,8 +42,14 @@ SocketChannelInfo ViewerSocket::channelInfo() const
 
 std::string ViewerSocket::open(const UploadCallback &upload)
 {
+    if (ws_) {
+        ws_->close();
+        ws_.reset();
+    }
+    prepareOpen();
     ws_ = std::make_unique<WebSocketClient>();
     ws_->setMessageCallback([this](const std::string &data) { onMessage(data); });
+    ws_->setCloseCallback([this](const WebSocketClient::Termination &termination) { onTransportClosed(termination); });
 
     channel_id_ = ws_->connect(config_.bytesocks_host, config_.user_agent);
     if (channel_id_.empty()) {
@@ -61,10 +68,38 @@ std::string ViewerSocket::open(const UploadCallback &upload)
         close();
         return {};
     }
+    if (!ws_->isOpen()) {
+        ws_->close();
+        return {};
+    }
 
-    last_payload_id_ = bytebin_key;
+    {
+        std::scoped_lock lock(payload_mutex_);
+        last_payload_id_ = bytebin_key;
+    }
     open_.store(true);
     return config_.viewer_url + bytebin_key;
+}
+
+void ViewerSocket::prepareOpen()
+{
+    open_.store(false);
+    open_time_ms_ = nowMs();
+    last_ping_ms_.store(0);
+    channel_id_.clear();
+    {
+        std::scoped_lock lock(payload_mutex_);
+        last_payload_id_.clear();
+    }
+    {
+        std::scoped_lock lock(queue_mutex_);
+        incoming_queue_.clear();
+    }
+    {
+        std::scoped_lock lock(close_mutex_);
+        close_reason_ = CloseReason::None;
+        close_diagnostic_.clear();
+    }
 }
 
 void ViewerSocket::processWindowRotate(const UploadCallback &upload)
@@ -75,6 +110,7 @@ void ViewerSocket::processWindowRotate(const UploadCallback &upload)
 
     auto time = nowMs();
     if ((time - open_time_ms_) > kInitialTimeoutMs && (time - last_ping_ms_.load()) > kEstablishedTimeoutMs) {
+        setCloseState(CloseReason::ClientPingTimeout, "Live viewer closed: client ping timeout");
         close();
         return;
     }
@@ -107,11 +143,10 @@ void ViewerSocket::sendUpdate(const std::string &bytebin_key)
 
 void ViewerSocket::close()
 {
-    if (!open_.exchange(false)) {
-        return;
-    }
+    const bool was_open = open_.exchange(false);
+    setCloseState(CloseReason::LocalClose);
     if (ws_) {
-        if (ws_->isOpen()) {
+        if (was_open && ws_->isOpen()) {
             std::string msg = encodeServerClose(key_pair_.private_key_pkcs8);
             ws_->send(msg);
         }
@@ -122,6 +157,12 @@ void ViewerSocket::close()
 bool ViewerSocket::tick()
 {
     if (!open_.load()) {
+        return false;
+    }
+    if (!ws_ || !ws_->isOpen()) {
+        if (ws_) {
+            onTransportClosed(ws_->termination());
+        }
         return false;
     }
 
@@ -170,11 +211,60 @@ bool ViewerSocket::tick()
     // Check timeout.
     auto time = nowMs();
     if ((time - open_time_ms_) > kInitialTimeoutMs && (time - last_ping_ms_.load()) > kEstablishedTimeoutMs) {
+        setCloseState(CloseReason::ClientPingTimeout, "Live viewer closed: client ping timeout");
         close();
         return false;
     }
 
     return true;
+}
+
+ViewerSocket::CloseReason ViewerSocket::closeReason() const
+{
+    std::scoped_lock lock(close_mutex_);
+    return close_reason_;
+}
+
+std::string ViewerSocket::takeDiagnostic()
+{
+    std::scoped_lock lock(close_mutex_);
+    return std::exchange(close_diagnostic_, {});
+}
+
+void ViewerSocket::setCloseState(CloseReason reason, std::string diagnostic)
+{
+    std::scoped_lock lock(close_mutex_);
+    if (close_reason_ != CloseReason::None) {
+        return;
+    }
+    close_reason_ = reason;
+    close_diagnostic_ = std::move(diagnostic);
+}
+
+void ViewerSocket::onTransportClosed(const WebSocketClient::Termination &termination)
+{
+    switch (termination.kind) {
+    case WebSocketClient::TerminationKind::LocalClose:
+        setCloseState(CloseReason::LocalClose);
+        break;
+    case WebSocketClient::TerminationKind::RemoteClose:
+        setCloseState(CloseReason::RemoteClose, "Live viewer closed: remote endpoint closed the connection");
+        break;
+    case WebSocketClient::TerminationKind::SendError:
+        setCloseState(CloseReason::SendError, "Live viewer transport failed: send error: " + termination.detail);
+        break;
+    case WebSocketClient::TerminationKind::ReceiveError:
+        setCloseState(CloseReason::ReceiveError, "Live viewer transport failed: receive error: " + termination.detail);
+        break;
+    case WebSocketClient::TerminationKind::WorkerFailure:
+        setCloseState(CloseReason::WorkerFailure,
+                      "Live viewer transport failed: worker failure: " + termination.detail);
+        break;
+    case WebSocketClient::TerminationKind::None:
+        setCloseState(CloseReason::WorkerFailure, "Live viewer transport failed: worker stopped unexpectedly");
+        break;
+    }
+    open_.store(false);
 }
 
 void ViewerSocket::onMessage(const std::string &data)

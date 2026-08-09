@@ -90,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep live viewer updates ordered across interrupted WebSocket sends and report unexpected transport closures.
 - Remove expired call-tree nodes and thread roots from continuous background
   profiles instead of retaining dead topology beyond the one-hour history window.
 - Serialize live snapshots with profiler lifecycle transitions so stop, cancel,

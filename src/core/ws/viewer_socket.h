@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -15,9 +16,21 @@
 
 namespace spark {
 
+struct ViewerSocketTestAccess;
+
 // Manages a live viewer WebSocket connection and pushes payload IDs on window rotation.
 class ViewerSocket {
 public:
+    enum class CloseReason {
+        None,
+        LocalClose,
+        RemoteClose,
+        SendError,
+        ReceiveError,
+        WorkerFailure,
+        ClientPingTimeout
+    };
+
     // Called to produce sampler data and upload it to bytebin.
     // The channel_info_proto is non-empty only for the initial upload;
     // window rotates pass an empty string. Returns the bytebin key.
@@ -49,6 +62,8 @@ public:
     void close();
 
     bool isOpen() const { return open_.load(); }
+    CloseReason closeReason() const;
+    std::string takeDiagnostic();
 
     // Get the SocketChannelInfo for embedding in the initial sampler data upload.
     SocketChannelInfo channelInfo() const;
@@ -68,14 +83,19 @@ public:
     void sendClientTrusted(const std::string &client_id);
 
 private:
+    friend struct ViewerSocketTestAccess;
+
     void onMessage(const std::string &data);
+    void prepareOpen();
+    void onTransportClosed(const WebSocketClient::Termination &termination);
+    void setCloseState(CloseReason reason, std::string diagnostic = {});
 
     Config config_;
     Crypto::KeyPair key_pair_;
     std::unique_ptr<WebSocketClient> ws_;
 
     std::atomic<bool> open_{false};
-    const std::int64_t open_time_ms_;
+    std::int64_t open_time_ms_ = 0;
     std::atomic<std::int64_t> last_ping_ms_{0};
     std::string last_payload_id_;
     std::mutex payload_mutex_;  // protects last_payload_id_ across threads
@@ -89,6 +109,10 @@ private:
     // Incoming messages are queued for processing on the main thread.
     std::mutex queue_mutex_;
     std::vector<std::string> incoming_queue_;
+
+    mutable std::mutex close_mutex_;
+    CloseReason close_reason_ = CloseReason::None;
+    std::string close_diagnostic_;
 
     static constexpr std::int64_t kInitialTimeoutMs = 60000;      // 60s
     static constexpr std::int64_t kEstablishedTimeoutMs = 30000;  // 30s

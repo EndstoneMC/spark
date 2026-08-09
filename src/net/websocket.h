@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <string>
 #include <thread>
@@ -18,8 +19,22 @@ struct WebSocketClientTestAccess;
 // to avoid concurrent curl handle access.
 class WebSocketClient {
 public:
+    enum class TerminationKind {
+        None,
+        LocalClose,
+        RemoteClose,
+        SendError,
+        ReceiveError,
+        WorkerFailure
+    };
+
+    struct Termination {
+        TerminationKind kind = TerminationKind::None;
+        std::string detail;
+    };
+
     using MessageCallback = std::function<void(const std::string &)>;
-    using CloseCallback = std::function<void()>;
+    using CloseCallback = std::function<void(const Termination &)>;
 
     WebSocketClient();
     ~WebSocketClient();
@@ -35,6 +50,7 @@ public:
     void close();
 
     bool isOpen() const { return running_.load(); }
+    Termination termination() const;
 
     void setMessageCallback(MessageCallback cb) { message_cb_ = std::move(cb); }
     void setCloseCallback(CloseCallback cb) { close_cb_ = std::move(cb); }
@@ -44,6 +60,22 @@ private:
 
     bool startReceiveWorker();
     void runReceiveLoop();
+    void recordTermination(TerminationKind kind, std::string detail = {});
+    void notifyTermination() noexcept;
+
+    struct SendAttempt {
+        int code = 0;
+        std::size_t sent = 0;
+    };
+    enum class SendStep {
+        Idle,
+        Progress,
+        Retry,
+        Fatal
+    };
+    using SendFunction = std::function<SendAttempt(const char *, std::size_t)>;
+    SendStep processNextSend(const SendFunction &send_function);
+    void handleReceiveFailure(int code);
 
     std::string channel_id_;
     std::string host_;
@@ -56,7 +88,11 @@ private:
     std::mutex send_mutex_;
     std::condition_variable send_cv_;
     std::queue<std::string> send_queue_;
-    std::atomic<bool> has_data_{false};
+    std::optional<std::string> pending_send_;
+    std::size_t pending_send_offset_ = 0;
+
+    mutable std::mutex termination_mutex_;
+    Termination termination_;
 
     MessageCallback message_cb_;
     CloseCallback close_cb_;

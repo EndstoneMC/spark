@@ -161,6 +161,7 @@ private:
 
     std::shared_ptr<ViewerSocket> viewer_socket_;
     std::int64_t last_viewer_upload_ms_ = 0;
+    std::string viewer_sender_name_;
 
     struct ViewerWorkItem {
         enum class Type {

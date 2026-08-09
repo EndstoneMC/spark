@@ -619,6 +619,7 @@ void ProfilerService::completeViewerOpen(std::uint64_t generation)
         return;
     }
     viewer_socket_ = std::move(socket);
+    viewer_sender_name_ = sender_name;
     last_viewer_upload_ms_ = nowMs();
     notifier_.notify(sender_name, "Live viewer opened! Open it at: " + url);
     notifier_.notify(sender_name, "The viewer updates every 10 seconds while the profiler is running.");
@@ -681,6 +682,7 @@ void ProfilerService::closeViewerSocket()
         socket->close();
     }
     last_viewer_upload_ms_ = 0;
+    viewer_sender_name_.clear();
 }
 
 void ProfilerService::cmdTrustViewer(CommandSender &sender, const Arguments &args)
@@ -854,6 +856,8 @@ void ProfilerService::onTick(double mspt)
         announceResult();
     }
     if (viewer_worker_failed_.exchange(false, std::memory_order_acq_rel)) {
+        notifier_.notify(viewer_sender_name_.empty() ? start_sender_name_ : viewer_sender_name_,
+                         "Live viewer worker failed.");
         closeViewerSocket();
     }
     if (!background_started_ && !background_suppressed_ && background_enabled_ && main_tid_ != 0 &&
@@ -884,6 +888,10 @@ void ProfilerService::onTick(double mspt)
     // Live viewer socket lifecycle.
     if (viewer_socket_) {
         if (!viewer_socket_->tick()) {
+            std::string diagnostic = viewer_socket_->takeDiagnostic();
+            if (!diagnostic.empty()) {
+                notifier_.notify(viewer_sender_name_.empty() ? start_sender_name_ : viewer_sender_name_, diagnostic);
+            }
             closeViewerSocket();
         }
         else if (viewer_socket_->isOpen()) {
