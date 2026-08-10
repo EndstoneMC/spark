@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased][Unreleased]
 
+### Fixed
+
+- Harden crash recovery against corrupted, truncated, or rotation-damaged
+  journals. A recovery journal missing its early segments (head-truncated by
+  segment rotation), referencing module IDs whose `ModuleDef` records were
+  deleted, or carrying a `CLEAN_END` marker no longer causes plugin enable to
+  fail. Rolling journals now preserve session metadata in a crash-consistent
+  snapshot sidecar before pruning old segments, so rotated profiles remain
+  recoverable. Allocation profiles record an explicit module-0 sentinel so
+  samples referencing the catch-all module resolve correctly during replay.
+  Clean-end sessions skip replay entirely; incomplete or malformed journals are
+  safely discarded (or quarantined on unexpected exceptions) and the server
+  continues starting up normally. Previously this could abort the plugin on
+  Windows (`invalid vector subscript`) or crash the entire BDS process on Linux
+  via an exception crossing the plugin DSO boundary.
+
 ## [0.5.1][0.5.1] - 2026-08-09
 
 ### Added

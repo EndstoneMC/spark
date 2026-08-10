@@ -2,8 +2,10 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <thread>
 
 #include "core/recovery/journal_format.h"
@@ -340,6 +342,26 @@ void writeSegment(const std::filesystem::path &path, std::uint64_t session_id, s
     std::fclose(file);
 }
 
+struct RecordSpec {
+    RecordType type;
+    std::uint32_t sequence;
+    JournalBuffer payload;
+};
+
+void writeSegmentMulti(const std::filesystem::path &path, std::uint64_t session_id, std::uint32_t segment_number,
+                       const std::vector<RecordSpec> &records)
+{
+    auto header = serializeFileHeader(session_id, session_id, segment_number);
+    std::FILE *file = std::fopen(path.string().c_str(), "wb");
+    assert(file);
+    assert(std::fwrite(header.data(), 1, header.size(), file) == header.size());
+    for (const auto &rec : records) {
+        auto record = serializeRecord(rec.type, rec.sequence, rec.payload);
+        assert(std::fwrite(record.data(), 1, record.size(), file) == record.size());
+    }
+    std::fclose(file);
+}
+
 void testSessionIsolation()
 {
     auto dir = makeTempDir() / "session-isolation";
@@ -438,7 +460,7 @@ void testRecoveryPlayerReplay()
 
     writer.journalTickEvent(0, 5.0);
     writer.journalTickEvent(1, 10.0);
-    writer.journalCleanEnd();
+    // No journalCleanEnd() - this is a full replay test, not a clean-end test.
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     writer.stop();
@@ -452,7 +474,7 @@ void testRecoveryPlayerReplay()
     assert(result.sample_count == 2);
     assert(result.thread_count == 1);
     assert(result.tick_count == 2);
-    assert(result.has_clean_end);
+    assert(!result.has_clean_end);
     assert(!result.serialized_proto.empty());
     std::cout << "testRecoveryPlayerReplay: PASS (proto size=" << result.serialized_proto.size() << ")\n";
 }
@@ -500,7 +522,8 @@ void testCleanEndDetected()
     auto result = RecoveryPlayer::replay(cfg.directory);
     assert(result.valid);
     assert(result.has_clean_end);
-    assert(result.sample_count == 1);
+    // Clean-end sessions skip expensive replay; no profile is built.
+    assert(result.serialized_proto.empty());
     std::cout << "testCleanEndDetected: PASS\n";
 }
 
@@ -572,6 +595,469 @@ void testLiveOnlyRefused()
     std::cout << "testLiveOnlyRefused: PASS\n";
 }
 
+// Test 1: Clean-end sessions must skip expensive replay/symbolication entirely.
+// A clean-end journal that references a missing module must still return
+// valid=true with has_clean_end=true, proving replay did not touch the data.
+void testCleanEndEarlyExit()
+{
+    auto dir = makeTempDir() / "clean-early-exit";
+    std::filesystem::create_directories(dir);
+
+    // Sample references module 99, but no ModuleDef 99 exists.  If replay
+    // proceeded, this would be "missing module id 99".
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 0;
+    sample.window = 0;
+    sample.weight = 4000;
+    sample.frames.push_back({.module = 99, .rva = 0x1000, .raw_address = 0});
+
+    writeSegmentMulti(
+        dir / "segment-0.jnl", 500000, 0,
+        {{.type = RecordType::SessionConfig,
+          .sequence = 0,
+          .payload = buildSessionConfigPayload(4000, 0, false, false, false, 1, 0, false, "Console", false, {}, {})},
+         {.type = RecordType::Sample, .sequence = 1, .payload = buildSamplePayload(sample)},
+         {.type = RecordType::CleanEnd, .sequence = 2, .payload = buildCleanEndPayload(1)}});
+
+    auto result = RecoveryPlayer::replay(dir);
+    assert(result.valid);
+    assert(result.has_clean_end);
+    assert(result.serialized_proto.empty());  // no replay work done
+    std::cout << "testCleanEndEarlyExit: PASS\n";
+}
+
+// Test 2: Head-truncated journal (missing segment 0) must not replay.
+void testHeadTruncatedJournal()
+{
+    auto dir = makeTempDir() / "head-truncated";
+    std::filesystem::create_directories(dir);
+
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 0;
+    sample.window = 0;
+    sample.weight = 4000;
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
+
+    // Only segment-3 exists; segment-0..2 were rotated away.
+    writeSegmentMulti(
+        dir / "segment-3.jnl", 600000, 3,
+        {{.type = RecordType::ModuleDef, .sequence = 0, .payload = buildModuleDefPayload(0, "bedrock_server")},
+         {.type = RecordType::Sample, .sequence = 1, .payload = buildSamplePayload(sample)}});
+
+    auto result = RecoveryPlayer::replay(dir);
+    assert(!result.valid);
+    assert(result.error.find("head-truncated") != std::string::npos);
+
+    // Also verify the reader exposes head_truncated.
+    auto journal = JournalReader::readSession(dir);
+    assert(journal.valid);
+    assert(journal.head_truncated);
+    assert(journal.first_segment_number == 3);
+    std::cout << "testHeadTruncatedJournal: PASS\n";
+}
+
+// Test 3: Non-contiguous recorded ModuleId must be remapped to local IDs.
+void testNonContiguousModuleId()
+{
+    auto dir = makeTempDir() / "noncontiguous-modid";
+    std::filesystem::create_directories(dir);
+
+    // ModuleDef recorded id = 20 (the only module).  Local intern() assigns 0.
+    // Sample frame.module = 20 must be remapped to local 0 before symbolication.
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 0;
+    sample.window = 0;
+    sample.weight = 4000;
+    sample.frames.push_back({.module = 20, .rva = 0x1000, .raw_address = 0});
+
+    writeSegmentMulti(
+        dir / "segment-0.jnl", 700000, 0,
+        {{.type = RecordType::SessionConfig,
+          .sequence = 0,
+          .payload = buildSessionConfigPayload(4000, 0, false, false, false, 1, 0, false, "Console", false, {}, {})},
+         {.type = RecordType::ModuleDef, .sequence = 1, .payload = buildModuleDefPayload(20, "bedrock_server")},
+         {.type = RecordType::ThreadDef, .sequence = 2, .payload = buildThreadDefPayload(1, 100, "Server thread")},
+         {.type = RecordType::Sample, .sequence = 3, .payload = buildSamplePayload(sample)},
+         {.type = RecordType::TickEvent, .sequence = 4, .payload = buildTickEventPayload(0, 5.0)}});
+
+    auto result = RecoveryPlayer::replay(dir);
+    assert(result.valid);
+    assert(!result.serialized_proto.empty());
+    assert(result.sample_count == 1);
+    std::cout << "testNonContiguousModuleId: PASS (proto size=" << result.serialized_proto.size() << ")\n";
+}
+
+// Test 4: Sample referencing a missing ModuleDef must fail safely.
+void testMissingModuleDefReferenced()
+{
+    auto dir = makeTempDir() / "missing-moddef";
+    std::filesystem::create_directories(dir);
+
+    // No ModuleDef for module id 7.
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 0;
+    sample.window = 0;
+    sample.weight = 4000;
+    sample.frames.push_back({.module = 7, .rva = 0x1000, .raw_address = 0});
+
+    writeSegmentMulti(
+        dir / "segment-0.jnl", 800000, 0,
+        {{.type = RecordType::SessionConfig,
+          .sequence = 0,
+          .payload = buildSessionConfigPayload(4000, 0, false, false, false, 1, 0, false, "Console", false, {}, {})},
+         {.type = RecordType::ModuleDef, .sequence = 1, .payload = buildModuleDefPayload(0, "bedrock_server")},
+         {.type = RecordType::ThreadDef, .sequence = 2, .payload = buildThreadDefPayload(1, 100, "Server thread")},
+         {.type = RecordType::Sample, .sequence = 3, .payload = buildSamplePayload(sample)}});
+
+    auto result = RecoveryPlayer::replay(dir);
+    assert(!result.valid);
+    assert(result.error.find("missing module id 7") != std::string::npos);
+    std::cout << "testMissingModuleDefReferenced: PASS\n";
+}
+
+// Test 5: Rolling journal with rotation must retain metadata via a snapshot
+// and remain recoverable after segment-0 is pruned.
+void testRollingJournalRecovery()
+{
+    auto dir = makeTempDir() / "rolling";
+    std::filesystem::create_directories(dir);
+
+    RecoveryWriter::Config cfg;
+    cfg.directory = dir;
+    cfg.session_id = 900000;
+    cfg.max_segment_bytes = 512;  // tiny: forces rotation after a few records
+    cfg.max_total_bytes = 1024;   // tiny: forces pruning of segment-0
+    cfg.flush_interval_ms = 20;
+    cfg.sync_interval_ms = 20;
+
+    RecoveryWriter writer(cfg);
+    if (!writer.start()) {
+        std::cerr << "testRollingJournalRecovery: FAIL - writer.start() returned false\n";
+        std::exit(1);
+    }
+
+    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false, "Console", false, "rolling test", {});
+    writer.journalModuleDef(0, "bedrock_server");
+    writer.journalModuleDef(1, "libfoo.so");
+    writer.journalThreadDef(100, 200, "Server thread");
+
+    // Write enough samples to trigger multiple rotations and prune segment-0.
+    for (int i = 0; i < 200; ++i) {
+        Sample sample;
+        sample.thread_id = 100;
+        sample.tick_id = static_cast<std::uint64_t>(i);
+        sample.window = i / 50;
+        sample.weight = 4000;
+        sample.frames.push_back({.module = 0, .rva = static_cast<std::uint64_t>(0x1000 + i), .raw_address = 0});
+        sample.frames.push_back({.module = 1, .rva = static_cast<std::uint64_t>(0x2000 + i), .raw_address = 0});
+        writer.journalSample(sample);
+        writer.journalTickEvent(static_cast<std::uint64_t>(i), 5.0);
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    writer.stop();
+
+    // segment-0 must have been pruned.
+    if (std::filesystem::exists(dir / "segment-0.jnl")) {
+        std::cerr << "testRollingJournalRecovery: FAIL - segment-0 still exists\n";
+        std::exit(1);
+    }
+    // A metadata snapshot must exist.
+    if (!std::filesystem::exists(dir / "metadata.snapshot")) {
+        std::cerr << "testRollingJournalRecovery: FAIL - no metadata.snapshot\n";
+        std::exit(1);
+    }
+
+    // The reader must NOT report head_truncated (snapshot covers pruned metadata).
+    auto journal = JournalReader::readSession(dir);
+    assert(journal.valid);
+    assert(!journal.head_truncated);
+    if (!journal.metadata_snapshot.has_value()) {
+        std::cerr << "testRollingJournalRecovery: FAIL - snapshot was not loaded\n";
+        std::exit(1);
+    }
+    const MetadataSnapshot &snapshot = journal.metadata_snapshot.value();
+    assert(snapshot.valid);
+    assert(snapshot.session_id == 900000);
+
+    // Replay must succeed and produce a non-empty protobuf.
+    auto result = RecoveryPlayer::replay(dir);
+    if (!result.valid) {
+        std::cerr << "testRollingJournalRecovery: FAIL - " << result.error << "\n";
+        std::exit(1);
+    }
+    assert(!result.has_clean_end);
+    assert(result.sample_count > 0);
+    assert(result.thread_count >= 1);
+    assert(result.session_start_ms > 900000);
+    assert(result.tick_count > 0);
+    assert(result.tick_count < 200);
+    assert(!result.serialized_proto.empty());
+    std::cout << "testRollingJournalRecovery: PASS (samples=" << result.sample_count
+              << ", proto=" << result.serialized_proto.size() << ")\n";
+}
+
+// Test 6: A corrupt snapshot (wrong session id) must not enable recovery; the
+// journal is treated as head-truncated and replay returns invalid.
+void testCorruptSnapshotWrongSession()
+{
+    auto dir = makeTempDir() / "corrupt-snapshot-session";
+    std::filesystem::create_directories(dir);
+
+    RecoveryWriter::Config cfg;
+    cfg.directory = dir;
+    cfg.session_id = 910000;
+    cfg.max_segment_bytes = 512;
+    cfg.max_total_bytes = 1024;
+    cfg.flush_interval_ms = 20;
+    cfg.sync_interval_ms = 20;
+
+    RecoveryWriter writer(cfg);
+    assert(writer.start());
+    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false, "Console", false, {}, {});
+    writer.journalModuleDef(0, "bedrock_server");
+    writer.journalThreadDef(1, 100, "Server thread");
+    for (int i = 0; i < 200; ++i) {
+        Sample sample;
+        sample.thread_id = 1;
+        sample.tick_id = static_cast<std::uint64_t>(i);
+        sample.window = 0;
+        sample.weight = 4000;
+        sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
+        writer.journalSample(sample);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    writer.stop();
+
+    assert(!std::filesystem::exists(dir / "segment-0.jnl"));
+    assert(std::filesystem::exists(dir / "metadata.snapshot"));
+
+    // Overwrite the snapshot with one that has a different session id.
+    std::vector<SnapshotModuleDef> modules{{.module_id = 0, .path = "bedrock_server"}};
+    std::vector<SnapshotThreadDef> threads{{.thread_id = 1, .os_thread_id = 100, .name = "Server thread"}};
+    auto buf = serializeMetadataSnapshot(999999, 0, {}, modules, threads);
+    std::FILE *f = std::fopen((dir / "metadata.snapshot").string().c_str(), "wb");
+    assert(f);
+    assert(std::fwrite(buf.data(), 1, buf.size(), f) == buf.size());
+    std::fclose(f);
+
+    auto result = RecoveryPlayer::replay(dir);
+    assert(!result.valid);
+    assert(result.error.find("head-truncated") != std::string::npos);
+    std::cout << "testCorruptSnapshotWrongSession: PASS\n";
+}
+
+// Test 7: A truncated snapshot (shorter than the header) must be treated as
+// absent, leaving the head-truncated journal unrecoverable.
+void testTruncatedSnapshot()
+{
+    auto dir = makeTempDir() / "truncated-snapshot";
+    std::filesystem::create_directories(dir);
+
+    // Write a segment-3 (head-truncated) and a truncated snapshot.
+    Sample sample;
+    sample.thread_id = 1;
+    sample.weight = 4000;
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
+    writeSegmentMulti(dir / "segment-3.jnl", 920000, 3,
+                      {{.type = RecordType::Sample, .sequence = 0, .payload = buildSamplePayload(sample)}});
+
+    std::FILE *f = std::fopen((dir / "metadata.snapshot").string().c_str(), "wb");
+    assert(f);
+    std::vector<std::uint8_t> partial{'S', 'P', 'R', 'K', 'M', 'E', 'T', 'A'};  // magic only
+    assert(std::fwrite(partial.data(), 1, partial.size(), f) == partial.size());
+    std::fclose(f);
+
+    auto journal = JournalReader::readSession(dir);
+    assert(journal.valid);
+    assert(journal.head_truncated);  // snapshot invalid -> stays head-truncated
+
+    auto result = RecoveryPlayer::replay(dir);
+    assert(!result.valid);
+    std::cout << "testTruncatedSnapshot: PASS\n";
+}
+
+// Test 8: Allocation-style ModuleDef(0, "<other modules>") must allow recovery
+// of samples whose frames were assigned to the sentinel module.
+void testAllocationSentinelModule0()
+{
+    auto dir = makeTempDir() / "alloc-mod0";
+    std::filesystem::create_directories(dir);
+
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 0;
+    sample.window = 0;
+    sample.weight = 524287;
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
+
+    writeSegmentMulti(
+        dir / "segment-0.jnl", 930000, 0,
+        {{.type = RecordType::SessionConfig,
+          .sequence = 0,
+          .payload = buildSessionConfigPayload(524287, 0, true, false, false, 1, 1, false, "Console", false, {}, {})},
+         {.type = RecordType::ModuleDef, .sequence = 1, .payload = buildModuleDefPayload(0, kOtherModulesSentinel)},
+         {.type = RecordType::ModuleDef, .sequence = 2, .payload = buildModuleDefPayload(1, "bedrock_server")},
+         {.type = RecordType::ThreadDef, .sequence = 3, .payload = buildThreadDefPayload(1, 100, "Server thread")},
+         {.type = RecordType::Sample, .sequence = 4, .payload = buildSamplePayload(sample)},
+         {.type = RecordType::TickEvent, .sequence = 5, .payload = buildTickEventPayload(0, 5.0)}});
+
+    auto result = RecoveryPlayer::replay(dir);
+    assert(result.valid);
+    assert(result.sample_count == 1);
+    assert(!result.serialized_proto.empty());
+    std::cout << "testAllocationSentinelModule0: PASS\n";
+}
+
+// Test 9: A sample referencing module 0 when no ModuleDef 0 exists must fail
+// safely (sentinel was never journaled).
+void testMissingSentinelModule0()
+{
+    auto dir = makeTempDir() / "missing-mod0";
+    std::filesystem::create_directories(dir);
+
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 0;
+    sample.window = 0;
+    sample.weight = 4000;
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
+
+    // ModuleDef 1 exists but ModuleDef 0 (sentinel) does not.
+    writeSegmentMulti(
+        dir / "segment-0.jnl", 940000, 0,
+        {{.type = RecordType::SessionConfig,
+          .sequence = 0,
+          .payload = buildSessionConfigPayload(4000, 0, false, false, false, 1, 0, false, "Console", false, {}, {})},
+         {.type = RecordType::ModuleDef, .sequence = 1, .payload = buildModuleDefPayload(1, "bedrock_server")},
+         {.type = RecordType::ThreadDef, .sequence = 2, .payload = buildThreadDefPayload(1, 100, "Server thread")},
+         {.type = RecordType::Sample, .sequence = 3, .payload = buildSamplePayload(sample)}});
+
+    auto result = RecoveryPlayer::replay(dir);
+    assert(!result.valid);
+    assert(result.error.find("missing module id 0") != std::string::npos);
+    std::cout << "testMissingSentinelModule0: PASS\n";
+}
+
+// Test 10: Stopping the writer without journalCleanEnd must leave a journal
+// that is recoverable (simulates crash after sampling stops but before export).
+void testStopWithoutCleanEndRecoverable()
+{
+    auto dir = makeTempDir() / "stop-no-cleanend";
+    std::filesystem::create_directories(dir);
+
+    RecoveryWriter::Config cfg;
+    cfg.directory = dir;
+    cfg.session_id = 950000;
+    cfg.flush_interval_ms = 50;
+    cfg.sync_interval_ms = 50;
+
+    RecoveryWriter writer(cfg);
+    assert(writer.start());
+    writer.journalSessionConfig(4000, 0, false, false, false, 1, 0, false, "Console", false, {}, {});
+    writer.journalModuleDef(0, "bedrock_server");
+    writer.journalThreadDef(1, 100, "Server thread");
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 0;
+    sample.window = 0;
+    sample.weight = 4000;
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
+    writer.journalSample(sample);
+    writer.journalTickEvent(0, 5.0);
+    // No journalCleanEnd() - simulates stopSampling() without export commit.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    writer.stop();
+
+    auto result = RecoveryPlayer::replay(dir);
+    assert(result.valid);
+    assert(!result.has_clean_end);
+    assert(result.sample_count == 1);
+    assert(!result.serialized_proto.empty());
+    std::cout << "testStopWithoutCleanEndRecoverable: PASS\n";
+}
+
+void writeBytes(const std::filesystem::path &path, const std::vector<std::uint8_t> &bytes)
+{
+    std::FILE *file = std::fopen(path.string().c_str(), "wb");
+    assert(file);
+    assert(std::fwrite(bytes.data(), 1, bytes.size(), file) == bytes.size());
+    std::fclose(file);
+}
+
+void testSnapshotRejectsMaliciousCountAndTrailingGarbage()
+{
+    auto dir = makeTempDir() / "snapshot-validation";
+    std::filesystem::create_directories(dir);
+
+    auto bytes = serializeMetadataSnapshot(960000, 0, {}, {}, {});
+    const std::uint32_t malicious_count = std::numeric_limits<std::uint32_t>::max();
+    std::memcpy(bytes.data() + kSnapshotHeaderSize + sizeof(std::uint16_t), &malicious_count, sizeof(malicious_count));
+    const auto payload_size = static_cast<std::uint32_t>(bytes.size() - kSnapshotHeaderSize);
+    const auto crc = static_cast<std::uint32_t>(crc32(0L, bytes.data() + kSnapshotHeaderSize, payload_size));
+    constexpr std::size_t k_snapshot_crc_offset = kSnapshotHeaderSize - sizeof(std::uint32_t);
+    std::memcpy(bytes.data() + k_snapshot_crc_offset, &crc, sizeof(crc));
+    writeBytes(dir / "metadata.snapshot", bytes);
+    assert(!JournalReader::readMetadataSnapshot(dir).valid);
+
+    bytes = serializeMetadataSnapshot(960000, 0, {}, {}, {});
+    bytes.push_back(0xff);
+    writeBytes(dir / "metadata.snapshot", bytes);
+    assert(!JournalReader::readMetadataSnapshot(dir).valid);
+    std::cout << "testSnapshotRejectsMaliciousCountAndTrailingGarbage: PASS\n";
+}
+
+void testSnapshotOnlyThreadIsNotExported()
+{
+    auto dir = makeTempDir() / "snapshot-only-thread";
+    std::filesystem::create_directories(dir);
+
+    Sample sample;
+    sample.thread_id = 1;
+    sample.tick_id = 100;
+    sample.window = 5;
+    sample.weight = 4000;
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
+    writeSegmentMulti(dir / "segment-3.jnl", 970000, 3,
+                      {{.type = RecordType::Sample, .sequence = 10, .payload = buildSamplePayload(sample)},
+                       {.type = RecordType::TickEvent, .sequence = 11, .payload = buildTickEventPayload(100, 5.0)}});
+
+    const std::vector<SnapshotModuleDef> modules{{.module_id = 0, .path = "bedrock_server"}};
+    const std::vector<SnapshotThreadDef> threads{{.thread_id = 1, .os_thread_id = 100, .name = "Server thread"},
+                                                 {.thread_id = 2, .os_thread_id = 200, .name = "Historical worker"}};
+    writeBytes(dir / "metadata.snapshot", serializeMetadataSnapshot(970000, 0, {}, modules, threads));
+
+    const auto result = RecoveryPlayer::replay(dir);
+    assert(result.valid);
+    assert(result.thread_count == 1);
+    assert(result.tick_count == 1);
+    assert(result.session_start_ms == 975000);
+    std::cout << "testSnapshotOnlyThreadIsNotExported: PASS\n";
+}
+
+void testDuplicateSequenceRejected()
+{
+    auto dir = makeTempDir() / "duplicate-sequence";
+    std::filesystem::create_directories(dir);
+    Sample sample;
+    sample.thread_id = 1;
+    sample.frames.push_back({.module = 0, .rva = 0x1000, .raw_address = 0});
+    writeSegmentMulti(
+        dir / "segment-0.jnl", 980000, 0,
+        {{.type = RecordType::ModuleDef, .sequence = 7, .payload = buildModuleDefPayload(0, "bedrock_server")},
+         {.type = RecordType::Sample, .sequence = 7, .payload = buildSamplePayload(sample)}});
+    const auto journal = JournalReader::readSession(dir);
+    assert(journal.duplicate_sequences);
+    const auto result = RecoveryPlayer::replay(dir);
+    assert(!result.valid);
+    assert(result.error.find("duplicate") != std::string::npos);
+    std::cout << "testDuplicateSequenceRejected: PASS\n";
+}
+
 }  // namespace
 
 int main()
@@ -592,6 +1078,19 @@ int main()
     testCleanEndDetected();
     testNoCleanEndRecovered();
     testLiveOnlyRefused();
+    testCleanEndEarlyExit();
+    testHeadTruncatedJournal();
+    testNonContiguousModuleId();
+    testMissingModuleDefReferenced();
+    testRollingJournalRecovery();
+    testCorruptSnapshotWrongSession();
+    testTruncatedSnapshot();
+    testAllocationSentinelModule0();
+    testMissingSentinelModule0();
+    testStopWithoutCleanEndRecoverable();
+    testSnapshotRejectsMaliciousCountAndTrailingGarbage();
+    testSnapshotOnlyThreadIsNotExported();
+    testDuplicateSequenceRejected();
     std::cout << "All journal tests passed.\n";
     return 0;
 }

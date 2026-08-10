@@ -47,13 +47,27 @@ struct JournalRecord {
     bool asSessionConfig(SessionConfig &config) const;
 };
 
+// Metadata snapshot loaded from the sidecar file.  Present and valid only when
+// the writer flushed a snapshot before pruning early segments.
+struct MetadataSnapshot {
+    bool valid = false;
+    std::uint64_t session_id = 0;
+    SessionConfig session_config;
+    std::vector<std::pair<std::uint32_t, std::string>> modules;
+    std::vector<SnapshotThreadDef> threads;
+};
+
 // Result of reading a journal session.
 struct JournalReadResult {
     bool valid = false;  // at least the file header was parsed
     std::uint64_t session_id = 0;
     std::uint64_t created_ns = 0;
     bool has_clean_end = false;
+    bool head_truncated = false;  // earliest retained segment is not segment 0
+    bool duplicate_sequences = false;
+    std::uint32_t first_segment_number = 0;
     SessionConfig session_config;
+    std::optional<MetadataSnapshot> metadata_snapshot;
     std::vector<JournalRecord> records;
     std::uint64_t corrupt_records = 0;    // CRC mismatches
     std::uint64_t truncated_records = 0;  // incomplete trailing records
@@ -69,6 +83,14 @@ public:
     // Reads a single segment file.  Exposed for testing.
     static bool readSegment(const std::filesystem::path &path, JournalReadResult &result,
                             std::optional<std::uint32_t> expected_segment = std::nullopt);
+
+    // Loads and validates the metadata snapshot sidecar.  Returns a snapshot
+    // with valid=false if the file is absent, malformed, or fails CRC/session
+    // validation.  Never throws.
+    static MetadataSnapshot readMetadataSnapshot(const std::filesystem::path &directory) noexcept;
+
+private:
+    static MetadataSnapshot readMetadataSnapshotImpl(const std::filesystem::path &directory);
 };
 
 }  // namespace spark

@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <set>
+#include <unordered_set>
 
 namespace spark {
 
@@ -18,6 +19,7 @@ public:
 
     [[nodiscard]] bool eof() const { return pos_ >= size_; }
     [[nodiscard]] std::size_t remaining() const { return pos_ < size_ ? size_ - pos_ : 0; }
+    [[nodiscard]] std::size_t position() const { return pos_; }
 
     bool u8(std::uint8_t &out)
     {
@@ -372,10 +374,8 @@ bool JournalReader::readSegment(const std::filesystem::path &path, JournalReadRe
         rec.sequence = seq;
         rec.payload.assign(payload_sv.data(), payload_sv.data() + payload_sv.size());
 
-        if (!result.records.empty() && rec.sequence != result.records.back().sequence + 1) {
-            result.corrupt_records++;
-            return false;
-        }
+        // Cross-producer queue order is not guaranteed, so sequence numbers
+        // need not be monotonic in the file.
 
         if (rec.type == RecordType::CleanEnd) {
             result.has_clean_end = true;
@@ -423,6 +423,8 @@ JournalReadResult JournalReader::readSession(const std::filesystem::path &direct
     for (const auto &[num, path] : segments) {
         if (!expected_segment) {
             expected_segment = num;
+            result.first_segment_number = num;
+            result.head_truncated = num != 0;
         }
         if (num != *expected_segment || !readSegment(path, result, num)) {
             break;
@@ -430,7 +432,199 @@ JournalReadResult JournalReader::readSession(const std::filesystem::path &direct
         ++*expected_segment;
     }
 
+    std::unordered_set<std::uint32_t> sequences;
+    for (const auto &record : result.records) {
+        if (!sequences.insert(record.sequence).second) {
+            result.duplicate_sequences = true;
+            break;
+        }
+    }
+
+    // Rolling-journal recovery: if rotation pruned the early segments, a
+    // metadata snapshot must be present to supply the lost ModuleDefs /
+    // ThreadDefs / SessionConfig.  Without a valid matching snapshot, a
+    // head-truncated journal cannot be replayed safely.
+    if (result.head_truncated) {
+        MetadataSnapshot snapshot = readMetadataSnapshot(directory);
+        if (snapshot.valid && snapshot.session_id == result.session_id) {
+            if (!result.session_config.present && snapshot.session_config.present) {
+                result.session_config = snapshot.session_config;
+            }
+            result.metadata_snapshot = std::move(snapshot);
+            result.head_truncated = false;
+        }
+    }
+
     return result;
+}
+
+MetadataSnapshot JournalReader::readMetadataSnapshot(const std::filesystem::path &directory) noexcept
+{
+    try {
+        return readMetadataSnapshotImpl(directory);
+    }
+    catch (...) {
+        return {};
+    }
+}
+
+MetadataSnapshot JournalReader::readMetadataSnapshotImpl(const std::filesystem::path &directory)
+{
+    MetadataSnapshot snapshot;
+    const auto path = directory / "metadata.snapshot";
+
+    std::FILE *f = std::fopen(path.string().c_str(), "rb");
+    if (!f) {
+        return snapshot;
+    }
+
+    std::fseek(f, 0, SEEK_END);
+    const auto file_size = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (file_size < 0) {
+        std::fclose(f);
+        return snapshot;
+    }
+    const auto snapshot_size = static_cast<std::size_t>(file_size);
+    if (snapshot_size < kSnapshotHeaderSize || snapshot_size > kSnapshotHeaderSize + kMaxSnapshotPayloadSize) {
+        std::fclose(f);
+        return snapshot;
+    }
+
+    std::vector<std::uint8_t> buf(snapshot_size);
+    const std::size_t read = std::fread(buf.data(), 1, buf.size(), f);
+    std::fclose(f);
+    if (read != buf.size()) {
+        return snapshot;
+    }
+
+    ByteCursor c(buf.data(), buf.size());
+
+    // Header.
+    std::uint8_t magic[8];
+    if (!c.bytes(magic, 8) || std::memcmp(magic, kSnapshotMagic, 8) != 0) {
+        return snapshot;
+    }
+    std::uint16_t version;
+    if (!c.u16(version) || version != kSnapshotVersion) {
+        return snapshot;
+    }
+    std::uint16_t reserved;
+    if (!c.u16(reserved)) {
+        return snapshot;
+    }
+    std::uint64_t session_id;
+    if (!c.u64(session_id)) {
+        return snapshot;
+    }
+    std::uint64_t created_ns;
+    if (!c.u64(created_ns)) {
+        return snapshot;
+    }
+    std::uint32_t payload_len;
+    if (!c.u32(payload_len) || payload_len > kMaxSnapshotPayloadSize) {
+        return snapshot;
+    }
+    std::uint32_t expected_crc;
+    if (!c.u32(expected_crc)) {
+        return snapshot;
+    }
+
+    // Payload.
+    if (c.remaining() != payload_len) {
+        return snapshot;
+    }
+    const std::uint8_t *payload_ptr = buf.data() + kSnapshotHeaderSize;
+    const auto actual_crc = static_cast<std::uint32_t>(crc32(0L, payload_ptr, payload_len));
+    if (actual_crc != expected_crc) {
+        return snapshot;
+    }
+
+    ByteCursor p(payload_ptr, payload_len);
+
+    // SessionConfig.
+    std::uint16_t sc_len;
+    if (!p.u16(sc_len)) {
+        return snapshot;
+    }
+    if (sc_len > 0) {
+        if (p.remaining() < sc_len) {
+            return snapshot;
+        }
+        JournalRecord sc_rec;
+        sc_rec.type = RecordType::SessionConfig;
+        sc_rec.payload.assign(payload_ptr + p.position(), payload_ptr + p.position() + sc_len);
+        if (sc_rec.asSessionConfig(snapshot.session_config)) {
+            snapshot.session_config.present = true;
+        }
+        std::string_view sc_sv;
+        if (!p.stringView(sc_sv, sc_len)) {
+            return snapshot;
+        }
+    }
+
+    // Modules.
+    std::uint32_t module_count;
+    if (!p.u32(module_count)) {
+        return snapshot;
+    }
+    constexpr std::uint32_t k_max_snapshot_definitions = 65536;
+    constexpr std::size_t k_min_module_size = sizeof(std::uint32_t) + sizeof(std::uint16_t);
+    if (module_count > k_max_snapshot_definitions || p.remaining() < sizeof(std::uint32_t) ||
+        module_count > (p.remaining() - sizeof(std::uint32_t)) / k_min_module_size) {
+        return snapshot;
+    }
+    snapshot.modules.reserve(module_count);
+    for (std::uint32_t i = 0; i < module_count; ++i) {
+        std::uint32_t module_id;
+        if (!p.u32(module_id)) {
+            return snapshot;
+        }
+        std::uint16_t path_len;
+        if (!p.u16(path_len)) {
+            return snapshot;
+        }
+        std::string_view path_sv;
+        if (!p.stringView(path_sv, path_len)) {
+            return snapshot;
+        }
+        snapshot.modules.emplace_back(module_id, std::string(path_sv.data(), path_sv.size()));
+    }
+
+    // Threads.
+    std::uint32_t thread_count;
+    if (!p.u32(thread_count)) {
+        return snapshot;
+    }
+    constexpr std::size_t k_min_thread_size = sizeof(std::uint64_t) * 2 + sizeof(std::uint16_t);
+    if (thread_count > k_max_snapshot_definitions || thread_count > p.remaining() / k_min_thread_size) {
+        return snapshot;
+    }
+    snapshot.threads.reserve(thread_count);
+    for (std::uint32_t i = 0; i < thread_count; ++i) {
+        SnapshotThreadDef def;
+        if (!p.u64(def.thread_id) || !p.u64(def.os_thread_id)) {
+            return snapshot;
+        }
+        std::uint16_t name_len;
+        if (!p.u16(name_len)) {
+            return snapshot;
+        }
+        std::string_view name_sv;
+        if (!p.stringView(name_sv, name_len)) {
+            return snapshot;
+        }
+        def.name.assign(name_sv.data(), name_sv.size());
+        snapshot.threads.push_back(std::move(def));
+    }
+
+    if (!p.eof()) {
+        return snapshot;
+    }
+
+    snapshot.session_id = session_id;
+    snapshot.valid = true;
+    return snapshot;
 }
 
 }  // namespace spark

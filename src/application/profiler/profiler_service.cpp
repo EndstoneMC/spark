@@ -825,6 +825,13 @@ void ProfilerService::announceResult()
     notifier_.notify(pending_sender_, headline);
     notifier_.notify(pending_sender_, pending_result_);
 
+    // A successful export means the profile is safely delivered; discard the
+    // crash-recovery journal so the next startup does not treat it as a crash.
+    // On failure the journal is retained so a subsequent crash can still recover.
+    if (pending_outcome_ == ExportOutcome::Uploaded || pending_outcome_ == ExportOutcome::Saved) {
+        profiler_.discardRecoveryJournal();
+    }
+
     if (activity_log_provider_) {
         ActivityLog *log = activity_log_provider_();
         if (log) {

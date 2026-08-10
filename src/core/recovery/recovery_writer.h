@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -77,6 +78,9 @@ private:
     void closeSegment();
     void rotateIfNeeded();
     bool syncFile();
+    bool writeMetadataSnapshot();
+    void cacheModuleDef(std::uint32_t module_id, std::string_view path);
+    void cacheThreadDef(std::uint64_t thread_id, std::uint64_t os_thread_id, std::string_view name);
 
     Config config_;
 
@@ -98,9 +102,18 @@ private:
     std::filesystem::path segment_path_;
     std::FILE *file_ = nullptr;
     std::uint32_t segment_number_ = 0;
+    std::uint32_t first_retained_segment_ = 0;
     std::size_t segment_bytes_ = 0;
     std::size_t total_bytes_ = 0;
     std::chrono::steady_clock::time_point last_sync_;
+
+    // Metadata cache (protected by metadata_mutex_).  Updated by producers
+    // when they enqueue metadata records; read by the writer thread when it
+    // flushes a snapshot before pruning.
+    std::mutex metadata_mutex_;
+    std::vector<std::uint8_t> cached_session_config_;
+    std::map<std::uint32_t, std::string> cached_modules_;
+    std::map<std::uint64_t, SnapshotThreadDef> cached_threads_;
 };
 
 }  // namespace spark

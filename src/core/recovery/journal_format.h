@@ -17,6 +17,14 @@ namespace spark {
 inline constexpr char kJournalMagic[8] = {'S', 'P', 'R', 'K', 'J', 'N', 'R', 'L'};
 inline constexpr std::uint16_t kJournalVersion = 2;
 
+// Metadata snapshot constants.  The snapshot is a sidecar file that preserves
+// SessionConfig, all ModuleDefs, and all ThreadDefs so a rolling journal can
+// recover even after rotation prunes the early segments that carried them.
+inline constexpr char kSnapshotMagic[8] = {'S', 'P', 'R', 'K', 'M', 'E', 'T', 'A'};
+inline constexpr std::uint16_t kSnapshotVersion = 1;
+inline constexpr std::size_t kSnapshotHeaderSize = 36;                      // 8+2+2+8+8+4+4
+inline constexpr std::uint32_t kMaxSnapshotPayloadSize = 16 * 1024 * 1024;  // 16 MiB
+
 // File header size: 8 (magic) + 2 (version) + 2 (reserved) + 8 (session_id) + 8 (created_ns) + 4 (segment) = 32
 inline constexpr std::size_t kFileHeaderSize = 32;
 
@@ -190,6 +198,62 @@ inline JournalBuffer buildSessionConfigPayload(std::uint32_t interval_us, std::i
         p.str(pat);
     }
     return p;
+}
+
+// --- Metadata snapshot ---
+// A snapshot stores the session metadata needed to replay a rolling journal
+// after early segments have been pruned.  The writer maintains an in-memory
+// cache and flushes a crash-consistent sidecar file before deleting any segment.
+
+struct SnapshotModuleDef {
+    std::uint32_t module_id;
+    std::string path;
+};
+
+struct SnapshotThreadDef {
+    std::uint64_t thread_id;
+    std::uint64_t os_thread_id;
+    std::string name;
+};
+
+// Serializes the snapshot header + payload into a single buffer.
+// `session_config_payload` may be empty if no SessionConfig was recorded.
+inline std::vector<std::uint8_t> serializeMetadataSnapshot(std::uint64_t session_id, std::uint64_t created_ns,
+                                                           const std::vector<std::uint8_t> &session_config_payload,
+                                                           const std::vector<SnapshotModuleDef> &modules,
+                                                           const std::vector<SnapshotThreadDef> &threads)
+{
+    JournalBuffer payload;
+    const std::uint16_t sc_len = static_cast<std::uint16_t>(session_config_payload.size());
+    payload.u16(sc_len);
+    if (sc_len > 0) {
+        payload.bytes(session_config_payload.data(), session_config_payload.size());
+    }
+    payload.u32(static_cast<std::uint32_t>(modules.size()));
+    for (const auto &m : modules) {
+        payload.u32(m.module_id);
+        payload.str(m.path);
+    }
+    payload.u32(static_cast<std::uint32_t>(threads.size()));
+    for (const auto &t : threads) {
+        payload.u64(t.thread_id);
+        payload.u64(t.os_thread_id);
+        payload.str(t.name);
+    }
+
+    const std::uint32_t payload_len = static_cast<std::uint32_t>(payload.size());
+    const std::uint32_t crc = static_cast<std::uint32_t>(crc32(0L, payload.data(), payload_len));
+
+    JournalBuffer h;
+    h.bytes(kSnapshotMagic, 8);
+    h.u16(kSnapshotVersion);
+    h.u16(0);  // reserved
+    h.u64(session_id);
+    h.u64(created_ns);
+    h.u32(payload_len);
+    h.u32(crc);
+    h.bytes(payload.data(), payload_len);
+    return h.take();
 }
 
 }  // namespace spark

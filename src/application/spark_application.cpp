@@ -1,6 +1,7 @@
 #include "application/spark_application.h"
 
 #include <chrono>
+#include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <utility>
@@ -9,6 +10,15 @@
 #include "net/profile_file.h"
 
 namespace spark {
+
+namespace {
+
+void logRecoveryFailure() noexcept
+{
+    std::fputs("Spark recovery failed; continuing without recovery.\n", stderr);
+}
+
+}  // namespace
 
 SparkApplication::SparkApplication(std::string bds_executable_sha256, const std::filesystem::path &profile_storage_dir,
                                    std::filesystem::path activity_log_file, SparkConfig config,
@@ -49,29 +59,29 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256, const std:
 
 void SparkApplication::registerCommands()
 {
-    registry_.registerCommand({"profiler", "sampler"},
-                              "start/stop/info/cancel/open/trust-viewer an execution or allocation profile",
-                              "spark.profiler", [this](CommandSender &sender, const Arguments &args) {
-                                  const std::string &action = args.subCommand();
-                                  if (action == "start") {
-                                      profiler_.cmdStart(sender, args);
-                                  }
-                                  else if (action == "stop") {
-                                      profiler_.cmdStop(sender, args);
-                                  }
-                                  else if (action == "cancel") {
-                                      profiler_.cmdCancel(sender);
-                                  }
-                                  else if (action == "open") {
-                                      profiler_.cmdOpen(sender);
-                                  }
-                                  else if (action == "trust-viewer") {
-                                      profiler_.cmdTrustViewer(sender, args);
-                                  }
-                                  else {
-                                      profiler_.cmdInfo(sender);
-                                  }
-                              });
+    registry_.registerCommand(
+        {"profiler", "sampler"}, "start/stop/info/cancel/open/trust-viewer an execution or allocation profile",
+        "spark.profiler", [this](CommandSender &sender, const Arguments &args) {
+            const std::string &action = args.subCommand();
+            if (action == "start") {
+                profiler_.cmdStart(sender, args);
+            }
+            else if (action == "stop") {
+                profiler_.cmdStop(sender, args);
+            }
+            else if (action == "cancel") {
+                profiler_.cmdCancel(sender);
+            }
+            else if (action == "open") {
+                profiler_.cmdOpen(sender);
+            }
+            else if (action == "trust-viewer") {
+                profiler_.cmdTrustViewer(sender, args);
+            }
+            else {
+                profiler_.cmdInfo(sender);
+            }
+        });
     registry_.registerCommand({"tps", "cpu"}, "rolling TPS, MSPT percentiles, and CPU usage", "spark.tps",
                               [this](CommandSender &sender, const Arguments &) { health_.cmdTps(sender); });
     registry_.registerCommand({"ping"}, "player ping RTT statistics", "spark.ping",
@@ -126,7 +136,17 @@ void SparkApplication::shutdown()
     watchdog_.stop();
 }
 
-void SparkApplication::recoverPreviousSession()
+void SparkApplication::recoverPreviousSession() noexcept
+{
+    try {
+        recoverPreviousSessionImpl();
+    }
+    catch (...) {
+        logRecoveryFailure();
+    }
+}
+
+void SparkApplication::recoverPreviousSessionImpl()
 {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -155,16 +175,28 @@ void SparkApplication::recoverPreviousSession()
         return;
     }
 
-    RecoveredProfile profile = RecoveryPlayer::replay(recovery_dir_);
+    RecoveredProfile profile;
+    try {
+        profile = RecoveryPlayer::replay(recovery_dir_);
+    }
+    catch (const std::exception &e) {
+        quarantineRecovery(std::string("replay exception: ") + e.what());
+        return;
+    }
+    catch (...) {
+        quarantineRecovery("replay exception: unknown error");
+        return;
+    }
+
     if (!profile.valid) {
+        safeNotify("crash recovery", "Discarding incomplete recovery journal: " + profile.error);
         fs::remove_all(recovery_dir_, ec);
         fs::create_directories(recovery_dir_, ec);
         return;
     }
 
-    // Skip recovery for sessions that ended cleanly.  The profiler already
-    // exported the profile through the normal path; the journal is just
-    // leftover state that should be cleaned up.
+    // Skip recovery for sessions that ended cleanly (old-format journals
+    // that carry a CleanEnd marker).  The journal is just leftover state.
     if (profile.has_clean_end) {
         fs::remove_all(recovery_dir_, ec);
         fs::create_directories(recovery_dir_, ec);
@@ -177,17 +209,19 @@ void SparkApplication::recoverPreviousSession()
                                                          profile.serialized_proto, profile.session_start_ms);
         if (saved.ok) {
             saved_profile = true;
-            notifier_.notify("crash recovery", "Recovered profile saved to " + saved.path.string() + " - open it at " +
-                                                   config_.viewer_url);
+            safeNotify("crash recovery",
+                       "Recovered profile saved to " + saved.path.string() + " - open it at " + config_.viewer_url);
         }
         else {
-            notifier_.notify("crash recovery",
-                             "Failed to save recovered profile; recovery journal retained: " + saved.error);
+            safeNotify("crash recovery", "Failed to save recovered profile; recovery journal retained: " + saved.error);
         }
     }
     catch (const std::exception &error) {
-        notifier_.notify("crash recovery",
-                         "Failed to save recovered profile; recovery journal retained: " + std::string(error.what()));
+        safeNotify("crash recovery",
+                   "Failed to save recovered profile; recovery journal retained: " + std::string(error.what()));
+    }
+    catch (...) {
+        safeNotify("crash recovery", "Failed to save recovered profile; recovery journal retained");
     }
 
     if (saved_profile) {
@@ -196,6 +230,37 @@ void SparkApplication::recoverPreviousSession()
     }
     else {
         profiler_.setRecoveryDirectory({});
+    }
+}
+
+void SparkApplication::quarantineRecovery(const std::string &reason)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    safeNotify("crash recovery",
+               "Quarantining recovery journal (" + reason + "). The server will continue starting up normally.");
+
+    // Collision-resistant naming: same-second quarantines get a monotonic suffix.
+    const auto stamp =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch());
+    const auto quarantined = recovery_dir_.parent_path() / ("recovery.failed-" + std::to_string(stamp.count()) + "-" +
+                                                            std::to_string(quarantine_counter_++));
+    fs::rename(recovery_dir_, quarantined, ec);
+    if (ec) {
+        // Rename failed (cross-device or other error): remove so the next
+        // startup does not re-read the same corrupt journal.
+        fs::remove_all(recovery_dir_, ec);
+    }
+    fs::create_directories(recovery_dir_, ec);
+}
+
+void SparkApplication::safeNotify(const std::string &sender, const std::string &message) noexcept
+{
+    try {
+        notifier_.notify(sender, message);
+    }
+    catch (...) {
+        logRecoveryFailure();
     }
 }
 

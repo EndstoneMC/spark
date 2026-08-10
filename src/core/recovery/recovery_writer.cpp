@@ -56,6 +56,7 @@ bool RecoveryWriter::start()
         return false;
     }
 
+    // Remove leftover segments and snapshots from a previous session.
     for (const auto &entry : std::filesystem::directory_iterator(config_.directory, ec)) {
         if (ec) {
             enabled_.store(false);
@@ -66,19 +67,24 @@ bool RecoveryWriter::start()
             continue;
         }
         const std::string name = entry.path().filename().string();
-        if (name.size() <= 12 || !name.starts_with("segment-") || !name.ends_with(".jnl")) {
+        const bool is_segment = name.size() > 12 && name.starts_with("segment-") && name.ends_with(".jnl");
+        const bool is_snapshot = name == "metadata.snapshot" || name == "metadata.snapshot.tmp";
+        if (!is_segment && !is_snapshot) {
             continue;
         }
-        const std::string_view number(name.data() + 8, name.size() - 12);
-        std::uint32_t parsed = 0;
-        const auto [end, error] = std::from_chars(number.data(), number.data() + number.size(), parsed);
-        if (error == std::errc{} && end == number.data() + number.size()) {
-            std::filesystem::remove(entry.path(), ec);
-            if (ec) {
-                enabled_.store(false);
-                running_.store(false);
-                return false;
+        if (is_segment) {
+            const std::string_view number(name.data() + 8, name.size() - 12);
+            std::uint32_t parsed = 0;
+            const auto [end, error] = std::from_chars(number.data(), number.data() + number.size(), parsed);
+            if (error != std::errc{} || end != number.data() + number.size()) {
+                continue;
             }
+        }
+        std::filesystem::remove(entry.path(), ec);
+        if (ec) {
+            enabled_.store(false);
+            running_.store(false);
+            return false;
         }
     }
 
@@ -145,11 +151,13 @@ void RecoveryWriter::enqueue(RecordType type, const JournalBuffer &payload)
 
 void RecoveryWriter::journalModuleDef(std::uint32_t module_id, std::string_view path)
 {
+    cacheModuleDef(module_id, path);
     enqueue(RecordType::ModuleDef, buildModuleDefPayload(module_id, path));
 }
 
 void RecoveryWriter::journalThreadDef(std::uint64_t thread_id, std::uint64_t os_thread_id, std::string_view name)
 {
+    cacheThreadDef(thread_id, os_thread_id, name);
     enqueue(RecordType::ThreadDef, buildThreadDefPayload(thread_id, os_thread_id, name));
 }
 
@@ -185,10 +193,30 @@ void RecoveryWriter::journalSessionConfig(std::uint32_t interval_us, std::int32_
                                           bool creator_is_player, std::string_view comment,
                                           const std::vector<std::string> &thread_patterns)
 {
-    enqueue(RecordType::SessionConfig,
-            buildSessionConfigPayload(interval_us, only_ticks_over_ms, all_threads, regex_threads, ignore_sleeping,
-                                      thread_grouper, profile_type, live_only, creator_name, creator_is_player, comment,
-                                      thread_patterns));
+    JournalBuffer payload = buildSessionConfigPayload(interval_us, only_ticks_over_ms, all_threads, regex_threads,
+                                                      ignore_sleeping, thread_grouper, profile_type, live_only,
+                                                      creator_name, creator_is_player, comment, thread_patterns);
+    {
+        std::scoped_lock lock(metadata_mutex_);
+        cached_session_config_.assign(payload.data(), payload.data() + payload.size());
+    }
+    enqueue(RecordType::SessionConfig, payload);
+}
+
+void RecoveryWriter::cacheModuleDef(std::uint32_t module_id, std::string_view path)
+{
+    std::scoped_lock lock(metadata_mutex_);
+    cached_modules_[module_id].assign(path.data(), path.size());
+}
+
+void RecoveryWriter::cacheThreadDef(std::uint64_t thread_id, std::uint64_t os_thread_id, std::string_view name)
+{
+    std::scoped_lock lock(metadata_mutex_);
+    SnapshotThreadDef def;
+    def.thread_id = thread_id;
+    def.os_thread_id = os_thread_id;
+    def.name.assign(name.data(), name.size());
+    cached_threads_[thread_id] = std::move(def);
 }
 
 void RecoveryWriter::requestFlush()
@@ -246,16 +274,76 @@ void RecoveryWriter::rotateIfNeeded()
         return;
     }
 
-    // Delete oldest segments until under limit.  Segments are numbered
-    // sequentially from 0; the lowest number is the oldest.
-    for (std::uint32_t i = 0; i < segment_number_ && total_bytes_ > config_.max_total_bytes; ++i) {
-        auto path = config_.directory / ("segment-" + std::to_string(i) + ".jnl");
+    // Write a metadata snapshot before deleting any segment so the reader can
+    // recover ModuleDefs/ThreadDefs/SessionConfig from the pruned segments.
+    // If the snapshot cannot be made durable, skip pruning entirely: keeping
+    // extra segments is safe, deleting them without a snapshot is not.
+    if (!writeMetadataSnapshot()) {
+        return;
+    }
+
+    while (first_retained_segment_ < segment_number_ && total_bytes_ > config_.max_total_bytes) {
+        auto path = config_.directory / ("segment-" + std::to_string(first_retained_segment_) + ".jnl");
         std::error_code ec;
         auto size = std::filesystem::file_size(path, ec);
         if (!ec && std::filesystem::remove(path, ec)) {
             total_bytes_ -= (size > 0 ? static_cast<std::size_t>(size) : 0);
+            ++first_retained_segment_;
+        }
+        else {
+            break;
         }
     }
+}
+
+bool RecoveryWriter::writeMetadataSnapshot()
+{
+    std::vector<std::uint8_t> session_config;
+    std::vector<SnapshotModuleDef> modules;
+    std::vector<SnapshotThreadDef> threads;
+    {
+        std::scoped_lock lock(metadata_mutex_);
+        session_config = cached_session_config_;
+        modules.reserve(cached_modules_.size());
+        for (const auto &[id, path] : cached_modules_) {
+            modules.push_back({.module_id = id, .path = path});
+        }
+        threads.reserve(cached_threads_.size());
+        for (const auto &[tid, def] : cached_threads_) {
+            threads.push_back(def);
+        }
+    }
+
+    auto buf = serializeMetadataSnapshot(config_.session_id, monotonicNowNs(), session_config, modules, threads);
+
+    const auto tmp_path = config_.directory / "metadata.snapshot.tmp";
+    const auto final_path = config_.directory / "metadata.snapshot";
+
+    std::FILE *f = std::fopen(tmp_path.string().c_str(), "wb");
+    if (!f) {
+        return false;
+    }
+    if (std::fwrite(buf.data(), 1, buf.size(), f) != buf.size()) {
+        std::fclose(f);
+        std::error_code ec;
+        std::filesystem::remove(tmp_path, ec);
+        return false;
+    }
+    if (!syncFileImpl(f)) {
+        std::fclose(f);
+        std::error_code ec;
+        std::filesystem::remove(tmp_path, ec);
+        return false;
+    }
+    std::fclose(f);
+
+    std::error_code ec;
+    std::filesystem::rename(tmp_path, final_path, ec);
+    if (ec) {
+        std::filesystem::remove(tmp_path, ec);
+        return false;
+    }
+    return true;
 }
 
 void RecoveryWriter::writerLoop()

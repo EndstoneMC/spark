@@ -11,6 +11,10 @@ namespace spark {
 using ModuleId = std::uint32_t;
 inline constexpr ModuleId kInvalidModule = 0xffffffffu;
 
+// Sentinel path used by bounded ModuleTable for modules that exceed the cap.
+// Must be journaled as ModuleDef(0, ...) so recovery can remap overflow frames.
+inline constexpr std::string_view kOtherModulesSentinel = "<other modules>";
+
 // A stack frame identified by its module and module-relative address (RVA). This
 // is stable across the run and is all we need to aggregate; symbol resolution is
 // deferred to export time.
@@ -41,7 +45,7 @@ public:
     explicit ModuleTable(std::size_t maximum_paths = 0) : maximum_paths_(maximum_paths)
     {
         if (maximum_paths_ != 0) {
-            paths_.emplace_back("<other modules>");
+            paths_.emplace_back(kOtherModulesSentinel);
         }
     }
 

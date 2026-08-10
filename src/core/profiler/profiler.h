@@ -121,6 +121,12 @@ public:
     // Sets the recovery journal directory before start().
     void setRecoveryDirectory(std::filesystem::path dir) { recovery_dir_ = std::move(dir); }
 
+    // Deletes the recovery journal directory.  Called after a successful
+    // export, a user cancel, or a clean shutdown so the next startup does not
+    // mistake the journal for a crash to recover.  Safe to call when no
+    // journal exists.
+    void discardRecoveryJournal();
+
     void journalStallBegin(std::uint64_t detected_ns, std::uint64_t last_tick_ns);
     void journalStallEnd(std::uint64_t detected_ns, std::uint64_t recovered_ns);
 

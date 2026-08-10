@@ -55,7 +55,10 @@ public:
 
 private:
     void registerCommands();
-    void recoverPreviousSession();
+    void recoverPreviousSession() noexcept;
+    void recoverPreviousSessionImpl();
+    void quarantineRecovery(const std::string &reason);
+    void safeNotify(const std::string &sender, const std::string &message) noexcept;
 
     StatisticsService statistics_;
     SparkConfig config_;
@@ -78,6 +81,7 @@ private:
     StallWatchdog watchdog_;
     std::uint64_t stall_begin_ns_ = 0;
     std::filesystem::path recovery_dir_;
+    std::uint64_t quarantine_counter_ = 0;
 };
 
 }  // namespace spark

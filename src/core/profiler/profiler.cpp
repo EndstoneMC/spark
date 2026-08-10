@@ -329,6 +329,10 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
                     config.all_threads, config.regex_threads, false, static_cast<std::uint8_t>(options.thread_grouper),
                     1, config.live_only, options.creator_name, options.creator_is_player, options.comment,
                     options.threads);
+                // The bounded allocation ModuleTable pre-creates a sentinel
+                // module 0 for overflow paths; journal it so recovery can
+                // remap frames that were assigned to it.
+                writer->journalModuleDef(0, kOtherModulesSentinel);
                 writer->requestFlush();
                 std::scoped_lock lock(recovery_mutex_);
                 recovery_writer_ = std::move(writer);
@@ -469,9 +473,31 @@ void Profiler::stopRecoveryWriter()
     if (!writer) {
         return;
     }
-    writer->journalCleanEnd();
+    // Do NOT journal CleanEnd here.  CleanEnd was previously written before
+    // export, which caused crash-during-export profiles to be silently
+    // discarded on the next startup.  The journal is now deleted only after a
+    // successful export (announceResult), cancel, or clean shutdown.
     writer->requestFlush();
     writer->stop();
+}
+
+void Profiler::discardRecoveryJournal()
+{
+    std::unique_ptr<RecoveryWriter> writer;
+    {
+        std::scoped_lock lock(recovery_mutex_);
+        sampler_.setRecoverySink(nullptr);
+        allocation_sampler_.setRecoverySink(nullptr);
+        writer = std::move(recovery_writer_);
+    }
+    if (writer) {
+        writer->requestFlush();
+        writer->stop();
+    }
+    if (!recovery_dir_.empty()) {
+        std::error_code ec;
+        std::filesystem::remove_all(recovery_dir_, ec);
+    }
 }
 
 void Profiler::journalStallBegin(std::uint64_t detected_ns, std::uint64_t last_tick_ns)
@@ -856,6 +882,7 @@ bool Profiler::cancel(std::string &error)
     std::string stop_error;
     if (stopSampling(stop_error)) {
         error.clear();
+        discardRecoveryJournal();
         return true;
     }
 
@@ -863,6 +890,7 @@ bool Profiler::cancel(std::string &error)
     std::string backend_error;
     if (!running_.load() && backendFailure(backend_error)) {
         error.clear();
+        discardRecoveryJournal();
         return true;
     }
 
@@ -887,6 +915,7 @@ bool Profiler::shutdown(std::string &error)
         }
         stopRecoveryWriter();
         running_.store(false);
+        discardRecoveryJournal();
         return true;
     }
     if (running_.load()) {
@@ -897,6 +926,9 @@ bool Profiler::shutdown(std::string &error)
         stopRecoveryWriter();
         running_.store(false);
     }
+    // Clean shutdown: discard the journal so the next startup does not treat
+    // it as a crash.  This is safe even if no journal exists.
+    discardRecoveryJournal();
     return allocation_sampler_.shutdown(error);
 }
 

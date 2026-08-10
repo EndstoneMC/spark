@@ -6,6 +6,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -83,32 +84,78 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
         result.error = "no valid journal found";
         return result;
     }
-    if (journal.records.empty()) {
-        result.error = "journal contains no records";
-        return result;
-    }
 
     result.session_start_ms = static_cast<std::int64_t>(journal.session_id);
     result.has_clean_end = journal.has_clean_end;
     result.corrupt_records = journal.corrupt_records;
     result.truncated_records = journal.truncated_records;
 
-    // Build module table from ModuleDef records.  Records are journaled in
-    // first-intern order, so replaying intern() in journal order reproduces
-    // the original module IDs.
+    // Clean-end sessions were already exported through the normal path; the
+    // journal is just leftover state.  Skip the expensive replay/symbolication
+    // and let the caller clean up.
+    if (journal.has_clean_end) {
+        result.valid = true;
+        return result;
+    }
+
+    if (journal.records.empty()) {
+        result.error = "journal contains no records";
+        return result;
+    }
+
+    if (journal.duplicate_sequences) {
+        result.error = "journal contains duplicate record sequences";
+        return result;
+    }
+
+    // Head-truncated journal without a valid metadata snapshot: rotation
+    // deleted the early segments that carry ModuleDef/ThreadDef/SessionConfig.
+    // Replaying the retained tail would reference module IDs whose definitions
+    // are gone.  Treat as incomplete.
+    if (journal.head_truncated) {
+        result.error = "journal is head-truncated (missing early segments)";
+        return result;
+    }
+
+    // Build module table from the metadata snapshot (if present) and ModuleDef
+    // records.  The snapshot supplies definitions from pruned segments; the
+    // retained segment records supply definitions added after the snapshot.
+    // Recorded module IDs may not match local intern() IDs if any ModuleDef
+    // was lost, so build an explicit recorded->local remap and validate every
+    // sample against it.
     ModuleTable modules;
+    std::unordered_map<ModuleId, ModuleId> module_remap;
     std::unordered_map<ModuleId, std::uint64_t> module_bases;
+
+    if (journal.metadata_snapshot && journal.metadata_snapshot->valid) {
+        for (const auto &[recorded_id, path] : journal.metadata_snapshot->modules) {
+            if (module_remap.contains(recorded_id)) {
+                continue;
+            }
+            ModuleId local_id = modules.intern(path);
+            module_remap[recorded_id] = local_id;
+            std::uint64_t base = moduleBaseForPath(path);
+            if (base != 0) {
+                module_bases[local_id] = base;
+            }
+        }
+    }
+
     for (const auto &rec : journal.records) {
         if (rec.type != RecordType::ModuleDef) {
             continue;
         }
-        std::uint32_t module_id;
+        std::uint32_t recorded_id;
         std::string path;
-        if (rec.asModuleDef(module_id, path)) {
-            modules.intern(path);
+        if (rec.asModuleDef(recorded_id, path)) {
+            if (module_remap.contains(recorded_id)) {
+                continue;
+            }
+            ModuleId local_id = modules.intern(path);
+            module_remap[recorded_id] = local_id;
             std::uint64_t base = moduleBaseForPath(path);
             if (base != 0) {
-                module_bases[module_id] = base;
+                module_bases[local_id] = base;
             }
         }
     }
@@ -116,8 +163,52 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     // Replay samples into per-thread call trees.
     CallTree global_tree;
     std::map<std::uint64_t, ThreadCallTree> thread_trees;
-    std::uint64_t max_tick_id = 0;
+    std::unordered_map<std::uint64_t, std::string> thread_names;
+    std::optional<std::uint64_t> min_tick_id;
+    std::optional<std::uint64_t> max_tick_id;
+    std::optional<std::int32_t> min_window;
     std::uint64_t sample_count = 0;
+
+    if (journal.metadata_snapshot && journal.metadata_snapshot->valid) {
+        for (const auto &def : journal.metadata_snapshot->threads) {
+            thread_names[def.thread_id] = def.name;
+        }
+    }
+
+    for (const auto &rec : journal.records) {
+        if (rec.type == RecordType::ThreadDef) {
+            std::uint64_t thread_id;
+            std::uint64_t os_thread_id;
+            std::string name;
+            if (rec.asThreadDef(thread_id, os_thread_id, name)) {
+                thread_names[thread_id] = std::move(name);
+            }
+        }
+        else if (rec.type == RecordType::Sample) {
+            std::uint64_t thread_id;
+            std::uint64_t tick_id;
+            std::uint64_t weight;
+            std::int32_t window;
+            std::vector<FrameKey> frames;
+            if (rec.asSample(thread_id, tick_id, window, weight, frames)) {
+                min_tick_id = min_tick_id ? std::min(*min_tick_id, tick_id) : tick_id;
+                max_tick_id = max_tick_id ? std::max(*max_tick_id, tick_id) : tick_id;
+                min_window = min_window ? std::min(*min_window, window) : window;
+            }
+        }
+        else if (rec.type == RecordType::TickEvent) {
+            std::uint64_t tick_id;
+            double mspt;
+            if (rec.asTickEvent(tick_id, mspt)) {
+                min_tick_id = min_tick_id ? std::min(*min_tick_id, tick_id) : tick_id;
+                max_tick_id = max_tick_id ? std::max(*max_tick_id, tick_id) : tick_id;
+            }
+        }
+    }
+
+    const std::uint64_t retained_tick_start = min_tick_id.value_or(0);
+    const std::int32_t retained_window_start = min_window.value_or(0);
+    result.session_start_ms += static_cast<std::int64_t>(retained_window_start) * 1000;
 
     // TickEvent records don't carry a window field, so we build a tick_id ->
     // window map from Sample records (which do) and use it to assign each tick
@@ -138,11 +229,18 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
                 continue;
             }
 
+            window -= retained_window_start;
             tick_to_window[tick_id] = window;
             for (auto &frame : frames) {
-                auto it = module_bases.find(frame.module);
-                if (it != module_bases.end()) {
-                    frame.raw_address = it->second + frame.rva;
+                auto remap_it = module_remap.find(frame.module);
+                if (remap_it == module_remap.end()) {
+                    result.error = "sample references missing module id " + std::to_string(frame.module);
+                    return result;
+                }
+                frame.module = remap_it->second;
+                auto base_it = module_bases.find(frame.module);
+                if (base_it != module_bases.end()) {
+                    frame.raw_address = base_it->second + frame.rva;
                 }
             }
 
@@ -150,27 +248,17 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
             auto [it, inserted] = thread_trees.try_emplace(thread_id);
             if (inserted) {
                 it->second.thread_id = thread_id;
+                if (auto name = thread_names.find(thread_id); name != thread_names.end()) {
+                    it->second.thread_name = name->second;
+                }
             }
             it->second.tree.log(frames, window, weight);
             ++sample_count;
-            max_tick_id = std::max(tick_id, max_tick_id);
-        }
-        else if (rec.type == RecordType::ThreadDef) {
-            std::uint64_t thread_id, os_thread_id;
-            std::string name;
-            if (rec.asThreadDef(thread_id, os_thread_id, name)) {
-                auto [it, inserted] = thread_trees.try_emplace(thread_id);
-                if (inserted) {
-                    it->second.thread_id = thread_id;
-                }
-                it->second.thread_name = name;
-            }
         }
         else if (rec.type == RecordType::TickEvent) {
             std::uint64_t tick_id;
             double mspt;
             if (rec.asTickEvent(tick_id, mspt)) {
-                max_tick_id = std::max(tick_id, max_tick_id);
                 tick_events.push_back({.tick_id = tick_id, .mspt = mspt});
             }
         }
@@ -178,7 +266,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
 
     result.sample_count = sample_count;
     result.thread_count = thread_trees.size();
-    result.tick_count = max_tick_id > 0 ? max_tick_id + 1 : 0;
+    result.tick_count = max_tick_id ? *max_tick_id - retained_tick_start + 1 : 0;
 
     // Reconstruct per-window tick statistics; the viewer divides total time by per-window ticks.
     struct WindowAccumulator {
@@ -297,17 +385,20 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
         }
     }
 
-    // Resolve symbols.
-    std::vector<FrameKey> keys = collectFrameKeys(views);
-    auto resolved = resolveFrames(modules, keys);
-
-    // Serialize.
+    // Resolve symbols and serialize.  Wrap the platform-specific symbol
+    // resolution and protobuf build so a corrupt or unexpected journal can
+    // never throw out of replay().
     try {
+        std::vector<FrameKey> keys = collectFrameKeys(views);
+        auto resolved = resolveFrames(modules, keys);
         result.serialized_proto = buildSamplerData(meta, views, resolved);
         result.valid = true;
     }
     catch (const std::exception &e) {
-        result.error = std::string("serialization failed: ") + e.what();
+        result.error = std::string("recovery replay failed: ") + e.what();
+    }
+    catch (...) {
+        result.error = "recovery replay failed: unknown error";
     }
     return result;
 }
