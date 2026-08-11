@@ -63,20 +63,24 @@ void SparkApplication::registerCommands()
         {"profiler", "sampler"}, "start/stop/info/cancel/open/trust-viewer an execution or allocation profile",
         "spark.profiler", [this](CommandSender &sender, const Arguments &args) {
             const std::string &action = args.subCommand();
-            if (action == "start") {
-                profiler_.cmdStart(sender, args);
+            if (action == "info") {
+                profiler_.cmdInfo(sender);
+                return;
             }
-            else if (action == "stop") {
-                profiler_.cmdStop(sender, args);
-            }
-            else if (action == "cancel") {
-                profiler_.cmdCancel(sender);
-            }
-            else if (action == "open") {
+            if (action == "open") {
                 profiler_.cmdOpen(sender);
             }
             else if (action == "trust-viewer") {
                 profiler_.cmdTrustViewer(sender, args);
+            }
+            else if (action == "cancel") {
+                profiler_.cmdCancel(sender);
+            }
+            else if (action == "stop" || action == "upload" || args.boolFlag("stop") || args.boolFlag("upload")) {
+                profiler_.cmdStop(sender, args);
+            }
+            else if (action == "start") {
+                profiler_.cmdStart(sender, args);
             }
             else {
                 profiler_.cmdInfo(sender);

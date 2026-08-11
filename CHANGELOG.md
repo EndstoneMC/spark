@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased][Unreleased]
 
+### Added
+
+- Accept `/spark profiler upload` (and `/spark sampler upload`) as a
+  compatibility alias for `/spark profiler stop`, matching upstream spark.
+  `--upload` and `--stop` legacy flag forms are also accepted.
+
 ### Fixed
 
 - Harden crash recovery against corrupted, truncated, or rotation-damaged
