@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased][Unreleased]
 
+### Added
+
+- Attribute sampled native frames to their owning Endstone C++ plugin on Windows
+  and Linux using a profile-start module snapshot.
+
 ## [0.5.2][0.5.2] - 2026-08-11
 
 ### Added

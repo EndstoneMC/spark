@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "core/profiler/profiler.h"
 #include "core/stats/ping_statistics.h"
@@ -29,6 +30,7 @@ public:
     virtual ~ProfileMetadataProvider() = default;
     virtual void gatherServerMetadata(ExportContext &ctx, std::int64_t now_ms) = 0;
     virtual void gatherWorldMetadata(ExportContext &ctx) = 0;
+    virtual std::vector<NativePluginSource> nativePluginSources() { return {}; }
     // Runtime queries used by /spark health (not export-specific).
     virtual std::int64_t serverUptimeSeconds() = 0;
     virtual std::int64_t playerCount() = 0;

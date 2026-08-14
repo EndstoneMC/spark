@@ -103,6 +103,7 @@ public:
 
     void gatherServerMetadata(ExportContext &ctx, std::int64_t now_ms) override;
     void gatherWorldMetadata(ExportContext &ctx) override;
+    std::vector<NativePluginSource> nativePluginSources() override;
     std::int64_t serverUptimeSeconds() override;
     std::int64_t playerCount() override;
     std::pair<int, int> worldGauges() override;

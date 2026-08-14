@@ -146,6 +146,7 @@ private:
     std::string background_thread_dumper_ = "default";
     std::string start_sender_name_ = "CONSOLE";
     bool start_sender_is_player_ = false;
+    std::vector<NativePluginSource> session_native_plugin_sources_;
     std::thread export_thread_;
 
     // Export params, set on the main thread before runExport() runs on export_thread_.

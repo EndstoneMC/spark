@@ -15,6 +15,7 @@
 #include "core/stats/system_stats.h"
 #include "core/util/format.h"
 #include "core/util/world_region.h"
+#include "platform/endstone/native_plugin_attribution.h"
 
 namespace spark::endstone_adapter {
 
@@ -72,6 +73,23 @@ void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx, std::int
         ctx.server_configurations.clear();
         ctx.server_configurations["server.properties"] = spark::serverPropertiesToJsonString(properties);
     }
+}
+
+std::vector<NativePluginSource> EndstoneMetadataProvider::nativePluginSources()
+{
+    const auto plugins = server_.getPluginManager().getPlugins();
+    std::vector<NativePluginSource> sources;
+    sources.reserve(plugins.size());
+    for (endstone::Plugin *plugin : plugins) {
+        const endstone::PluginDescription &desc = plugin->getDescription();
+        const auto identity = identifyNativePluginModule(*plugin);
+        if (identity.has_value()) {
+            sources.push_back({.module_base = identity->module_base,
+                               .module_path = identity->module_path,
+                               .source_id = desc.getName()});
+        }
+    }
+    return sources;
 }
 
 void EndstoneMetadataProvider::gatherWorldMetadata(ExportContext &ctx)

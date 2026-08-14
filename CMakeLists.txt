@@ -162,6 +162,7 @@ endif ()
 # --- the Endstone plugin (links its application layer + Endstone adapters) ---
 endstone_add_plugin(spark
         src/platform/endstone/adapters.cpp
+        src/platform/endstone/native_plugin_attribution.cpp
         src/plugin.cpp)
 target_include_directories(spark PRIVATE src)
 target_link_libraries(spark PRIVATE spark_application)

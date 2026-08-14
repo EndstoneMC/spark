@@ -50,6 +50,7 @@ struct ProfileMetadata {
     std::map<std::string, std::string> extra_platform_metadata;
     std::map<std::string, std::string> server_configurations;
     std::vector<PluginInfo> plugins;
+    std::map<std::string, std::string> class_sources;
     WorldInfo world;
     std::string socket_channel_info_proto;  // field 8: SocketChannelInfo (empty for non-live)
 };

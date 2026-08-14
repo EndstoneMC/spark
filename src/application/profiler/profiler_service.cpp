@@ -189,11 +189,13 @@ void ProfilerService::cmdStart(CommandSender &sender, const Arguments &args)
         background_started_ = false;
     }
 
+    std::vector<NativePluginSource> native_plugin_sources = metadata_provider_.nativePluginSources();
     std::string error;
     if (!profiler_.start(options, tid, error)) {
         sender.sendErrorMessage("Couldn't start the profiler: {}", error);
         return;
     }
+    session_native_plugin_sources_ = std::move(native_plugin_sources);
     start_sender_name_ = sender.getName();
     start_sender_is_player_ = sender.isPlayer();
     session_type_ = SessionType::Foreground;
@@ -626,6 +628,7 @@ ExportContext ProfilerService::captureLiveContext(std::int64_t now_ms)
     ExportContext context;
     context.bds_executable_sha256 = bds_executable_sha256_;
     metadata_provider_.gatherServerMetadata(context, now_ms);
+    context.native_plugin_sources = session_native_plugin_sources_;
     context.statistics = statistics_.snapshot();
     context.window_stats = statistics_.profileWindows(profiler_.startTimeMs(), now_ms);
     context.system_stats = spark::gatherSystemStats(".");
@@ -748,6 +751,7 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
     pending_ctx_ = ExportContext{};
     pending_ctx_.bds_executable_sha256 = bds_executable_sha256_;
     metadata_provider_.gatherServerMetadata(pending_ctx_, nowMs());
+    pending_ctx_.native_plugin_sources = session_native_plugin_sources_;
     pending_ctx_.comment = comment;
     pending_ctx_.statistics = statistics_.snapshot();
     pending_ctx_.window_stats = statistics_.profileWindows(profiler_.startTimeMs(), profiler_.endTimeMs());
@@ -992,10 +996,12 @@ bool ProfilerService::startBackgroundSession()
         options.thread_grouper = spark::ThreadGrouperMode::ByPool;
     }
 
+    std::vector<NativePluginSource> native_plugin_sources = metadata_provider_.nativePluginSources();
     std::string error;
     if (!profiler_.start(options, main_tid_, error)) {
         return false;
     }
+    session_native_plugin_sources_ = std::move(native_plugin_sources);
 
     session_type_ = SessionType::Background;
     return true;

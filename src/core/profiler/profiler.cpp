@@ -533,6 +533,35 @@ std::uint64_t Profiler::activeNumberOfTicks() const
     return mode_ == ProfileMode::Allocation ? allocation_sampler_.numberOfTicks() : sampler_.numberOfTicks();
 }
 
+void Profiler::addNativePluginSources(ProfileMetadata &meta, const ExportContext &ctx,
+                                      const std::vector<FrameKey> &keys,
+                                      const std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> &resolved)
+{
+    std::unordered_map<std::uintptr_t, std::string> by_base;
+    for (const NativePluginSource &source : ctx.native_plugin_sources) {
+        by_base.emplace(source.module_base, source.source_id);
+    }
+
+    std::unordered_set<std::string> conflicts;
+    for (const FrameKey &key : keys) {
+        if (key.raw_address < key.rva) {
+            continue;
+        }
+        const auto source = by_base.find(static_cast<std::uintptr_t>(key.raw_address - key.rva));
+        const auto frame = resolved.find(key);
+        if (source == by_base.end() || frame == resolved.end() || frame->second.class_name.empty()) {
+            continue;
+        }
+        const auto [existing, inserted] = meta.class_sources.emplace(frame->second.class_name, source->second);
+        if (!inserted && existing->second != source->second) {
+            conflicts.insert(frame->second.class_name);
+        }
+    }
+    for (const std::string &class_name : conflicts) {
+        meta.class_sources.erase(class_name);
+    }
+}
+
 std::string Profiler::exportData(const ExportContext &ctx) const
 {
     return exportData(ctx, nullptr);
@@ -771,6 +800,7 @@ std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnaps
         auto [threads, owned_trees, owned_labels] = groupThreads(std::move(input), options_.thread_grouper);
         std::vector<FrameKey> keys = collectFrameKeys(threads);
         auto resolved = resolveFrames(modules, keys);
+        addNativePluginSources(meta, ctx, keys, resolved);
         addSymbolGuessMetadata(meta);
         return buildSamplerData(meta, threads, resolved);
     }
@@ -788,6 +818,7 @@ std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnaps
     auto [threads, owned_trees, owned_labels] = groupThreads(std::move(input), options_.thread_grouper);
     std::vector<FrameKey> keys = collectFrameKeys(threads);
     auto resolved = resolveFrames(sampler_.modules(), keys);
+    addNativePluginSources(meta, ctx, keys, resolved);
     addSymbolGuessMetadata(meta);
     return buildSamplerData(meta, threads, resolved);
 }

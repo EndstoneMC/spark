@@ -524,6 +524,13 @@ std::string buildSamplerData(const ProfileMetadata &meta, const std::vector<Thre
         tw.packedInt32(5, top_refs);
         w.message(2, thread);
     }
+    for (const auto &[class_name, source_id] : meta.class_sources) {
+        std::string entry;
+        ProtoWriter ew(entry);
+        ew.string(1, class_name);
+        ew.string(2, source_id);
+        w.message(3, entry);
+    }
     w.packedInt32(6, windows);
 
     // time_window_statistics (7): map<int32, WindowStatistics> — one per time window.

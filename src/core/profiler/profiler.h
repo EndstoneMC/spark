@@ -19,10 +19,17 @@
 #include "native/alloc/allocation_sampler.h"
 #include "native/sampler/heartbeat.h"
 #include "native/sampler/sampler.h"
+#include "proto/sampler_data.h"
 
 namespace spark {
 
 struct ProfilerTestAccess;
+
+struct NativePluginSource {
+    std::uintptr_t module_base = 0;
+    std::string module_path;
+    std::string source_id;
+};
 
 inline constexpr int kMaxSamplingIntervalMs = 1000;
 
@@ -60,6 +67,7 @@ struct ExportContext {
     SystemStats system_stats;
     std::map<std::int32_t, WindowStats> window_stats;
     std::vector<PluginInfo> plugins;
+    std::vector<NativePluginSource> native_plugin_sources;
     WorldInfo world;
     std::map<std::string, std::string> server_configurations;
     // Ping rolling average snapshot for profile metadata (may be empty).
@@ -137,6 +145,9 @@ public:
 private:
     friend struct ProfilerTestAccess;
 
+    static void addNativePluginSources(ProfileMetadata &meta, const ExportContext &ctx,
+                                       const std::vector<FrameKey> &keys,
+                                       const std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> &resolved);
     const CallTree &activeTree() const;
     const ModuleTable &activeModules() const;
     std::uint64_t activeNumberOfTicks() const;

@@ -54,6 +54,12 @@ set_target_properties(spark_thread_grouper_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_thread_grouper_test COMMAND spark_thread_grouper_test)
 
+add_executable(spark_native_plugin_attribution_test core/profiler/native_plugin_attribution_test.cpp)
+target_link_libraries(spark_native_plugin_attribution_test PRIVATE spark_core)
+set_target_properties(spark_native_plugin_attribution_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_native_plugin_attribution_test COMMAND spark_native_plugin_attribution_test)
+
 add_executable(spark_config_test core/config/spark_config_test.cpp)
 target_link_libraries(spark_config_test PRIVATE spark_core)
 set_target_properties(spark_config_test PROPERTIES
