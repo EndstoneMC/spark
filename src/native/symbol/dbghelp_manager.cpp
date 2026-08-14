@@ -10,6 +10,20 @@ namespace {
 
 std::mutex GMutex;
 std::size_t GReferences = 0;
+constexpr DWORD KStatusInfoLengthMismatch = 0xc0000004;
+
+bool initializeDbgHelp()
+{
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        if (SymInitialize(GetCurrentProcess(), nullptr, TRUE)) {
+            return true;
+        }
+        if (GetLastError() != KStatusInfoLengthMismatch) {
+            return false;
+        }
+    }
+    return false;
+}
 
 }  // namespace
 
@@ -19,7 +33,7 @@ bool retainDbgHelp()
     if (GReferences == 0) {
         SymSetOptions(SymGetOptions() | SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME | SYMOPT_FAIL_CRITICAL_ERRORS |
                       SYMOPT_LOAD_LINES);
-        if (!SymInitialize(GetCurrentProcess(), nullptr, TRUE)) {
+        if (!initializeDbgHelp()) {
             return false;
         }
     }

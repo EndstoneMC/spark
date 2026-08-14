@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <limits>
+#include <optional>
 #include <string_view>
 
 #include "native/symbol/symbol_guess.h"
@@ -20,6 +21,8 @@
 
 #include <climits>
 #include <cstdlib>
+
+#include <cpptrace/cpptrace.hpp>
 #endif
 
 namespace spark {
@@ -118,6 +121,18 @@ std::string hex(std::uint64_t value)
     return {buf + i, static_cast<std::size_t>(18 - i + 1)};
 }
 
+#ifndef _WIN32
+std::optional<cpptrace::stacktrace> resolveHiddenTrace(const cpptrace::object_trace &trace) noexcept
+{
+    try {
+        return trace.resolve();
+    }
+    catch (...) {
+        return std::nullopt;
+    }
+}
+#endif
+
 }  // namespace
 
 bool frameMatchesMainModule(std::uint64_t raw_address, std::uint64_t rva, std::uint64_t module_base,
@@ -160,7 +175,7 @@ void applySymbolGuessFallback(ResolvedFrame &frame, std::uint64_t rva, bool main
 
 #ifndef _WIN32
 
-// Linux: dladdr reads only the dynamic symbol table (never DWARF), safe for stripped BDS.
+// Linux: prefer dladdr's dynamic symbols, then resolve hidden symbols from ELF/DWARF.
 std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const ModuleTable &modules,
                                                                         const std::vector<FrameKey> &keys)
 {
@@ -176,6 +191,8 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
         executable_length > 0 ? std::string(executable_path, static_cast<std::size_t>(executable_length))
                               : std::string();
     std::vector<std::uint64_t> unresolved_main_rvas;
+    cpptrace::object_trace hidden_trace;
+    std::unordered_map<std::uint64_t, FrameKey> hidden_keys;
 
     for (const FrameKey &key : keys) {
         ResolvedFrame rf;
@@ -201,8 +218,34 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
                 rf.class_name == executable_name) {
                 unresolved_main_rvas.push_back(key.rva);
             }
+            else if (key.raw_address != 0 && !module_path.empty() && module_path != kOtherModulesSentinel) {
+                const bool inserted = hidden_keys.try_emplace(key.raw_address, key).second;
+                if (inserted) {
+                    hidden_trace.frames.push_back({key.raw_address, key.rva, module_path});
+                }
+            }
         }
         out.emplace(key, std::move(rf));
+    }
+
+    if (const auto resolved_trace = resolveHiddenTrace(hidden_trace)) {
+        for (const cpptrace::stacktrace_frame &frame : resolved_trace->frames) {
+            if (frame.symbol.empty()) {
+                continue;
+            }
+            const auto key = hidden_keys.find(frame.raw_address);
+            if (key == hidden_keys.end()) {
+                continue;
+            }
+            auto resolved = out.find(key->second);
+            if (resolved == out.end() || !resolved->second.method_name.starts_with("0x")) {
+                continue;
+            }
+            resolved->second.method_name = frame.symbol;
+            if (frame.line.has_value() && frame.line.value() <= static_cast<std::uint32_t>(INT_MAX)) {
+                resolved->second.line = static_cast<std::int32_t>(frame.line.value());
+            }
+        }
     }
 
     const auto guesses = analyzeMainModuleSymbols(unresolved_main_rvas);

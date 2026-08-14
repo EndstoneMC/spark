@@ -41,7 +41,7 @@ std::uint64_t readVarint(const std::string &data, std::size_t &offset)
 
 std::string readBytes(const std::string &data, std::size_t &offset)
 {
-    const std::size_t size = static_cast<std::size_t>(readVarint(data, offset));
+    const auto size = static_cast<std::size_t>(readVarint(data, offset));
     assert(size <= data.size() - offset);
     std::string value = data.substr(offset, size);
     offset += size;

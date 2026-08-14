@@ -97,14 +97,15 @@ AddressModule resolveAddress(const void *address)
 std::optional<NativePluginModuleIdentity> identifyNativePluginModule(const ::endstone::Plugin &plugin)
 {
     const void *vtable = nullptr;
-    std::memcpy(&vtable, static_cast<const void *>(std::addressof(plugin)), sizeof(vtable));
+    std::memcpy(static_cast<void *>(std::addressof(vtable)), static_cast<const void *>(std::addressof(plugin)),
+                sizeof(vtable));
 
     const void *first_virtual = nullptr;
     if (vtable != nullptr) {
-        std::memcpy(&first_virtual, vtable, sizeof(first_virtual));
+        std::memcpy(static_cast<void *>(std::addressof(first_virtual)), vtable, sizeof(first_virtual));
     }
 
-    const AddressModule vtable_module = resolveAddress(vtable);
+    AddressModule vtable_module = resolveAddress(vtable);
     const AddressModule first_virtual_module = resolveAddress(first_virtual);
     if (!vtable_module.native_entrypoint || vtable_module.base == 0 || vtable_module.base != vtable_module.query_base ||
         vtable_module.base != first_virtual_module.base) {

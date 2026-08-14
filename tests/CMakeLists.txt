@@ -155,6 +155,21 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     add_test(NAME spark_symbol_guess_linux_test COMMAND spark_symbol_guess_linux_test)
 
+    add_library(spark_hidden_symbol_fixture MODULE native/symbol/hidden_symbol_fixture.cpp)
+    target_compile_options(spark_hidden_symbol_fixture PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+    set_target_properties(spark_hidden_symbol_fixture PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+    add_executable(spark_hidden_symbol_test native/symbol/hidden_symbol_test.cpp)
+    target_link_libraries(spark_hidden_symbol_test PRIVATE spark_core ${CMAKE_DL_LIBS})
+    target_compile_definitions(
+            spark_hidden_symbol_test PRIVATE
+            SPARK_HIDDEN_SYMBOL_FIXTURE_PATH="$<TARGET_FILE:spark_hidden_symbol_fixture>")
+    add_dependencies(spark_hidden_symbol_test spark_hidden_symbol_fixture)
+    set_target_properties(spark_hidden_symbol_test PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_test(NAME spark_hidden_symbol_test COMMAND spark_hidden_symbol_test)
+
     add_library(spark_elf_hook_fixture MODULE native/alloc/elf_hook_fixture.cpp)
     set_target_properties(spark_elf_hook_fixture PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
