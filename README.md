@@ -187,6 +187,28 @@ rotate fairly through matching threads. `/spark profiler stop` also accepts
 `--save-to-file` and `--comment <text>`; values supplied at stop take effect for the
 final output.
 
+## PlaceholderAPI integration
+
+When [Endstone PAPI](https://github.com/EndstoneMC/papi) is installed, Spark
+registers the optional `spark` expansion and serves the same rolling data used by
+`/spark tps`. PAPI is not required: Spark starts and profiles normally when the
+service is absent or inactive. Unknown parameters and values without a usable
+sample remain unresolved.
+
+| Placeholder | Value |
+| --- | --- |
+| `{spark_tps}` | TPS for 5s, 10s, 1m, 5m, and 15m |
+| `{spark_tps_5s}`, `{spark_tps_10s}`, `{spark_tps_1m}`, `{spark_tps_5m}`, `{spark_tps_15m}` | One TPS window |
+| `{spark_tickduration}` | MSPT min/median/p95/max for the latest 200 and 1200 ticks |
+| `{spark_tickduration_10s}`, `{spark_tickduration_1m}` | One 200-tick or 1200-tick MSPT distribution |
+| `{spark_cpu_system}` | System CPU for 10s, 1m, and 15m |
+| `{spark_cpu_system_10s}`, `{spark_cpu_system_1m}`, `{spark_cpu_system_15m}` | One system CPU window |
+| `{spark_cpu_process}` | Spark/BDS process CPU for 10s, 1m, and 15m |
+| `{spark_cpu_process_10s}`, `{spark_cpu_process_1m}`, `{spark_cpu_process_15m}` | One process CPU window |
+
+The output preserves Java spark's precision, ordering, percent signs, over-target
+TPS marker, and Minecraft color codes. These placeholders are player-independent.
+
 ## How it works
 
 * **Linux:** a dedicated sampler thread signals one selected target (`SIGPROF`) per

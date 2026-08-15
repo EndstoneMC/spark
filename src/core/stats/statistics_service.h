@@ -68,6 +68,8 @@ public:
     static constexpr std::size_t kTickCapacity = 15 * 60 * 20;
     static constexpr std::size_t kCpuCapacity = 15 * 60;
     static constexpr std::size_t kGaugeCapacity = 15 * 60;
+    static constexpr std::size_t kPlaceholderTickDuration10sSamples = 20 * 10;
+    static constexpr std::size_t kPlaceholderTickDuration1mSamples = 20 * 60;
 
     void start();
 
@@ -76,6 +78,9 @@ public:
     bool onTick(double duration_ms);
 
     StatisticsSnapshot snapshot() const;
+    [[nodiscard]] RollingValue placeholderTps(std::int64_t window_ms) const;
+    [[nodiscard]] DistributionValues placeholderTickDuration(std::size_t max_samples) const;
+    [[nodiscard]] RollingValue placeholderCpu(std::int64_t window_ms, bool process) const;
     std::map<std::int32_t, WindowStats> profileWindows(std::int64_t profile_start_unix_ms,
                                                        std::int64_t profile_end_unix_ms) const;
     void recordPlayerCount(std::int64_t players);
@@ -118,6 +123,7 @@ private:
 
     RollingValue tpsFor(std::int64_t now_ms, std::int64_t window_ms) const;
     DistributionValues msptFor(std::int64_t now_ms, std::int64_t window_ms) const;
+    DistributionValues msptForRecentSamples(std::size_t max_samples) const;
     RollingValue cpuFor(std::int64_t now_ms, std::int64_t window_ms, bool process) const;
     std::int64_t effectiveStart(std::int64_t now_ms, std::int64_t window_ms) const;
 

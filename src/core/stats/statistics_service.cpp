@@ -182,8 +182,11 @@ RollingValue StatisticsService::tpsFor(std::int64_t now_ms, std::int64_t window_
     }
 
     for (std::size_t i = 0; i < tick_size_; ++i) {
-        const TickSample &sample = ticks_[(tick_begin_ + i) % ticks_.size()];
-        if (sample.steady_ms > start && sample.steady_ms <= now_ms) {
+        const TickSample &sample = ticks_[(tick_begin_ + tick_size_ - 1 - i) % ticks_.size()];
+        if (sample.steady_ms <= start) {
+            break;
+        }
+        if (sample.steady_ms <= now_ms) {
             ++result.samples;
         }
     }
@@ -227,6 +230,34 @@ DistributionValues StatisticsService::msptFor(std::int64_t now_ms, std::int64_t 
     return result;
 }
 
+DistributionValues StatisticsService::msptForRecentSamples(std::size_t max_samples) const
+{
+    DistributionValues result;
+    std::vector<double> values;
+    values.reserve((std::min)(max_samples, tick_size_));
+    double total = 0.0;
+    for (std::size_t i = 0; i < tick_size_ && values.size() < max_samples; ++i) {
+        const TickSample &sample = ticks_[(tick_begin_ + tick_size_ - 1 - i) % ticks_.size()];
+        if (sample.duration_valid) {
+            values.push_back(sample.duration_ms);
+            total += sample.duration_ms;
+        }
+    }
+    if (values.empty()) {
+        return result;
+    }
+
+    std::ranges::sort(values);
+    result.present = true;
+    result.samples = values.size();
+    result.mean = total / static_cast<double>(values.size());
+    result.min = values.front();
+    result.median = values[static_cast<std::size_t>(std::ceil(0.50 * static_cast<double>(values.size() - 1)))];
+    result.percentile95 = values[static_cast<std::size_t>(std::ceil(0.95 * static_cast<double>(values.size() - 1)))];
+    result.max = values.back();
+    return result;
+}
+
 RollingValue StatisticsService::cpuFor(std::int64_t now_ms, std::int64_t window_ms, bool process) const
 {
     RollingValue result;
@@ -235,7 +266,10 @@ RollingValue StatisticsService::cpuFor(std::int64_t now_ms, std::int64_t window_
     std::int64_t covered_ms = 0;
 
     for (std::size_t i = 0; i < cpu_size_; ++i) {
-        const CpuSample &sample = cpu_[(cpu_begin_ + i) % cpu_.size()];
+        const CpuSample &sample = cpu_[(cpu_begin_ + cpu_size_ - 1 - i) % cpu_.size()];
+        if (sample.end_steady_ms <= start) {
+            break;
+        }
         const bool valid = process ? sample.process_valid : sample.system_valid;
         if (!valid) {
             continue;
@@ -263,6 +297,30 @@ RollingValue StatisticsService::cpuFor(std::int64_t now_ms, std::int64_t window_
 StatisticsSnapshot StatisticsService::snapshot() const
 {
     return snapshotAt(steadyNowMs());
+}
+
+RollingValue StatisticsService::placeholderTps(std::int64_t window_ms) const
+{
+    if (!started_ || window_ms <= 0) {
+        return {};
+    }
+    return tpsFor((std::max)(steadyNowMs(), last_observation_steady_ms_), window_ms);
+}
+
+DistributionValues StatisticsService::placeholderTickDuration(std::size_t max_samples) const
+{
+    if (!started_ || max_samples == 0) {
+        return {};
+    }
+    return msptForRecentSamples(max_samples);
+}
+
+RollingValue StatisticsService::placeholderCpu(std::int64_t window_ms, bool process) const
+{
+    if (!started_ || window_ms <= 0) {
+        return {};
+    }
+    return cpuFor((std::max)(steadyNowMs(), last_observation_steady_ms_), window_ms, process);
 }
 
 StatisticsSnapshot StatisticsService::snapshotAt(std::int64_t steady_ms) const

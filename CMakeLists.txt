@@ -54,6 +54,21 @@ FetchContent_Declare(endstone
         GIT_TAG v0.11)
 FetchContent_MakeAvailable(endstone)
 
+# PAPI is optional at runtime; only its released public headers are fetched.
+set(ENDSTONE_SPARK_PAPI_GIT_REPOSITORY "https://github.com/EndstoneMC/papi.git" CACHE STRING
+        "Repository providing the public Endstone PAPI headers")
+set(ENDSTONE_SPARK_PAPI_GIT_TAG "v0.1.0" CACHE STRING
+        "Release tag providing the public Endstone PAPI headers")
+FetchContent_Declare(endstone_papi_headers
+        GIT_REPOSITORY ${ENDSTONE_SPARK_PAPI_GIT_REPOSITORY}
+        GIT_TAG ${ENDSTONE_SPARK_PAPI_GIT_TAG}
+        GIT_SHALLOW TRUE
+        SOURCE_SUBDIR cmake/headers-only)
+FetchContent_MakeAvailable(endstone_papi_headers)
+add_library(spark_papi_headers INTERFACE)
+target_include_directories(spark_papi_headers INTERFACE "${endstone_papi_headers_SOURCE_DIR}/include")
+target_link_libraries(spark_papi_headers INTERFACE endstone::endstone)
+
 # --- native backend: sampler, symbol guesser, allocation hooks (no Endstone) ---
 add_library(spark_native STATIC
         src/native/alloc/allocation_thread_filter.cpp
@@ -148,6 +163,7 @@ add_library(spark_application STATIC
         src/application/activity/activity_command.cpp
         src/application/command/command_registry.cpp
         src/application/health/health_command.cpp
+        src/application/placeholder/spark_placeholder_resolver.cpp
         src/application/profiler/profile_exporter.cpp
         src/application/profiler/profiler_service.cpp
         src/application/spark_application.cpp
@@ -159,13 +175,22 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Cl
     target_compile_options(spark_application PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
 endif ()
 
+add_library(spark_papi_integration STATIC
+        src/platform/endstone/papi_integration.cpp)
+target_include_directories(spark_papi_integration PUBLIC src)
+target_link_libraries(spark_papi_integration PUBLIC spark_application spark_papi_headers)
+set_target_properties(spark_papi_integration PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(spark_papi_integration PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+endif ()
+
 # --- the Endstone plugin (links its application layer + Endstone adapters) ---
 endstone_add_plugin(spark
         src/platform/endstone/adapters.cpp
         src/platform/endstone/native_plugin_attribution.cpp
         src/plugin.cpp)
 target_include_directories(spark PRIVATE src)
-target_link_libraries(spark PRIVATE spark_application)
+target_link_libraries(spark PRIVATE spark_application spark_papi_integration)
 # Localize every symbol from the static archives (zlib, cpptrace, libunwind, libc++)
 # so they can't interpose with Endstone core's own copies in the BDS process. Only
 # init_endstone_plugin (default visibility via the macro) stays exported.

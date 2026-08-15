@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased][Unreleased]
 
+### Added
+
+- Register an optional `spark` expansion with Endstone PlaceholderAPI, exposing
+  Java spark-compatible TPS, tick-duration, and process/system CPU placeholders
+  from Spark's live rolling statistics. Spark continues normally when PAPI is not
+  installed or active.
+
+### Fixed
+
+- Match Java spark's tick-duration placeholder windows and percentile ranks, and
+  avoid rebuilding unrelated rolling statistics for each placeholder value.
+
 ## [0.5.3][0.5.3] - 2026-08-14
 
 ### Added

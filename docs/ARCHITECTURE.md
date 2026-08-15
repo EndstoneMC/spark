@@ -10,6 +10,7 @@ src/
     activity/                 #   /spark activity command
     command/                  #   command registry, sender interface
     health/                   #   /spark health command
+    placeholder/              #   Spark placeholder formatting and dispatch
     profiler/                 #   profiler service, profile exporter
     tick_monitor/             #   /spark tickmonitor command
     spark_application.h/.cpp  #   central application container
@@ -32,7 +33,7 @@ src/
     alloc/                    #   allocation hooks, bounded queue, thread filter
 
   platform/
-    endstone/                 # thin Endstone adapters: sender, dispatcher, metadata, notifier
+    endstone/                 # Endstone adapters and optional PAPI integration
 
   proto/                      # spark protobuf serialization
   net/                        # gzip, bytebin upload, WebSocket transport, profile persistence
@@ -57,8 +58,11 @@ spark_application (static)   <- application/
                                links: spark_core
                                NO Endstone dependency
 
+spark_papi_integration       <- platform/endstone/papi_integration
+                               links: spark_application, public PAPI headers
+
 spark (endstone_add_plugin)  <- platform/endstone/, plugin.cpp
-                               links: spark_application
+                               links: spark_application, spark_papi_integration
                                Endstone API only here
 ```
 
@@ -102,6 +106,11 @@ Maintains bounded rolling TPS, MSPT, CPU, player-count, and world-gauge historie
 
 Thin Endstone implementations of the capability interfaces and `CommandSender`. `plugin.cpp` creates adapters and delegates to `SparkApplication`.
 
+The optional PAPI adapter constructs a provider-owned `spark` expansion from
+PAPI's public headers. It reads targeted rolling values on the server thread and
+unregisters before Spark application teardown. A soft dependency gives PAPI first
+enable order when installed; no PAPI binary is linked into Spark.
+
 ## Platform Safety
 
 - Sampling stays off the BDS tick hot path except for the minimum bounded capture.
@@ -112,4 +121,4 @@ Thin Endstone implementations of the capability interfaces and `CommandSender`. 
 
 ## Dependencies
 
-Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, libcurl, and tomlplusplus. Linux additionally requires OpenSSL for crypto. CMake fetches Endstone's public plugin API and funchook `v1.1.3`; funchook's bundled distorm decoder is used by the x86-64 symbol guessers on both supported platforms, while the funchook hook library itself is linked only on Windows.
+Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, libcurl, and tomlplusplus. Linux additionally requires OpenSSL for crypto. CMake fetches Endstone's public plugin API, pinned public PAPI headers, and funchook `v1.1.3`; funchook's bundled distorm decoder is used by the x86-64 symbol guessers on both supported platforms, while the funchook hook library itself is linked only on Windows.

@@ -23,6 +23,7 @@
 #include "core/stats/executable_hash.h"
 #include "net/profile_file.h"
 #include "platform/endstone/adapters.h"
+#include "platform/endstone/papi_integration.h"
 #include "spark_constants.h"
 
 namespace {
@@ -71,6 +72,17 @@ public:
         app_->statistics().recordPlayerCount(static_cast<std::int64_t>(getServer().getOnlinePlayers().size()));
         app_->enable();
 
+        auto papi_api =
+            getServer().getServiceManager().load<papi::PlaceholderAPI>(std::string(papi::PlaceholderAPI::ServiceName));
+        const auto papi_result =
+            papi_integration_.enable(*this, std::move(papi_api), app_->statistics(), spark::kVersion);
+        if (papi_result == spark::endstone_adapter::PapiRegistrationResult::Registered) {
+            getLogger().info("Registered the spark PlaceholderAPI expansion.");
+        }
+        else if (papi_result == spark::endstone_adapter::PapiRegistrationResult::Rejected) {
+            getLogger().warning("PlaceholderAPI rejected the spark expansion; Spark will continue without it.");
+        }
+
         tick_task_ = getServer().getScheduler().runTaskTimer(*this, [this]() { onServerTick(); }, 0, 1);
         getLogger().info("endstone-spark v{} enabled. Run {}/spark{} to get started.", spark::kVersion,
                          endstone::ColorFormat::Gold, endstone::ColorFormat::Reset);
@@ -78,6 +90,7 @@ public:
 
     void onDisable() override
     {
+        papi_integration_.disable(*this);
         if (app_) {
             app_->shutdown();
         }
@@ -132,6 +145,7 @@ private:
     std::unique_ptr<spark::endstone_adapter::EndstoneMetadataProvider> metadata_provider_;
     std::unique_ptr<spark::endstone_adapter::EndstoneNotifier> notifier_;
     std::unique_ptr<spark::SparkApplication> app_;
+    spark::endstone_adapter::PapiIntegration papi_integration_;
 };
 
 ENDSTONE_PLUGIN("spark", "0.5.3", SparkPlugin)
@@ -140,6 +154,7 @@ ENDSTONE_PLUGIN("spark", "0.5.3", SparkPlugin)
     authors = {"ReallocAll <ReallocAll@outlook.com>"};
     prefix = "Spark";
     load = endstone::PluginLoadOrder::PostWorld;
+    soft_depend = {"papi"};
 
     command("spark")
         .description("spark profiler")

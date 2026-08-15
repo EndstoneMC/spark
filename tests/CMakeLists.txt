@@ -36,6 +36,12 @@ set_target_properties(spark_network_monitor_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_network_monitor_test COMMAND spark_network_monitor_test)
 
+add_executable(spark_placeholder_statistics_test core/stats/placeholder_statistics_test.cpp)
+target_link_libraries(spark_placeholder_statistics_test PRIVATE spark_core)
+set_target_properties(spark_placeholder_statistics_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_placeholder_statistics_test COMMAND spark_placeholder_statistics_test)
+
 add_executable(spark_activity_log_test core/activity/activity_log_test.cpp)
 target_link_libraries(spark_activity_log_test PRIVATE spark_core)
 set_target_properties(spark_activity_log_test PROPERTIES
@@ -47,6 +53,18 @@ target_link_libraries(spark_activity_command_test PRIVATE spark_application)
 set_target_properties(spark_activity_command_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_activity_command_test COMMAND spark_activity_command_test)
+
+add_executable(spark_placeholder_resolver_test application/placeholder/spark_placeholder_resolver_test.cpp)
+target_link_libraries(spark_placeholder_resolver_test PRIVATE spark_application)
+set_target_properties(spark_placeholder_resolver_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_placeholder_resolver_test COMMAND spark_placeholder_resolver_test)
+
+add_executable(spark_papi_integration_test platform/endstone/papi_integration_test.cpp)
+target_link_libraries(spark_papi_integration_test PRIVATE spark_papi_integration)
+set_target_properties(spark_papi_integration_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_test(NAME spark_papi_integration_test COMMAND spark_papi_integration_test)
 
 add_executable(spark_thread_grouper_test core/profiler/thread_grouper_test.cpp)
 target_link_libraries(spark_thread_grouper_test PRIVATE spark_core)
