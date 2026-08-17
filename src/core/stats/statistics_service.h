@@ -1,12 +1,13 @@
 #ifndef ENDSTONE_SPARK_STATISTICS_SERVICE_H
 #define ENDSTONE_SPARK_STATISTICS_SERVICE_H
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <vector>
 
 #include "core/stats/system_stats.h"
+#include "profiling_window.h"
 
 namespace spark {
 
@@ -64,12 +65,16 @@ struct StatisticsSnapshot {
 // sorting; percentile work is deferred until snapshot() is requested.
 class StatisticsService {
 public:
-    static constexpr std::int64_t kMaximumHistoryMs = 15 * 60 * 1000;
-    static constexpr std::size_t kTickCapacity = 15 * 60 * 20;
-    static constexpr std::size_t kCpuCapacity = 15 * 60;
-    static constexpr std::size_t kGaugeCapacity = 15 * 60;
+    // Keep enough raw history to build the same 60 one-minute Refine windows
+    // retained by the continuous/background sampler.
+    static constexpr std::int64_t kMaximumHistoryMs = profiling_window::kHistoryMs;
+    static constexpr std::size_t kTickCapacity = static_cast<std::size_t>(profiling_window::kHistorySize) * 60 * 20;
+    static constexpr std::size_t kCpuCapacity = static_cast<std::size_t>(profiling_window::kHistorySize) * 60;
+    static constexpr std::size_t kGaugeCapacity = static_cast<std::size_t>(profiling_window::kHistorySize) * 60;
     static constexpr std::size_t kPlaceholderTickDuration10sSamples = 20 * 10;
     static constexpr std::size_t kPlaceholderTickDuration1mSamples = 20 * 60;
+
+    StatisticsService();
 
     void start();
 
@@ -127,9 +132,9 @@ private:
     RollingValue cpuFor(std::int64_t now_ms, std::int64_t window_ms, bool process) const;
     std::int64_t effectiveStart(std::int64_t now_ms, std::int64_t window_ms) const;
 
-    std::array<TickSample, kTickCapacity> ticks_{};
-    std::array<CpuSample, kCpuCapacity> cpu_{};
-    std::array<GaugeSample, kGaugeCapacity> gauges_{};
+    std::vector<TickSample> ticks_;
+    std::vector<CpuSample> cpu_;
+    std::vector<GaugeSample> gauges_;
     std::size_t tick_begin_ = 0;
     std::size_t tick_size_ = 0;
     std::size_t cpu_begin_ = 0;

@@ -24,7 +24,7 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256, const std:
                                    std::filesystem::path activity_log_file, SparkConfig config,
                                    TrustedViewersState trusted_viewers, MainThreadDispatcher &dispatcher,
                                    ProfileMetadataProvider &metadata_provider, ResultNotifier &notifier)
-    : statistics_(), config_(std::move(config)), trusted_viewers_(std::move(trusted_viewers)), dispatcher_(dispatcher),
+    : config_(std::move(config)), trusted_viewers_(std::move(trusted_viewers)), dispatcher_(dispatcher),
       metadata_provider_(metadata_provider), notifier_(notifier),
       profiler_(statistics_, std::move(bds_executable_sha256), profile_storage_dir, config_.bytebin_url,
                 config_.viewer_url, config_.bytesocks_host, config_.background_profiler_enabled,

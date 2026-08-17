@@ -242,7 +242,7 @@ struct SamplerTestAccess {
         continuous.config_.continuous = true;
         Sample sample;
         sample.weight = 1;
-        for (std::int32_t window = 0; window <= 7200; ++window) {
+        for (std::int32_t window = 0; window <= 120; ++window) {
             sample.thread_id = static_cast<std::uint64_t>(window) + 1;
             sample.thread_name = "Rotating thread";
             sample.frames = {{.module = 0,
@@ -250,7 +250,7 @@ struct SamplerTestAccess {
                               .raw_address = static_cast<std::uint64_t>(window) + 1}};
             sample.window = window;
             continuous.acceptSample(sample);
-            if (window == 0 || window == 7200) {
+            if (window == 0 || window == 120) {
                 sample.thread_id = 10'000;
                 sample.thread_name = "Spanning thread";
                 sample.frames = {{.module = 1,
@@ -276,10 +276,10 @@ struct SamplerTestAccess {
         resolved[expired_nested] = {.class_name = "test", .method_name = "expired-nested-frame"};
         ProfileMetadata metadata;
         const std::string payload = buildSamplerData(metadata, continuous.tree_, resolved);
-        if (root.times.size() != 3601 || root.times.begin()->first != 3600 || root.times.rbegin()->first != 7200 ||
-            continuous.window_ticks_.size() != 3601 || continuous.sampleCount() != 3602 ||
-            continuous.thread_trees_.size() != 3602 || spanning == continuous.thread_trees_.end() ||
-            spanning->second.tree.root().times.size() != 1 || countNodes(root) != 3604 ||
+        if (root.times.size() != 61 || root.times.begin()->first != 60 || root.times.rbegin()->first != 120 ||
+            continuous.window_ticks_.size() != 61 || continuous.sampleCount() != 62 ||
+            continuous.thread_trees_.size() != 62 || spanning == continuous.thread_trees_.end() ||
+            spanning->second.tree.root().times.size() != 1 || countNodes(root) != 64 ||
             countNodes(spanning->second.tree.root()) != 3 || std::ranges::find(keys, expired_unique) != keys.end() ||
             std::ranges::find(keys, expired_nested) != keys.end() ||
             payload.find("expired-only-frame") != std::string::npos ||
@@ -288,12 +288,12 @@ struct SamplerTestAccess {
             return false;
         }
 
-        std::printf("continuous history: windows=7201 retained=3601 nodes=7205 retained=3604 "
-                    "thread_roots=7202 retained=3602\n");
+        std::printf("continuous history: windows=121 retained=61 nodes=127 retained=64 "
+                    "thread_roots=122 retained=62\n");
 
         Sampler foreground;
         foreground.config_.continuous = false;
-        for (std::int32_t window = 0; window <= 7200; ++window) {
+        for (std::int32_t window = 0; window <= 120; ++window) {
             sample.thread_id = static_cast<std::uint64_t>(window) + 1;
             sample.frames = {{.module = 0,
                               .rva = static_cast<std::uint64_t>(window) + 1,
@@ -301,8 +301,8 @@ struct SamplerTestAccess {
             sample.window = window;
             foreground.acceptSample(sample);
         }
-        return foreground.tree_.root().times.size() == 7201 && foreground.sampleCount() == 7201 &&
-               countNodes(foreground.tree_.root()) == 7201 && foreground.thread_trees_.size() == 7201;
+        return foreground.tree_.root().times.size() == 121 && foreground.sampleCount() == 121 &&
+               countNodes(foreground.tree_.root()) == 121 && foreground.thread_trees_.size() == 121;
     }
 };
 
@@ -1551,7 +1551,7 @@ bool verifyLiveProfilerWindowStatistics(std::uint64_t worker_tid)
                             findProtoField(value.bytes, 2, cpu_process) && findProtoField(value.bytes, 3, cpu_system));
     }
 
-    if (windows.size() < 2 || statistic_windows != windows || !has_graph_fields) {
+    if (windows.empty() || statistic_windows != windows || !has_graph_fields) {
         std::fprintf(stderr,
                      "live profiler windows: expected matching drawable windows "
                      "(windows=%zu statistics=%zu graph-fields=%d)\n",
@@ -2319,8 +2319,7 @@ bool verifyStatisticsService()
     const spark::StatisticsSnapshot tps = tps_service->snapshotAt(900'000);
     if (!close(tps.tps.last_5s.value, 5.0) || !close(tps.tps.last_10s.value, 7.5) ||
         !close(tps.tps.last_1m.value, 13.75) || !close(tps.tps.last_5m.value, 17.15) ||
-        !close(tps.tps.last_15m.value, 19.05) || tps.tps.last_5s.samples != 25 ||
-        tps.history_span_ms != spark::StatisticsService::kMaximumHistoryMs) {
+        !close(tps.tps.last_15m.value, 19.05) || tps.tps.last_5s.samples != 25 || tps.history_span_ms != 900'000) {
         std::fprintf(stderr, "statistics service: TPS windows were not independently "
                              "time-weighted\n");
         return false;
@@ -2375,32 +2374,32 @@ bool verifyStatisticsService()
     window_service->recordPlayerCountAt(2, 0);
     window_service->recordTickAt(1.0, 100);
     window_service->recordTickAt(9.0, 600);
-    window_cpu.process_ticks += 20;
-    window_cpu.system_busy += 20;
-    window_cpu.system_total += 100;
-    window_cpu.wall_ms = 1'000;
+    window_cpu.process_ticks += 1'200;
+    window_cpu.system_busy += 1'200;
+    window_cpu.system_total += 6'000;
+    window_cpu.wall_ms = 60'000;
     window_service->recordCpuSnapshot(window_cpu);
-    window_service->recordPlayerCountAt(3, 1'000);
-    window_service->recordTickAt(2.0, 1'100);
-    window_service->recordTickAt(8.0, 1'600);
-    window_cpu.process_ticks += 40;
-    window_cpu.system_busy += 40;
-    window_cpu.system_total += 100;
-    window_cpu.wall_ms = 2'000;
+    window_service->recordPlayerCountAt(3, 60'000);
+    window_service->recordTickAt(2.0, 60'100);
+    window_service->recordTickAt(8.0, 60'600);
+    window_cpu.process_ticks += 2'400;
+    window_cpu.system_busy += 2'400;
+    window_cpu.system_total += 6'000;
+    window_cpu.wall_ms = 120'000;
     window_service->recordCpuSnapshot(window_cpu);
-    const auto windows = window_service->profileWindows(4'000'000, 4'002'000);
+    const auto windows = window_service->profileWindows(4'000'000, 4'120'000);
     auto first_window = windows.find(0);
     auto second_window = windows.find(1);
     if (windows.size() != 2 || first_window == windows.end() || second_window == windows.end() ||
-        first_window->second.ticks != 2 || !close(first_window->second.tps, 2.0) ||
+        first_window->second.ticks != 2 || !close(first_window->second.tps, 2.0 / 60.0) ||
         !close(first_window->second.mspt_median, 5.0) || !close(first_window->second.mspt_max, 9.0) ||
         !close(first_window->second.cpu_process, 0.1) || !close(first_window->second.cpu_system, 0.2) ||
         first_window->second.players != 3 || first_window->second.start_time_ms != 4'000'000 ||
-        first_window->second.end_time_ms != 4'001'000 || first_window->second.duration_ms != 1'000 ||
+        first_window->second.end_time_ms != 4'060'000 || first_window->second.duration_ms != 60'000 ||
         second_window->second.players != 3 || second_window->second.entities_present ||
         second_window->second.chunks_present) {
         std::fprintf(stderr,
-                     "statistics service: per-second profile windows were "
+                     "statistics service: per-minute profile windows were "
                      "incorrect (count=%zu first ticks=%d tps=%.3f "
                      "median=%.3f max=%.3f process=%.3f system=%.3f "
                      "players=%d start=%lld end=%lld duration=%d; "
@@ -2416,6 +2415,20 @@ bool verifyStatisticsService()
                      static_cast<long long>(first_window == windows.end() ? -1 : first_window->second.end_time_ms),
                      first_window == windows.end() ? -1 : first_window->second.duration_ms,
                      second_window == windows.end() ? -1 : second_window->second.players);
+        return false;
+    }
+
+    auto background_service = std::make_unique<spark::StatisticsService>();
+    background_service->startAt(0, 7'000'000, initial_cpu());
+    for (int minute = 0; minute < 30; ++minute) {
+        background_service->recordTickAt(5.0, static_cast<std::int64_t>(minute) * 60'000 + 100);
+    }
+    const auto background_windows =
+        background_service->profileWindows(7'000'000, 7'000'000 + 30 * spark::profiling_window::kSizeMs);
+    if (background_windows.size() != 30 || !background_windows.contains(0) || !background_windows.contains(29) ||
+        background_windows.at(0).duration_ms != spark::profiling_window::kSizeMs ||
+        background_windows.at(29).duration_ms != spark::profiling_window::kSizeMs) {
+        std::fprintf(stderr, "statistics service: background Refine history did not retain 30 minute windows\n");
         return false;
     }
     return true;
@@ -2435,24 +2448,24 @@ bool verifyWorldGaugeStatistics()
     svc->recordWorldGaugesAt(10, 20, 0);
     svc->recordTickAt(5.0, 100);
     svc->recordTickAt(5.0, 600);
-    cpu.process_ticks += 20;
-    cpu.system_busy += 20;
-    cpu.system_total += 100;
-    cpu.wall_ms = 1'000;
+    cpu.process_ticks += 1'200;
+    cpu.system_busy += 1'200;
+    cpu.system_total += 6'000;
+    cpu.wall_ms = 60'000;
     svc->recordCpuSnapshot(cpu);
-    svc->recordPlayerCountAt(2, 1'000);
-    svc->recordWorldGaugesAt(15, 25, 1'000);
-    svc->recordTickAt(5.0, 1'100);
-    svc->recordTickAt(5.0, 1'600);
-    cpu.process_ticks += 40;
-    cpu.system_busy += 40;
-    cpu.system_total += 100;
-    cpu.wall_ms = 2'000;
+    svc->recordPlayerCountAt(2, 60'000);
+    svc->recordWorldGaugesAt(15, 25, 60'000);
+    svc->recordTickAt(5.0, 60'100);
+    svc->recordTickAt(5.0, 60'600);
+    cpu.process_ticks += 2'400;
+    cpu.system_busy += 2'400;
+    cpu.system_total += 6'000;
+    cpu.wall_ms = 120'000;
     svc->recordCpuSnapshot(cpu);
-    svc->recordPlayerCountAt(3, 2'000);
-    svc->recordWorldGaugesAt(20, 30, 2'000);
+    svc->recordPlayerCountAt(3, 120'000);
+    svc->recordWorldGaugesAt(20, 30, 120'000);
 
-    const auto windows = svc->profileWindows(5'000'000, 5'002'000);
+    const auto windows = svc->profileWindows(5'000'000, 5'120'000);
     auto first = windows.find(0);
     auto second = windows.find(1);
     // The gauge loop picks the last sample within each window's end time,
@@ -2489,10 +2502,10 @@ bool verifyWorldGaugeAbsentWhenNotRecorded()
     cpu.process_ticks += 20;
     cpu.system_busy += 20;
     cpu.system_total += 100;
-    cpu.wall_ms = 1'000;
+    cpu.wall_ms = 60'000;
     svc->recordCpuSnapshot(cpu);
 
-    const auto windows = svc->profileWindows(6'000'000, 6'001'000);
+    const auto windows = svc->profileWindows(6'000'000, 6'060'000);
     auto first = windows.find(0);
     if (windows.size() != 1 || first == windows.end() || first->second.entities_present ||
         first->second.chunks_present) {

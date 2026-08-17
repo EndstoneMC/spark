@@ -22,6 +22,7 @@
 #include "native/sampler/recovery_sink.h"
 #include "native/sampler/thread_selector.h"
 #include "native/sampler/types.h"
+#include "profiling_window.h"
 
 namespace spark {
 
@@ -167,8 +168,7 @@ private:
     std::function<void()> sampler_thread_hook_;
     std::function<void()> aggregator_thread_hook_;
 
-    static constexpr std::int32_t kHistorySeconds = 60 * 60;
-    static constexpr std::int32_t kHistoryPruneIntervalSeconds = 60;
+    static constexpr std::int32_t kHistoryPruneIntervalWindows = 1;
     static constexpr std::size_t kTickDecisionCapacity = 60 * 60 * 20 + 1;
 };
 

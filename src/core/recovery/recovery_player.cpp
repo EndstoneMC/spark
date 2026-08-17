@@ -26,6 +26,7 @@
 #include "native/sampler/sampler.h"
 #include "native/sampler/types.h"
 #include "native/symbol/symbolicate.h"
+#include "profiling_window.h"
 #include "proto/sampler_data.h"
 #include "spark_constants.h"
 
@@ -208,7 +209,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
 
     const std::uint64_t retained_tick_start = min_tick_id.value_or(0);
     const std::int32_t retained_window_start = min_window.value_or(0);
-    result.session_start_ms += static_cast<std::int64_t>(retained_window_start) * 1000;
+    result.session_start_ms += static_cast<std::int64_t>(retained_window_start) * profiling_window::kSizeMs;
 
     // TickEvent records don't carry a window field, so we build a tick_id ->
     // window map from Sample records (which do) and use it to assign each tick
@@ -306,11 +307,11 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
             std::ranges::sort(sorted);
             ws.mspt_median = sorted[sorted.size() / 2];
         }
-        ws.start_time_ms = result.session_start_ms + static_cast<std::int64_t>(window) * 1000;
-        ws.end_time_ms = ws.start_time_ms + 1000;
-        ws.duration_ms = 1000;
+        ws.start_time_ms = result.session_start_ms + static_cast<std::int64_t>(window) * profiling_window::kSizeMs;
+        ws.end_time_ms = ws.start_time_ms + profiling_window::kSizeMs;
+        ws.duration_ms = static_cast<int>(profiling_window::kSizeMs);
         ws.tps_present = true;
-        ws.tps = static_cast<double>(acc.ticks);
+        ws.tps = static_cast<double>(acc.ticks) * 1000.0 / static_cast<double>(ws.duration_ms);
         window_stats[window] = ws;
     }
 

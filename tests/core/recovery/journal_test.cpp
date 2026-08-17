@@ -1035,7 +1035,7 @@ void testSnapshotOnlyThreadIsNotExported()
     assert(result.valid);
     assert(result.thread_count == 1);
     assert(result.tick_count == 1);
-    assert(result.session_start_ms == 975000);
+    assert(result.session_start_ms == 1'270'000);
     std::cout << "testSnapshotOnlyThreadIsNotExported: PASS\n";
 }
 

@@ -184,10 +184,10 @@ void Sampler::resetSession()
     tick_decisions_.clear();
     tick_decision_base_ = 0;
     window_sample_counts_.clear();
-    next_history_prune_window_ = kHistoryPruneIntervalSeconds;
+    next_history_prune_window_ = profiling_window::kHistorySize;
     modules_ = ModuleTable{};
     window_ticks_.clear();
-    next_tick_history_prune_window_ = kHistoryPruneIntervalSeconds;
+    next_tick_history_prune_window_ = profiling_window::kHistorySize;
     current_tick_.store(0);
     sample_count_.store(0, std::memory_order_relaxed);
     sampler_tid_.store(0, std::memory_order_relaxed);
@@ -202,8 +202,9 @@ void Sampler::resetSession()
 
 std::int32_t Sampler::currentWindow() const
 {
-    auto elapsed = std::chrono::steady_clock::now() - start_time_;
-    return static_cast<std::int32_t>(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count());
+    const auto elapsed = std::chrono::steady_clock::now() - start_time_;
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+    return static_cast<std::int32_t>(elapsed_ms / profiling_window::kSizeMs);
 }
 
 void Sampler::onTick(double mspt_ms)
@@ -401,7 +402,7 @@ void Sampler::maybePruneHistory(std::int32_t current_window)
     if (!config_.continuous || current_window < next_history_prune_window_) {
         return;
     }
-    const std::int32_t minimum_window = current_window - kHistorySeconds;
+    const std::int32_t minimum_window = current_window - profiling_window::kHistorySize;
     tree_.pruneBefore(minimum_window);
     std::erase_if(thread_trees_,
                   [minimum_window](auto &entry) { return entry.second.tree.pruneBefore(minimum_window); });
@@ -412,7 +413,7 @@ void Sampler::maybePruneHistory(std::int32_t current_window)
     }
     window_sample_counts_.erase(window_sample_counts_.begin(), end);
     sample_count_.fetch_sub(removed_samples, std::memory_order_relaxed);
-    next_history_prune_window_ = current_window + kHistoryPruneIntervalSeconds;
+    next_history_prune_window_ = current_window + kHistoryPruneIntervalWindows;
 }
 
 void Sampler::maybePruneTickHistory(std::int32_t current_window)
@@ -420,9 +421,9 @@ void Sampler::maybePruneTickHistory(std::int32_t current_window)
     if (!config_.continuous || current_window < next_tick_history_prune_window_) {
         return;
     }
-    const std::int32_t minimum_window = current_window - kHistorySeconds;
+    const std::int32_t minimum_window = current_window - profiling_window::kHistorySize;
     window_ticks_.erase(window_ticks_.begin(), window_ticks_.lower_bound(minimum_window));
-    next_tick_history_prune_window_ = current_window + kHistoryPruneIntervalSeconds;
+    next_tick_history_prune_window_ = current_window + kHistoryPruneIntervalWindows;
 }
 
 void Sampler::recordTickDecision(std::uint64_t tick_id, bool keep)

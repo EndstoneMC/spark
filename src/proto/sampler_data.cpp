@@ -4,6 +4,7 @@
 #include <set>
 #include <unordered_set>
 
+#include "profiling_window.h"
 #include "proto/proto_writer.h"
 #include "spark_constants.h"
 
@@ -537,6 +538,11 @@ std::string buildSamplerData(const ProfileMetadata &meta, const std::vector<Thre
     for (std::int32_t window : windows) {
         auto it = meta.window_stats.find(window);
         WindowStats ws = it != meta.window_stats.end() ? it->second : WindowStats{};
+        if (it == meta.window_stats.end()) {
+            // Upstream spark emits a zeroed WindowStatistics entry with the
+            // profiling window duration when measured statistics are missing.
+            ws.duration_ms = static_cast<int>(profiling_window::kSizeMs);
+        }
         std::string wstat;
         ProtoWriter ww(wstat);
         if (ws.ticks_present) {

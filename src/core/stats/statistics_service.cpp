@@ -28,6 +28,8 @@ double clampUsage(double value)
 
 }  // namespace
 
+StatisticsService::StatisticsService() : ticks_(kTickCapacity), cpu_(kCpuCapacity), gauges_(kGaugeCapacity) {}
+
 void StatisticsService::start()
 {
     const std::int64_t steady_ms = steadyNowMs();
@@ -368,8 +370,8 @@ std::map<std::int32_t, WindowStats> StatisticsService::profileWindows(std::int64
         return result;
     }
 
-    const std::int64_t first_window = (available_start - profile_start_steady) / 1000;
-    const std::int64_t last_window = (profile_end_steady - profile_start_steady - 1) / 1000;
+    const std::int64_t first_window = (available_start - profile_start_steady) / profiling_window::kSizeMs;
+    const std::int64_t last_window = (profile_end_steady - profile_start_steady - 1) / profiling_window::kSizeMs;
     if (first_window > std::numeric_limits<std::int32_t>::max() ||
         last_window > std::numeric_limits<std::int32_t>::max()) {
         return result;
@@ -387,9 +389,9 @@ std::map<std::int32_t, WindowStats> StatisticsService::profileWindows(std::int64
 
     for (std::int64_t window = first_window; window <= last_window; ++window) {
         Accumulator &accumulator = accumulators[static_cast<std::size_t>(window - first_window)];
-        const std::int64_t nominal_start = profile_start_steady + window * 1000;
+        const std::int64_t nominal_start = profile_start_steady + window * profiling_window::kSizeMs;
         const std::int64_t start = (std::max)(available_start, nominal_start);
-        const std::int64_t end = (std::min)(profile_end_steady, nominal_start + 1000);
+        const std::int64_t end = (std::min)(profile_end_steady, nominal_start + profiling_window::kSizeMs);
         accumulator.stats.ticks_present = true;
         accumulator.stats.tps_present = true;
         accumulator.stats.start_time_ms = unixTimeFor(start);
@@ -402,7 +404,7 @@ std::map<std::int32_t, WindowStats> StatisticsService::profileWindows(std::int64
         if (sample.steady_ms < available_start || sample.steady_ms >= profile_end_steady) {
             continue;
         }
-        const std::int64_t window = (sample.steady_ms - profile_start_steady) / 1000;
+        const std::int64_t window = (sample.steady_ms - profile_start_steady) / profiling_window::kSizeMs;
         if (window < first_window || window > last_window) {
             continue;
         }

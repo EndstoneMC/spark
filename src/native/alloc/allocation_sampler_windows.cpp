@@ -47,6 +47,7 @@
 #include "native/alloc/bounded_event_queue.h"
 #include "native/alloc/byte_sampler.h"
 #include "native/sampler/thread_info.h"
+#include "profiling_window.h"
 
 namespace spark {
 namespace {
@@ -1503,10 +1504,11 @@ struct AllocationSampler::Impl {
         allocation->thread_id = thread.session_thread_id;
         allocation->os_thread_id = thread.os_thread_id;
         const std::uint64_t started = started_tick_ms.load(std::memory_order_relaxed);
-        allocation->window = static_cast<std::int32_t>((std::min)(static_cast<std::uint64_t>(KMaxProfileWindows - 1),
-                                                                  started > 0 && allocation->allocated_ms >= started
-                                                                      ? (allocation->allocated_ms - started) / 1000
-                                                                      : 0));
+        allocation->window = static_cast<std::int32_t>((
+            std::min)(static_cast<std::uint64_t>(KMaxProfileWindows - 1),
+                      started > 0 && allocation->allocated_ms >= started
+                          ? (allocation->allocated_ms - started) / static_cast<std::uint64_t>(profiling_window::kSizeMs)
+                          : 0));
         allocation->depth = static_cast<std::uint16_t>(
             ::RtlCaptureStackBackTrace(KFramesToSkip, static_cast<ULONG>(KStackDepth), allocation->frames, nullptr));
         if (allocation->depth == 0 || !insertLiveAllocation(allocation)) {
@@ -2747,9 +2749,11 @@ struct AllocationSampler::Impl {
 
         const std::uint64_t started = started_tick_ms.load(std::memory_order_relaxed);
         const std::uint64_t now = monotonicMs();
-        const std::int32_t window =
-            static_cast<std::int32_t>((std::min)(static_cast<std::uint64_t>(KMaxProfileWindows - 1),
-                                                 started > 0 && now >= started ? (now - started) / 1000 : 0));
+        const std::int32_t window = static_cast<std::int32_t>(
+            (std::min)(static_cast<std::uint64_t>(KMaxProfileWindows - 1),
+                       started > 0 && now >= started
+                           ? (now - started) / static_cast<std::uint64_t>(profiling_window::kSizeMs)
+                           : 0));
         WindowTickStats &stats = window_ticks[window];
         stats.ticks += 1;
         stats.mspt_sum += mspt_ms;
