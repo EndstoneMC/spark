@@ -69,6 +69,10 @@ add_library(spark_papi_headers INTERFACE)
 target_include_directories(spark_papi_headers INTERFACE "${endstone_papi_headers_SOURCE_DIR}/include")
 target_link_libraries(spark_papi_headers INTERFACE endstone::endstone)
 
+if (WIN32)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif ()
+
 # --- native backend: sampler, symbol guesser, allocation hooks (no Endstone) ---
 add_library(spark_native STATIC
         src/native/alloc/allocation_thread_filter.cpp
