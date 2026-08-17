@@ -25,8 +25,8 @@ public:
     bool hasPermission(const std::string &name) const override { return sender_.hasPermission(name); }
 
 private:
-    void sendImpl(const std::string &message) override { sender_.sendMessage(message); }
-    void errorImpl(const std::string &message) override { sender_.sendErrorMessage(message); }
+    void sendImpl(const std::string &message) override;
+    void errorImpl(const std::string &message) override;
 
     ::endstone::CommandSender &sender_;
 };

@@ -21,6 +21,45 @@ namespace spark::endstone_adapter {
 
 using endstone::ColorFormat;
 
+namespace {
+
+std::string formatPlayerMessage(const std::string &message, const std::string &body_color = ColorFormat::Reset)
+{
+    std::string formatted;
+    formatted.reserve(message.size() + 32);
+    formatted += ColorFormat::DarkGray;
+    formatted += '[';
+    formatted += ColorFormat::Yellow;
+    formatted += "\xE2\x9A\xA1";  // U+26A1 HIGH VOLTAGE SIGN (⚡)
+    formatted += ColorFormat::DarkGray;
+    formatted += "] ";
+    formatted += body_color;
+    formatted += message;
+    return formatted;
+}
+
+}  // namespace
+
+// --- EndstoneCommandSender ---
+
+void EndstoneCommandSender::sendImpl(const std::string &message)
+{
+    if (isPlayer()) {
+        sender_.sendMessage(formatPlayerMessage(message));
+        return;
+    }
+    sender_.sendMessage(message);
+}
+
+void EndstoneCommandSender::errorImpl(const std::string &message)
+{
+    if (isPlayer()) {
+        sender_.sendErrorMessage(formatPlayerMessage(message, ColorFormat::Red));
+        return;
+    }
+    sender_.sendErrorMessage(message);
+}
+
 // --- EndstoneDispatcher ---
 
 void EndstoneDispatcher::runOnMainThread(std::function<void()> task)
@@ -179,13 +218,13 @@ void EndstoneNotifier::notify(const std::string &sender_name, const std::string 
     if (disable_broadcast_) {
         auto *player = server_.getPlayer(sender_name);
         if (player) {
-            player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
+            player->sendMessage(formatPlayerMessage(text));
         }
     }
     else {
         for (auto *player : server_.getOnlinePlayers()) {
             if ((player != nullptr) && player->hasPermission("endstone.command.spark")) {
-                player->sendMessage("{}[spark] {}{}", ColorFormat::Gold, ColorFormat::Reset, text);
+                player->sendMessage(formatPlayerMessage(text));
             }
         }
     }
