@@ -26,7 +26,7 @@ public:
     [[nodiscard]] std::string setPlaceholders(const endstone::OfflinePlayer *player,
                                               std::string_view text) const override
     {
-        if (!active || !expansion || text != "{spark_unknown}") {
+        if (!active || !expansion || text != "{spark:unknown}") {
             return std::string(text);
         }
         auto value = expansion->onRequest(player, "unknown");
@@ -121,7 +121,7 @@ int main()
     assert(!first->expansion->supportsRelationalPlaceholders());
     assert(!first->expansion->supportsPlayerCleanup());
     assert(!first->expansion->onRequest(nullptr, "unknown").has_value());
-    assert(first->setPlaceholders(nullptr, "{spark_unknown}") == "{spark_unknown}");
+    assert(first->setPlaceholders(nullptr, "{spark:unknown}") == "{spark:unknown}");
 
     assert(integration.enable(owner, first, statistics, "0.6.0") ==
            spark::endstone_adapter::PapiRegistrationResult::AlreadyRegistered);
@@ -140,7 +140,7 @@ int main()
     assert(integration.enable(owner, first, statistics, "0.6.0") ==
            spark::endstone_adapter::PapiRegistrationResult::Registered);
     first->active = false;
-    assert(first->setPlaceholders(nullptr, "{spark_unknown}") == "{spark_unknown}");
+    assert(first->setPlaceholders(nullptr, "{spark:unknown}") == "{spark:unknown}");
 
     auto replacement = std::make_shared<FakePlaceholderApi>();
     assert(integration.enable(owner, replacement, statistics, "0.6.0") ==

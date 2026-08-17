@@ -197,14 +197,14 @@ sample remain unresolved.
 
 | Placeholder | Value |
 | --- | --- |
-| `{spark_tps}` | TPS for 5s, 10s, 1m, 5m, and 15m |
-| `{spark_tps_5s}`, `{spark_tps_10s}`, `{spark_tps_1m}`, `{spark_tps_5m}`, `{spark_tps_15m}` | One TPS window |
-| `{spark_tickduration}` | MSPT min/median/p95/max for the latest 200 and 1200 ticks |
-| `{spark_tickduration_10s}`, `{spark_tickduration_1m}` | One 200-tick or 1200-tick MSPT distribution |
-| `{spark_cpu_system}` | System CPU for 10s, 1m, and 15m |
-| `{spark_cpu_system_10s}`, `{spark_cpu_system_1m}`, `{spark_cpu_system_15m}` | One system CPU window |
-| `{spark_cpu_process}` | Spark/BDS process CPU for 10s, 1m, and 15m |
-| `{spark_cpu_process_10s}`, `{spark_cpu_process_1m}`, `{spark_cpu_process_15m}` | One process CPU window |
+| `{spark:tps}` | TPS for 5s, 10s, 1m, 5m, and 15m |
+| `{spark:tps_5s}`, `{spark:tps_10s}`, `{spark:tps_1m}`, `{spark:tps_5m}`, `{spark:tps_15m}` | One TPS window |
+| `{spark:tickduration}` | MSPT min/median/p95/max for the latest 200 and 1200 ticks |
+| `{spark:tickduration_10s}`, `{spark:tickduration_1m}` | One 200-tick or 1200-tick MSPT distribution |
+| `{spark:cpu_system}` | System CPU for 10s, 1m, and 15m |
+| `{spark:cpu_system_10s}`, `{spark:cpu_system_1m}`, `{spark:cpu_system_15m}` | One system CPU window |
+| `{spark:cpu_process}` | Spark/BDS process CPU for 10s, 1m, and 15m |
+| `{spark:cpu_process_10s}`, `{spark:cpu_process_1m}`, `{spark:cpu_process_15m}` | One process CPU window |
 
 The output preserves Java spark's precision, ordering, percent signs, over-target
 TPS marker, and Minecraft color codes. These placeholders are player-independent.
