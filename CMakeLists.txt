@@ -54,11 +54,11 @@ FetchContent_Declare(endstone
         GIT_TAG v0.11)
 FetchContent_MakeAvailable(endstone)
 
-# PAPI is optional at runtime; only its released public headers are fetched.
+# PAPI is optional at runtime; only its public headers are fetched.
 set(ENDSTONE_SPARK_PAPI_GIT_REPOSITORY "https://github.com/EndstoneMC/papi.git" CACHE STRING
         "Repository providing the public Endstone PAPI headers")
-set(ENDSTONE_SPARK_PAPI_GIT_TAG "v0.1.0" CACHE STRING
-        "Release tag providing the public Endstone PAPI headers")
+set(ENDSTONE_SPARK_PAPI_GIT_TAG "main" CACHE STRING
+        "Git ref providing the public Endstone PAPI headers")
 FetchContent_Declare(endstone_papi_headers
         GIT_REPOSITORY ${ENDSTONE_SPARK_PAPI_GIT_REPOSITORY}
         GIT_TAG ${ENDSTONE_SPARK_PAPI_GIT_TAG}
