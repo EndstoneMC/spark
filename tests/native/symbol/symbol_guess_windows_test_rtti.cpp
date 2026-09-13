@@ -53,7 +53,7 @@ bool testInvalidRttiAndThunk()
     addClass(fixture, 0x2000, ".?AVChannel@@", 0x2808, {0x1000}, 16);
     windows::Engine engine = fixture.engine();
     const std::uint64_t query = 0x1080;
-    SPARK_SYMBOL_GUESS_CHECK(engine.guess(std::span(&query, 1)).at(query).label == "vtable: Channel::vfn[0]");
+    SPARK_SYMBOL_GUESS_CHECK(engine.guess(std::span(&query, 1)).at(query).label == "vtable?: Channel::<virtual>");
     SPARK_SYMBOL_GUESS_CHECK(engine.stats().thunk_resolved == 1);
 
     fixture.put<std::uint32_t>(0x2180 + 20, 0xdeadbeef);

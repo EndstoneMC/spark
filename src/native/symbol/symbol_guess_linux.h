@@ -17,6 +17,11 @@
 
 namespace spark::symbol_guess::linux {
 
+inline constexpr std::size_t kMaximumFunctionDecodeBytes = 64U * 1024U;
+inline constexpr std::size_t kMaximumFunctionDecodeInstructions = 8192U;
+inline constexpr std::size_t kMaximumBatchFunctionValidations = 4096U;
+inline constexpr std::size_t kMaximumBatchDecodedInstructions = 1000000U;
+
 struct BuildStats {
     bool initialized = false;
     std::uint64_t build_microseconds = 0;
@@ -35,6 +40,8 @@ struct BuildStats {
     std::size_t vtable_candidates = 0;
     std::size_t vtable_labels = 0;
     std::size_t vtable_conflicts = 0;
+    std::size_t vtable_interior_target_rejections = 0;
+    std::size_t thunk_interior_destination_rejections = 0;
     std::size_t sampled_functions = 0;
     std::size_t decoded_instructions = 0;
     std::size_t string_candidates = 0;
@@ -46,6 +53,21 @@ struct BuildStats {
     std::size_t thunk_candidates = 0;
     std::size_t thunk_resolved = 0;
     std::size_t thunk_labels = 0;
+    std::size_t string_reference_candidates = 0;
+    std::size_t string_reference_potential_hits = 0;
+    std::size_t string_reference_exact_hits = 0;
+    std::size_t string_reference_interior_rejections = 0;
+    std::size_t string_reference_ambiguities = 0;
+    std::size_t string_reference_shared = 0;
+    std::size_t string_reference_terminal_hits_skipped = 0;
+    std::size_t string_reference_unindexed = 0;
+    std::size_t string_reference_unreachable = 0;
+    std::size_t string_reference_overlaps = 0;
+    std::size_t string_validation_functions = 0;
+    std::size_t string_function_byte_budget_exhausted = 0;
+    std::size_t string_function_instruction_budget_exhausted = 0;
+    std::size_t string_validation_budget_exhausted = 0;
+    std::size_t string_instruction_budget_exhausted = 0;
     std::size_t rtti_types = 0;
     std::size_t rtti_bases = 0;
     std::size_t vtable_inheritance_resolved = 0;

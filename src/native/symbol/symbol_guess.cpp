@@ -91,6 +91,7 @@ std::unordered_map<std::uint64_t, GuessResult> analyzeMainModuleSymbols(std::spa
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -103,16 +104,32 @@ namespace spark {
 
 namespace symbol_guess::linux {
 
+namespace {
+
+bool isEligibleStringLea(const _DInst &instruction)
+{
+    return instruction.opcode == I_LEA && instruction.opsNo == 2 && instruction.ops[0].type == O_REG &&
+           instruction.ops[0].size == 64 && instruction.ops[1].type == O_SMEM && instruction.ops[1].index == R_RIP &&
+           (instruction.flags & FLAG_RIP_RELATIVE) != 0 &&
+           (instruction.flags & (FLAG_LOCK | FLAG_REPNZ | FLAG_REP)) == 0 &&
+           FLAG_GET_ADDRSIZE(instruction.flags) == 2 &&
+           (instruction.segment == R_NONE || SEGMENT_IS_DEFAULT(instruction.segment));
+}
+
+}  // namespace
+
 std::vector<std::uint64_t> decodeRipRelativeLeaTargets(std::span<const std::uint8_t> code, std::uint64_t function_rva,
                                                        std::size_t *decoded_instructions)
 {
-    if (code.empty() || code.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+    if (code.empty() || code.size() > kMaximumFunctionDecodeBytes ||
+        code.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
         return {};
     }
 
     std::vector<std::size_t> work{0};
     std::unordered_set<std::size_t> visited;
     std::set<std::uint64_t> targets;
+    std::size_t decoded = 0;
     while (!work.empty()) {
         std::size_t cursor = work.back();
         work.pop_back();
@@ -143,10 +160,14 @@ std::vector<std::uint64_t> decodeRipRelativeLeaTargets(std::span<const std::uint
                     stop = true;
                     break;
                 }
+                if (decoded >= kMaximumFunctionDecodeInstructions) {
+                    return {targets.begin(), targets.end()};
+                }
+                ++decoded;
                 if (decoded_instructions != nullptr) {
                     ++*decoded_instructions;
                 }
-                if (instruction.opcode == I_LEA && (instruction.flags & FLAG_RIP_RELATIVE) != 0) {
+                if (isEligibleStringLea(instruction)) {
                     targets.insert(INSTRUCTION_GET_RIP_TARGET(&instruction));
                 }
 
@@ -849,8 +870,11 @@ const FunctionRange *functionContaining(const GuessTable &table, std::uint64_t r
 }
 
 std::optional<std::uint64_t> strictThunkEdge(const ImageView &img, const GuessTable &table, std::uint64_t root,
-                                             symbol_guess::linux::BuildStats &stats)
+                                             symbol_guess::linux::BuildStats &stats, bool *decoded_thunk = nullptr)
 {
+    if (decoded_thunk != nullptr) {
+        *decoded_thunk = false;
+    }
     const FunctionRange *function = functionContaining(table, root);
     if (function == nullptr || function->root != root || function->end <= function->begin) {
         return std::nullopt;
@@ -866,6 +890,9 @@ std::optional<std::uint64_t> strictThunkEdge(const ImageView &img, const GuessTa
     if (!decoded) {
         return std::nullopt;
     }
+    if (decoded_thunk != nullptr) {
+        *decoded_thunk = true;
+    }
     ++stats.thunk_candidates;
     std::uint64_t target = decoded->target;
     if (decoded->indirect) {
@@ -875,7 +902,10 @@ std::optional<std::uint64_t> strictThunkEdge(const ImageView &img, const GuessTa
         }
     }
     const FunctionRange *target_function = functionContaining(table, target);
-    if (target_function == nullptr) {
+    if (target_function == nullptr || target_function->begin != target || target_function->root != target) {
+        if (target_function != nullptr) {
+            ++stats.thunk_interior_destination_rejections;
+        }
         return std::nullopt;
     }
     return target_function->root;
@@ -1139,11 +1169,30 @@ void collectVtableLabels(const ImageView &img, GuessTable &table)
                     break;
                 }
                 const FunctionRange *fn = functionContaining(table, target);
-                if (fn == nullptr) {
+                if (fn == nullptr || fn->begin != target || fn->root != target) {
+                    if (fn != nullptr) {
+                        ++table.stats.vtable_interior_target_rejections;
+                    }
+                    continue;
+                }
+                bool invalid_thunk = false;
+                const auto next_thunk = [&](std::uint64_t current) {
+                    bool decoded_thunk = false;
+                    const auto edge = strictThunkEdge(img, table, current, table.stats, &decoded_thunk);
+                    invalid_thunk = invalid_thunk || (decoded_thunk && !edge.has_value());
+                    return edge;
+                };
+                const auto first_thunk = next_thunk(fn->root);
+                if (invalid_thunk) {
+                    continue;
+                }
+                const bool has_thunk = first_thunk.has_value();
+                if (has_thunk &&
+                    (!symbol_guess::linux::followStrictThunkChain(fn->root, next_thunk) || invalid_thunk)) {
                     continue;
                 }
                 candidates[fn->root].push_back(
-                    {class_name, static_cast<std::uint32_t>(slot), offset_to_top != 0, false});
+                    {class_name, static_cast<std::uint32_t>(slot), offset_to_top != 0, has_thunk});
                 ++table.stats.vtable_candidates;
             }
         }
@@ -1191,9 +1240,195 @@ struct StringCandidate {
     int score = 0;
 };
 
+symbol_guess::TypedLabel formatLinuxStringHint(std::string_view value, int score)
+{
+    if (score < symbol_guess::kMinimumStringHintScore) {
+        return {};
+    }
+    constexpr std::size_t k_maximum = 52;
+    std::string message(value.substr(0, k_maximum));
+    if (value.size() > k_maximum) {
+        message.resize(k_maximum - 3);
+        message += "...";
+    }
+    return symbol_guess::formatEvidenceLabel(symbol_guess::EvidenceSource::String, message, true);
+}
+
+struct ReferenceInstruction {
+    std::uint64_t begin = 0;
+    std::uint64_t end = 0;
+    std::uint64_t rip_target = 0;
+    bool eligible = false;
+};
+
+struct FunctionReferenceValidation {
+    bool complete = false;
+    bool witness_valid = false;
+    bool budget_exhausted = false;
+    std::vector<ReferenceInstruction> instructions;
+    std::vector<std::uint64_t> eligible_targets;
+};
+
+struct ReferenceValidationBudget {
+    std::size_t functions = 0;
+    std::size_t instructions = 0;
+    bool function_budget_reported = false;
+    bool instruction_budget_reported = false;
+};
+
+constexpr std::size_t kMaximumDiagnosticCounter = 1000000U;
+
+void incrementDiagnostic(std::size_t &counter)
+{
+    if (counter < kMaximumDiagnosticCounter) {
+        ++counter;
+    }
+}
+
+FunctionReferenceValidation validateFunctionReferences(const ImageView &img, const FunctionRange &function,
+                                                       ReferenceValidationBudget &budget,
+                                                       symbol_guess::linux::BuildStats &stats)
+{
+    FunctionReferenceValidation validation;
+    if (function.root != function.begin || function.end <= function.begin) {
+        return validation;
+    }
+    const std::uint64_t function_size = function.end - function.begin;
+    if (function_size > symbol_guess::linux::kMaximumFunctionDecodeBytes) {
+        incrementDiagnostic(stats.string_function_byte_budget_exhausted);
+        return validation;
+    }
+    if (function_size > static_cast<std::uint64_t>((std::numeric_limits<int>::max)()) ||
+        img.sectionContaining(function.begin, function_size) == nullptr) {
+        return validation;
+    }
+    if (budget.functions >= symbol_guess::linux::kMaximumBatchFunctionValidations) {
+        validation.budget_exhausted = true;
+        if (!budget.function_budget_reported) {
+            budget.function_budget_reported = true;
+            incrementDiagnostic(stats.string_validation_budget_exhausted);
+        }
+        return validation;
+    }
+    ++budget.functions;
+    incrementDiagnostic(stats.string_validation_functions);
+
+    const std::size_t size = static_cast<std::size_t>(function_size);
+    const symbol_guess::linux::InstructionReader reader{.image = &img, .base = function.begin, .size = size};
+    std::vector<std::size_t> work{0};
+    std::unordered_set<std::size_t> visited;
+    visited.reserve(std::min<std::size_t>(size, symbol_guess::linux::kMaximumFunctionDecodeInstructions));
+    validation.instructions.reserve(std::min<std::size_t>(size, 256));
+    std::size_t function_instructions = 0;
+    bool control_flow_incomplete = false;
+
+    while (!work.empty()) {
+        const std::size_t offset = work.back();
+        work.pop_back();
+        if (offset >= size || !visited.insert(offset).second) {
+            if (offset >= size) {
+                validation.complete = false;
+                validation.instructions.clear();
+                return validation;
+            }
+            continue;
+        }
+        if (function_instructions >= symbol_guess::linux::kMaximumFunctionDecodeInstructions) {
+            validation.budget_exhausted = true;
+            validation.instructions.clear();
+            incrementDiagnostic(stats.string_function_instruction_budget_exhausted);
+            return validation;
+        }
+        if (budget.instructions >= symbol_guess::linux::kMaximumBatchDecodedInstructions) {
+            validation.budget_exhausted = true;
+            validation.instructions.clear();
+            if (!budget.instruction_budget_reported) {
+                budget.instruction_budget_reported = true;
+                incrementDiagnostic(stats.string_instruction_budget_exhausted);
+            }
+            return validation;
+        }
+        const auto instruction = reader.decode(offset, nullptr);
+        if (!instruction) {
+            validation.instructions.clear();
+            return validation;
+        }
+        ++budget.instructions;
+        ++function_instructions;
+        incrementDiagnostic(stats.decoded_instructions);
+        const std::uint64_t instruction_begin = function.begin + offset;
+        const std::uint64_t instruction_end = instruction_begin + instruction->size;
+        const bool eligible = symbol_guess::linux::isEligibleStringLea(*instruction);
+        const std::uint64_t rip_target = eligible ? INSTRUCTION_GET_RIP_TARGET(&*instruction) : 0;
+        validation.instructions.push_back(
+            {.begin = instruction_begin, .end = instruction_end, .rip_target = rip_target, .eligible = eligible});
+        if (eligible) {
+            validation.eligible_targets.push_back(rip_target);
+        }
+
+        const unsigned flow = META_GET_FC(instruction->meta);
+        if (flow == FC_CND_BRANCH || flow == FC_UNC_BRANCH) {
+            if (instruction->opsNo == 1 && instruction->ops[0].type == O_PC) {
+                const std::uint64_t target = INSTRUCTION_GET_TARGET(&*instruction);
+                if (target >= function.begin && target < function.end) {
+                    work.push_back(static_cast<std::size_t>(target - function.begin));
+                }
+                else {
+                    control_flow_incomplete = true;
+                }
+            }
+            else {
+                // The exit is valid but its destination is not statically known.
+                control_flow_incomplete = true;
+            }
+        }
+        if (flow == FC_NONE || flow == FC_CMOV || flow == FC_CALL || flow == FC_CND_BRANCH) {
+            const std::size_t fallthrough = offset + instruction->size;
+            if (fallthrough > size || (fallthrough == size && flow != FC_CALL)) {
+                validation.instructions.clear();
+                return validation;
+            }
+            if (fallthrough == size) {
+                control_flow_incomplete = true;
+            }
+            else {
+                work.push_back(fallthrough);
+            }
+        }
+        else if (flow == FC_SYS || flow == FC_INT || flow == FC_HLT) {
+            validation.instructions.clear();
+            return validation;
+        }
+        else if (flow != FC_RET && flow != FC_UNC_BRANCH) {
+            validation.instructions.clear();
+            return validation;
+        }
+    }
+
+    std::ranges::sort(validation.instructions,
+                      [](const ReferenceInstruction &a, const ReferenceInstruction &b) { return a.begin < b.begin; });
+    for (std::size_t i = 1; i < validation.instructions.size(); ++i) {
+        if (validation.instructions[i - 1].end > validation.instructions[i].begin) {
+            validation.instructions.clear();
+            incrementDiagnostic(stats.string_reference_overlaps);
+            return validation;
+        }
+    }
+    std::ranges::sort(validation.eligible_targets);
+    const auto duplicate_targets = std::ranges::unique(validation.eligible_targets);
+    validation.eligible_targets.erase(duplicate_targets.begin(), duplicate_targets.end());
+    validation.witness_valid = true;
+    validation.complete = !control_flow_incomplete;
+    return validation;
+}
+
 std::vector<StringCandidate> decodeStrings(const ImageView &img, const FunctionRange &function,
                                            symbol_guess::linux::BuildStats &stats)
 {
+    if (function.end <= function.begin ||
+        function.end - function.begin > symbol_guess::linux::kMaximumFunctionDecodeBytes) {
+        return {};
+    }
     const Section *section = img.sectionContaining(function.begin, function.end - function.begin);
     if (section == nullptr || !section->executable) {
         return {};
@@ -1227,12 +1462,171 @@ std::vector<StringCandidate> decodeStrings(const ImageView &img, const FunctionR
     return candidates;
 }
 
-// Global uniqueness verification for sampled-function candidates; can only suppress, not create, labels.
+bool isPotentialStringLea(const std::uint8_t *bytes)
+{
+    const std::uint8_t rex = bytes[0];
+    return rex >= 0x48 && rex <= 0x4f && bytes[1] == 0x8d && (bytes[2] & 0xc7) == 0x05;
+}
+
+bool addRipDisplacement(std::uint64_t rva, std::int32_t displacement, std::uint64_t &target)
+{
+    if (rva > (std::numeric_limits<std::uint64_t>::max)() - 7U) {
+        return false;
+    }
+    const std::uint64_t next = rva + 7U;
+    if (displacement >= 0) {
+        const auto positive = static_cast<std::uint64_t>(displacement);
+        if (positive > (std::numeric_limits<std::uint64_t>::max)() - next) {
+            return false;
+        }
+        target = next + positive;
+        return true;
+    }
+    const auto magnitude = static_cast<std::uint64_t>(-(static_cast<std::int64_t>(displacement) + 1)) + 1U;
+    if (magnitude > next) {
+        return false;
+    }
+    target = next - magnitude;
+    return true;
+}
+
+// The raw executable pass finds potential references only. Each hit is
+// cleared or accepted by a reachable FDE decode below.
 void scanCandidateReferences(const ImageView &img, const GuessTable &table,
                              const std::unordered_set<std::uint64_t> &targets,
-                             std::unordered_map<std::uint64_t, std::set<std::uint64_t>> &references)
+                             std::unordered_map<std::uint64_t, std::set<std::uint64_t>> &references,
+                             std::unordered_set<std::uint64_t> &ambiguous, symbol_guess::linux::BuildStats &stats)
 {
+    stats.string_reference_candidates = std::min<std::size_t>(targets.size(), kMaximumDiagnosticCounter);
+    ReferenceValidationBudget budget;
+    std::unordered_map<std::uint64_t, FunctionReferenceValidation> validations;
+    validations.reserve(std::min<std::size_t>(targets.size(), symbol_guess::linux::kMaximumBatchFunctionValidations));
+
+    enum class ReferenceState {
+        Active,
+        Ambiguous,
+        Shared
+    };
+    std::unordered_map<std::uint64_t, ReferenceState> states;
+    states.reserve(targets.size());
+    for (const std::uint64_t target : targets) {
+        states.emplace(target, ReferenceState::Active);
+    }
+    std::size_t active_targets = targets.size();
+
+    enum class AmbiguityReason {
+        Unindexed,
+        Unreachable,
+        Invalid,
+        Budget
+    };
+    const auto markAmbiguous = [&](std::uint64_t target, AmbiguityReason reason) {
+        const auto state = states.find(target);
+        if (state == states.end() || state->second != ReferenceState::Active) {
+            return active_targets == 0;
+        }
+        state->second = ReferenceState::Ambiguous;
+        --active_targets;
+        ambiguous.insert(target);
+        incrementDiagnostic(stats.string_reference_ambiguities);
+        switch (reason) {
+        case AmbiguityReason::Unindexed:
+            incrementDiagnostic(stats.string_reference_unindexed);
+            break;
+        case AmbiguityReason::Unreachable:
+            incrementDiagnostic(stats.string_reference_unreachable);
+            break;
+        case AmbiguityReason::Invalid:
+            break;
+        case AmbiguityReason::Budget:
+            break;
+        }
+        return active_targets == 0;
+    };
+
+    const auto recordOwner = [&](std::uint64_t target, std::uint64_t root) {
+        const auto state = states.find(target);
+        if (state == states.end() || state->second != ReferenceState::Active) {
+            return active_targets == 0;
+        }
+        auto &owners = references[target];
+        if (owners.insert(root).second && owners.size() == 2) {
+            state->second = ReferenceState::Shared;
+            --active_targets;
+            incrementDiagnostic(stats.string_reference_shared);
+        }
+        return active_targets == 0;
+    };
+
+    const auto classify = [&](std::uint64_t target, std::uint64_t rva) {
+        const auto state = states.find(target);
+        if (state == states.end()) {
+            return active_targets == 0;
+        }
+        if (state->second != ReferenceState::Active) {
+            incrementDiagnostic(stats.string_reference_terminal_hits_skipped);
+            return active_targets == 0;
+        }
+        const FunctionRange *function = functionContaining(table, rva);
+        if (function == nullptr || function->root != function->begin) {
+            return markAmbiguous(target, AmbiguityReason::Unindexed);
+        }
+        const auto existing = references.find(target);
+        if (existing != references.end() && existing->second.contains(function->root)) {
+            return active_targets == 0;
+        }
+        auto it = validations.find(function->root);
+        if (it == validations.end()) {
+            if (validations.size() >= symbol_guess::linux::kMaximumBatchFunctionValidations) {
+                if (!budget.function_budget_reported) {
+                    budget.function_budget_reported = true;
+                    incrementDiagnostic(stats.string_validation_budget_exhausted);
+                }
+                return markAmbiguous(target, AmbiguityReason::Budget);
+            }
+            auto validation = validateFunctionReferences(img, *function, budget, stats);
+            it = validations.emplace(function->root, std::move(validation)).first;
+        }
+        const FunctionReferenceValidation &validation = it->second;
+        if (!validation.witness_valid) {
+            return markAmbiguous(target,
+                                 validation.budget_exhausted ? AmbiguityReason::Budget : AmbiguityReason::Invalid);
+        }
+        if (std::binary_search(validation.eligible_targets.begin(), validation.eligible_targets.end(), target)) {
+            incrementDiagnostic(stats.string_reference_exact_hits);
+            return recordOwner(target, function->root);
+        }
+        if (!validation.complete) {
+            return markAmbiguous(target, AmbiguityReason::Invalid);
+        }
+        const auto exact = std::lower_bound(
+            validation.instructions.begin(), validation.instructions.end(), rva,
+            [](const ReferenceInstruction &instruction, std::uint64_t value) { return instruction.begin < value; });
+        if (exact != validation.instructions.end() && exact->begin == rva) {
+            if (exact->eligible && exact->rip_target == target) {
+                incrementDiagnostic(stats.string_reference_exact_hits);
+                return recordOwner(target, function->root);
+            }
+            return active_targets == 0;
+        }
+        if (exact != validation.instructions.begin()) {
+            const auto previous = std::prev(exact);
+            if (previous->begin < rva && rva < previous->end) {
+                if (previous->eligible && previous->rip_target == target) {
+                    incrementDiagnostic(stats.string_reference_exact_hits);
+                    return recordOwner(target, function->root);
+                }
+                incrementDiagnostic(stats.string_reference_interior_rejections);
+                return active_targets == 0;
+            }
+        }
+        return markAmbiguous(target, AmbiguityReason::Unreachable);
+    };
+
     for (const Section &section : img.sections()) {
+        if (active_targets == 0) {
+            break;
+        }
         if (!section.executable || section.end - section.begin < 7) {
             continue;
         }
@@ -1246,23 +1640,19 @@ void scanCandidateReferences(const ImageView &img, const GuessTable &table,
                 break;
             }
             cursor = opcode + 1;
-            const std::uint8_t rex = opcode[-1];
-            if (rex < 0x48 || rex > 0x4f || (opcode[1] & 0xc7) != 0x05) {
+            if (!isPotentialStringLea(opcode - 1)) {
                 continue;
             }
             std::int32_t displacement = 0;
-            std::memcpy(&displacement, opcode + 2, 4);
+            std::memcpy(&displacement, opcode + 2, sizeof(displacement));
             const std::uint64_t rva = section.begin + static_cast<std::uint64_t>(opcode - bytes - 1);
-            const std::int64_t wide_target = static_cast<std::int64_t>(rva) + 7 + displacement;
-            if (wide_target < 0) {
+            std::uint64_t target = 0;
+            if (!addRipDisplacement(rva, displacement, target) || !targets.contains(target)) {
                 continue;
             }
-            const auto target = static_cast<std::uint64_t>(wide_target);
-            if (!targets.contains(target)) {
-                continue;
-            }
-            if (const FunctionRange *fn = functionContaining(table, rva)) {
-                references[target].insert(fn->root);
+            incrementDiagnostic(stats.string_reference_potential_hits);
+            if (classify(target, rva)) {
+                break;
             }
         }
     }
@@ -1341,8 +1731,9 @@ std::unordered_map<std::uint64_t, GuessResult> guessBatch(std::span<const std::u
     }
 
     std::unordered_map<std::uint64_t, std::set<std::uint64_t>> references;
+    std::unordered_set<std::uint64_t> ambiguous_references;
     if (!candidate_targets.empty()) {
-        scanCandidateReferences(img, table, candidate_targets, references);
+        scanCandidateReferences(img, table, candidate_targets, references, ambiguous_references, batch);
     }
     for (const auto &[root, candidates] : string_candidates) {
         symbol_guess::TypedLabel label;
@@ -1351,8 +1742,9 @@ std::unordered_map<std::uint64_t, GuessResult> guessBatch(std::span<const std::u
                 break;
             }
             const auto refs = references.find(candidate.target);
-            if (refs != references.end() && refs->second.size() == 1 && *refs->second.begin() == root) {
-                label = symbol_guess::formatStringHint(candidate.value, candidate.score);
+            if (!ambiguous_references.contains(candidate.target) && refs != references.end() &&
+                refs->second.size() == 1 && *refs->second.begin() == root) {
+                label = formatLinuxStringHint(candidate.value, candidate.score);
                 break;
             }
             if (refs != references.end() && refs->second.size() > 1) {
@@ -1386,7 +1778,8 @@ std::unordered_map<std::uint64_t, GuessResult> guessBatch(std::span<const std::u
                 continue;
             }
             const auto refs = references.find(candidate.target);
-            if (refs != references.end() && refs->second.size() == 1 && *refs->second.begin() == root) {
+            if (!ambiguous_references.contains(candidate.target) && refs != references.end() &&
+                refs->second.size() == 1 && *refs->second.begin() == root) {
                 unique_weak.push_back(&candidate);
             }
         }

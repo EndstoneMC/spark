@@ -46,8 +46,8 @@ class InheritanceMap {
 public:
     void addBase(std::string_view derived, std::string_view base);
     bool isAncestor(std::string_view ancestor, std::string_view descendant) const;
-    // Returns the most-derived class that is an ancestor of every candidate,
-    // or nullopt when no unique common ancestor exists.
+    // Returns the unique observed class that is an ancestor of every candidate,
+    // or nullopt when no such owner exists.
     std::optional<std::string> findCommonAncestor(const std::set<std::string> &classes) const;
     bool empty() const { return parents_.empty(); }
     std::size_t size() const { return parents_.size(); }

@@ -93,60 +93,25 @@ std::optional<std::string> InheritanceMap::findCommonAncestor(const std::set<std
     if (classes.empty()) {
         return std::nullopt;
     }
-    // Compute the intersection of ancestor sets (including each class itself).
-    std::unordered_set<std::string> common;
-    bool first = true;
-    for (const std::string &cls : classes) {
-        std::unordered_set<std::string> ancestors;
-        ancestors.insert(cls);
-        std::vector<std::string> stack{cls};
-        std::unordered_set<std::string> visited;
-        while (!stack.empty()) {
-            std::string current = std::move(stack.back());
-            stack.pop_back();
-            if (!visited.insert(current).second) {
-                continue;
-            }
-            auto it = parents_.find(current);
-            if (it == parents_.end()) {
-                continue;
-            }
-            for (const std::string &parent : it->second) {
-                ancestors.insert(parent);
-                if (!visited.contains(parent)) {
-                    stack.push_back(parent);
-                }
-            }
-        }
-        if (first) {
-            common = std::move(ancestors);
-            first = false;
-        }
-        else {
-            std::erase_if(common, [&ancestors](const std::string &s) { return !ancestors.contains(s); });
-        }
-        if (common.empty()) {
-            return std::nullopt;
-        }
-    }
-    if (common.size() == 1) {
-        return *common.begin();
-    }
+    // Only an observed class may own a shared implementation. An unobserved
+    // common base is useful for hierarchy discovery but is not evidence that
+    // this particular vtable belongs to that base.
     std::optional<std::string> owner;
-    for (const std::string &candidate : common) {
-        bool is_most_derived = true;
-        for (const std::string &other : common) {
-            if (candidate != other && isAncestor(candidate, other)) {
-                is_most_derived = false;
+    for (const std::string &candidate : classes) {
+        bool ancestor_of_all = true;
+        for (const std::string &other : classes) {
+            if (candidate != other && !isAncestor(candidate, other)) {
+                ancestor_of_all = false;
                 break;
             }
         }
-        if (is_most_derived) {
-            if (owner) {
-                return std::nullopt;
-            }
-            owner = candidate;
+        if (!ancestor_of_all) {
+            continue;
         }
+        if (owner.has_value()) {
+            return std::nullopt;
+        }
+        owner = candidate;
     }
     return owner;
 }
@@ -189,63 +154,34 @@ TypedLabel chooseVtableLabel(std::vector<VtableEvidence> evidence, const Inherit
 
     std::set<std::string> classes;
     std::set<std::uint32_t> slots;
+    bool has_secondary = false;
+    bool has_thunk = false;
     for (const VtableEvidence &candidate : evidence) {
         if (candidate.class_name.empty()) {
             return {};
         }
         classes.insert(candidate.class_name);
         slots.insert(candidate.slot);
+        has_secondary = has_secondary || candidate.secondary;
+        has_thunk = has_thunk || candidate.via_thunk;
     }
 
-    if (classes.size() != 1) {
-        // Multiple classes share this implementation. Try to resolve via
-        // inheritance: if one class is an ancestor of all others, it is the
-        // most likely owner of the virtual function.
-        if (inheritance != nullptr && !inheritance->empty()) {
-            const std::optional<std::string> ancestor = inheritance->findCommonAncestor(classes);
-            if (ancestor.has_value()) {
-                // Use the slot from the evidence whose class matches the ancestor.
-                // If no evidence matches the ancestor directly, fall back to the
-                // common slot if all candidates agree.
-                std::set<std::uint32_t> ancestor_slots;
-                for (const VtableEvidence &candidate : evidence) {
-                    if (candidate.class_name == *ancestor) {
-                        ancestor_slots.insert(candidate.slot);
-                    }
-                }
-                if (ancestor_slots.size() == 1) {
-                    const std::uint32_t ancestor_slot = *ancestor_slots.begin();
-                    bool all_slots_match = true;
-                    for (const VtableEvidence &candidate : evidence) {
-                        if (candidate.slot != ancestor_slot) {
-                            all_slots_match = false;
-                            break;
-                        }
-                    }
-                    if (all_slots_match) {
-                        return formatEvidenceLabel(EvidenceSource::Vtable,
-                                                   *ancestor + "::vfn[" + std::to_string(ancestor_slot) + "]");
-                    }
-                }
-                if (!ancestor_slots.empty()) {
-                    return formatEvidenceLabel(EvidenceSource::Vtable, *ancestor + "::<virtual>", true);
-                }
-                if (slots.size() == 1) {
-                    return formatEvidenceLabel(EvidenceSource::Vtable,
-                                               *ancestor + "::vfn[" + std::to_string(*slots.begin()) + "]");
-                }
-                return formatEvidenceLabel(EvidenceSource::Vtable, *ancestor + "::<virtual>", true);
-            }
-        }
+    std::optional<std::string> owner;
+    if (classes.size() == 1) {
+        owner = *classes.begin();
+    }
+    else if (inheritance != nullptr && !inheritance->empty()) {
+        owner = inheritance->findCommonAncestor(classes);
+    }
+    if (!owner.has_value()) {
         return {};
     }
 
-    const std::string &class_name = *classes.begin();
-    if (slots.size() == 1) {
-        return formatEvidenceLabel(EvidenceSource::Vtable,
-                                   class_name + "::vfn[" + std::to_string(*slots.begin()) + "]");
+    const bool strong = slots.size() == 1 && !has_secondary && !has_thunk;
+    if (strong) {
+        return formatEvidenceLabel(EvidenceSource::Vtable, *owner + "::vfn[" + std::to_string(*slots.begin()) + "]");
     }
-    return formatEvidenceLabel(EvidenceSource::Vtable, class_name + "::<virtual>", true);
+    return formatEvidenceLabel(EvidenceSource::Vtable, *owner + "::<virtual>", true);
 }
 
 int scoreStringHint(std::string_view value)

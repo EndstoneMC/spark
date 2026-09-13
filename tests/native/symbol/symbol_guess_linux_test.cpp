@@ -210,6 +210,18 @@ int main()
     constexpr std::array<std::uint8_t, 8> direct = {0x48, 0x8d, 0x05, 0xf9, 0x00, 0x00, 0x00, 0xc3};
     CHECK(spark::symbol_guess::linux::decodeRipRelativeLeaTargets(direct, base) == std::vector<std::uint64_t>{0x200});
 
+    // Only a 64-bit destination register with RIP-relative addressing is an
+    // eligible string reference.
+    constexpr std::array<std::uint8_t, 8> lea32 = {0x8d, 0x05, 0xfb, 0x00, 0x00, 0x00, 0xc3, 0x90};
+    CHECK(spark::symbol_guess::linux::decodeRipRelativeLeaTargets(lea32, base).empty());
+    constexpr std::array<std::uint8_t, 9> operand_override = {0x66, 0x48, 0x8d, 0x05, 0xf8, 0x00, 0x00, 0x00, 0xc3};
+    CHECK(spark::symbol_guess::linux::decodeRipRelativeLeaTargets(operand_override, base) ==
+          std::vector<std::uint64_t>{0x200});
+    constexpr std::array<std::uint8_t, 9> eip_override = {0x67, 0x48, 0x8d, 0x05, 0xf8, 0x00, 0x00, 0x00, 0xc3};
+    CHECK(spark::symbol_guess::linux::decodeRipRelativeLeaTargets(eip_override, base).empty());
+    constexpr std::array<std::uint8_t, 8> mov = {0x48, 0x8b, 0x05, 0xf9, 0x00, 0x00, 0x00, 0xc3};
+    CHECK(spark::symbol_guess::linux::decodeRipRelativeLeaTargets(mov, base).empty());
+
     // The LEA-looking bytes are the immediate of one MOVABS instruction and
     // must never be treated as an instruction boundary.
     constexpr std::array<std::uint8_t, 11> embedded = {0x48, 0xb8, 0x48, 0x8d, 0x05, 0xf2,

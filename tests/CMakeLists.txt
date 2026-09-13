@@ -702,6 +702,7 @@ if (WIN32)
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     add_test(NAME spark_capture_windows_lifecycle_test COMMAND spark_capture_windows_lifecycle_test)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    enable_language(ASM)
     add_subdirectory(native/alloc/linux_gateway)
     foreach (fixture spark_allocation_lifecycle_test spark_allocation_diagnostics_test
             spark_allocation_count_only_test spark_profiler_export_test spark_profiler_recovery_lifecycle_test)
@@ -730,6 +731,65 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x
     set_target_properties(spark_hidden_symbol_test PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     add_test(NAME spark_hidden_symbol_test COMMAND spark_hidden_symbol_test)
+
+    add_executable(spark_symbol_guess_linux_fixture
+            native/symbol/symbol_guess_linux_fixture.cpp
+            native/symbol/symbol_guess_linux_fixture.S)
+    target_link_libraries(spark_symbol_guess_linux_fixture PRIVATE spark_core ${CMAKE_DL_LIBS})
+    if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "The Linux symbol fixture requires Clang's libc++ and libc++abi static archives")
+    endif ()
+    execute_process(
+            COMMAND "${CMAKE_CXX_COMPILER}" -stdlib=libc++ -print-file-name=libc++.a
+            OUTPUT_VARIABLE SPARK_FIXTURE_LIBCXX_STATIC
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE SPARK_FIXTURE_LIBCXX_RESULT)
+    execute_process(
+            COMMAND "${CMAKE_CXX_COMPILER}" -stdlib=libc++ -print-file-name=libc++abi.a
+            OUTPUT_VARIABLE SPARK_FIXTURE_LIBCXXABI_STATIC
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE SPARK_FIXTURE_LIBCXXABI_RESULT)
+    if (NOT SPARK_FIXTURE_LIBCXX_RESULT EQUAL 0 OR NOT IS_ABSOLUTE "${SPARK_FIXTURE_LIBCXX_STATIC}" OR
+        NOT EXISTS "${SPARK_FIXTURE_LIBCXX_STATIC}")
+        unset(SPARK_FIXTURE_LIBCXX_STATIC CACHE)
+        unset(SPARK_FIXTURE_LIBCXX_STATIC)
+        find_file(SPARK_FIXTURE_LIBCXX_STATIC NAMES libc++.a PATHS ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES}
+                NO_DEFAULT_PATH)
+    endif ()
+    if (NOT SPARK_FIXTURE_LIBCXXABI_RESULT EQUAL 0 OR NOT IS_ABSOLUTE "${SPARK_FIXTURE_LIBCXXABI_STATIC}" OR
+        NOT EXISTS "${SPARK_FIXTURE_LIBCXXABI_STATIC}")
+        unset(SPARK_FIXTURE_LIBCXXABI_STATIC CACHE)
+        unset(SPARK_FIXTURE_LIBCXXABI_STATIC)
+        find_file(SPARK_FIXTURE_LIBCXXABI_STATIC NAMES libc++abi.a PATHS ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES}
+                NO_DEFAULT_PATH)
+    endif ()
+    if (NOT EXISTS "${SPARK_FIXTURE_LIBCXX_STATIC}" OR NOT EXISTS "${SPARK_FIXTURE_LIBCXXABI_STATIC}")
+        message(FATAL_ERROR "The Linux symbol fixture requires static libc++.a and libc++abi.a")
+    endif ()
+    target_compile_options(spark_symbol_guess_linux_fixture PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-stdlib=libc++>)
+    set(SPARK_FIXTURE_STATIC_LINK_GROUP
+            "$<LINK_GROUP:RESCAN,spark_core,spark_native,spark_diagnostics,spark_profiling_time,spark_linux_permanent_gateway,cpptrace::cpptrace,distorm,${SPARK_FIXTURE_LIBCXX_STATIC},${SPARK_FIXTURE_LIBCXXABI_STATIC}>")
+    target_link_libraries(spark_symbol_guess_linux_fixture PRIVATE
+            "${SPARK_FIXTURE_STATIC_LINK_GROUP}"
+            ${CMAKE_DL_LIBS})
+    target_compile_options(spark_symbol_guess_linux_fixture PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-O2>
+            $<$<COMPILE_LANGUAGE:CXX>:-fPIE>
+            $<$<COMPILE_LANGUAGE:CXX>:-fvisibility=hidden>)
+    target_link_options(spark_symbol_guess_linux_fixture PRIVATE -stdlib=libc++ -nostdlib++ -pie)
+    set_target_properties(spark_symbol_guess_linux_fixture PROPERTIES
+            POSITION_INDEPENDENT_CODE ON
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    find_program(SPARK_STRIP_EXECUTABLE NAMES strip llvm-strip)
+    if (SPARK_STRIP_EXECUTABLE)
+        add_test(NAME spark_symbol_guess_linux_fixture_test
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/native/symbol/test_linux_symbol_fixture.py
+                --executable $<TARGET_FILE:spark_symbol_guess_linux_fixture>
+                --strip-tool ${SPARK_STRIP_EXECUTABLE})
+    else ()
+        message(STATUS "Skipping spark_symbol_guess_linux_fixture_test: no strip tool found")
+    endif ()
 
     add_library(spark_elf_hook_fixture MODULE native/alloc/elf_hook_fixture.cpp)
     set_target_properties(spark_elf_hook_fixture PROPERTIES

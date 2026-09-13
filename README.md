@@ -59,7 +59,7 @@ Native frames use the following forms:
 
 ```text
 bedrock_server.Level::_subTick()                       resolved symbol
-bedrock_server.0x116d77e (str: Level - tick redstone)() strong runtime guess
+bedrock_server.0x116d77e (str?: Level - tick redstone)() tentative runtime guess
 bedrock_server.0x123456 (vtable?: Level::<virtual>)()   tentative runtime guess
 bedrock_server.0x654321()                               unresolved RVA
 ```
@@ -69,6 +69,7 @@ retain the RVA and name their evidence source: `rtti` is a verified runtime type
 `vtable` is a class and virtual-table slot, `str` is a referenced semantic string,
 and `thunk` is a verified jump wrapper. A `?` after the source, such as `str?:`
 or `vtable?:`, means the evidence is useful but cannot identify an exact member.
+Linux string evidence remains tentative even when its semantic score is high.
 Conflicting or unsafe evidence, including ambiguous lambda ownership, is omitted
 rather than displayed as tentative. Instruction-based guesses use validated
 instruction boundaries.

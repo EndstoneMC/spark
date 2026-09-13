@@ -51,9 +51,11 @@ int main()
     CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 3, false, false}}).label == "vtable: Widget::vfn[3]");
     CHECK(spark::symbol_guess::chooseVtableLabel(
               {{"Widget", 3, true, false}, {"Widget", 3, false, true}, {"Widget", 3, false, true}})
-              .label == "vtable: Widget::vfn[3]");
+              .label == "vtable?: Widget::<virtual>");
     CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 1, false, false}, {"Widget", 4, false, false}}).label ==
           "vtable?: Widget::<virtual>");
+    CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 3, true, false}}).label == "vtable?: Widget::<virtual>");
+    CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 3, false, true}}).label == "vtable?: Widget::<virtual>");
     CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 3, false, false}, {"Gadget", 3, false, false}}).empty());
 
     // --- InheritanceMap tests ---
@@ -75,8 +77,8 @@ int main()
             std::ranges::reverse(evidence);
             CHECK(spark::symbol_guess::chooseVtableLabel(evidence, &graph).empty());
             graph.addBase("B", "A");
-            CHECK(graph.findCommonAncestor({"D1", "D2"}) == "B");
-            CHECK(spark::symbol_guess::chooseVtableLabel(evidence, &graph).label == "vtable: B::vfn[5]");
+            CHECK(!graph.findCommonAncestor({"D1", "D2"}));
+            CHECK(spark::symbol_guess::chooseVtableLabel(evidence, &graph).empty());
         } while (std::ranges::next_permutation(edges).found);
     }
 
@@ -109,13 +111,13 @@ int main()
         CHECK(spark::symbol_guess::chooseVtableLabel({{"Widget", 3, false, false}, {"Gadget", 7, false, false}}, &inh)
                   .label == "vtable?: Widget::<virtual>");
 
-        // Ancestor not in evidence but all slots agree -> high confidence.
+        // An unobserved ancestor cannot own the label.
         {
             InheritanceMap inh2;
             inh2.addBase("D1", "Widget");
             inh2.addBase("D2", "Widget");
             CHECK(spark::symbol_guess::chooseVtableLabel({{"D1", 5, false, false}, {"D2", 5, false, false}}, &inh2)
-                      .label == "vtable: Widget::vfn[5]");
+                      .empty());
         }
     }
 
@@ -134,11 +136,9 @@ int main()
         CHECK(!inh.isAncestor("B", "C"));
         CHECK(!inh.isAncestor("D", "A"));
         auto ca = inh.findCommonAncestor({"B", "C"});
-        CHECK(ca.has_value());
-        CHECK(ca == "A");
+        CHECK(!ca.has_value());
         auto ca2 = inh.findCommonAncestor({"B", "C", "D"});
-        CHECK(ca2.has_value());
-        CHECK(ca2 == "A");
+        CHECK(!ca2.has_value());
     }
 
     // Unrelated classes: no common ancestor.
