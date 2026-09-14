@@ -200,6 +200,7 @@ int main()
 
     resetExecution(*probe, true);
     const auto second_generation = worker.generation();
+    assert(waitUntilAvailable(worker));
     assert(worker.enqueueCombined({}, {}, second_generation));
     assert(waitFor(*probe, [&] { return probe->execution_entered; }));
     worker.invalidate();

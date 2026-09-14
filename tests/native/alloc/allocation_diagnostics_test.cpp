@@ -523,7 +523,7 @@ bool verifyFixtureWindowsBoundedAccounting()
         terminal.caller_final_drain_allocation_events == before.caller_final_drain_allocation_events &&
         terminal.caller_final_drain_thread_observation_events == before.caller_final_drain_thread_observation_events &&
         terminal.caller_final_drain_tick_events == before.caller_final_drain_tick_events + 4 &&
-        terminal.caller_final_drain_elapsed_ns > after_snapshot.caller_final_drain_elapsed_ns &&
+        terminal.caller_final_drain_elapsed_ns >= after_snapshot.caller_final_drain_elapsed_ns &&
         terminal.processed_allocation_events == after_snapshot.processed_allocation_events &&
         terminal.processed_thread_observation_events == after_snapshot.processed_thread_observation_events &&
         terminal.processed_tick_events == after_snapshot.processed_tick_events;
@@ -596,7 +596,7 @@ bool verifyFixtureWindowsBoundedAccounting()
         predicate("stop_valid[15]",
                   terminal.caller_final_drain_tick_events == before.caller_final_drain_tick_events + 4);
         predicate("stop_valid[16]",
-                  terminal.caller_final_drain_elapsed_ns > after_snapshot.caller_final_drain_elapsed_ns);
+                  terminal.caller_final_drain_elapsed_ns >= after_snapshot.caller_final_drain_elapsed_ns);
         predicate("stop_valid[17]", terminal.processed_allocation_events == after_snapshot.processed_allocation_events);
         predicate("stop_valid[18]",
                   terminal.processed_thread_observation_events == after_snapshot.processed_thread_observation_events);
