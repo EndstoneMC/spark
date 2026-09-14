@@ -101,16 +101,13 @@ public:
         if (values.empty()) {
             return;
         }
-        std::string payload;
-        payload.reserve(values.size() * 8);
+        tag(field, LengthDelimited);
+        putVarint(static_cast<std::uint64_t>(values.size() * 8));
         for (double v : values) {
             std::uint64_t bits;
             std::memcpy(&bits, &v, sizeof(bits));
-            for (int i = 0; i < 8; ++i) {
-                payload.push_back(static_cast<char>((bits >> (8 * i)) & 0xff));
-            }
+            putFixed64(bits);
         }
-        message(field, payload);
     }
 
 private:

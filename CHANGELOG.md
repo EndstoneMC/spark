@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reduce sampler and allocation aggregation CPU overhead by reusing call-tree
+  storage preflight results during admitted sample mutations.
+- Reduce temporary allocations during profile export by encoding packed
+  floating-point fields directly.
 - Keep Linux string hints tentative, validate their reference owners, and reject
   virtual-table labels without direct evidence.
 - Distribute Linux builds as `endstone_spark-linux-x86_64.tar.gz` containing only

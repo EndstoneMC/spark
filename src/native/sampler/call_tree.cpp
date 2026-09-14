@@ -25,6 +25,17 @@ bool CallTree::logBounded(const std::vector<FrameKey> &frames, std::int32_t wind
     }
 
     const StorageUsage required = requiredStorage(frames, window);
+    return logBoundedPrevalidated(frames, window, weight, required, remaining_nodes, remaining_time_entries);
+}
+
+bool CallTree::logBoundedPrevalidated(const std::vector<FrameKey> &frames, std::int32_t window, std::uint64_t weight,
+                                      const StorageUsage &required, std::size_t &remaining_nodes,
+                                      std::size_t &remaining_time_entries)
+{
+    if (frames.empty()) {
+        return true;
+    }
+
     if (required.child_nodes > remaining_nodes || required.time_entries > remaining_time_entries) {
         return false;
     }

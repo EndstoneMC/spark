@@ -35,6 +35,13 @@ struct SamplerTestAccess {
         sampler.profile_time_entries_remaining_ = time_entries;
     }
 
+    static std::size_t profileNodesRemaining(const Sampler &sampler) { return sampler.profile_nodes_remaining_; }
+
+    static std::size_t profileTimeEntriesRemaining(const Sampler &sampler)
+    {
+        return sampler.profile_time_entries_remaining_;
+    }
+
     static void setOnlyTicksOver(Sampler &sampler, std::int64_t threshold)
     {
         sampler.config_.only_ticks_over_ms = threshold;
@@ -125,6 +132,40 @@ bool transactionalNodeAndTimeBudget()
     return usage.child_nodes == 2 && usage.time_entries == 3;
 }
 
+bool prevalidatedMutationMatchesBoundedLogging()
+{
+    const std::vector<spark::FrameKey> frames = {frame(4), frame(5), frame(6)};
+    spark::CallTree bounded;
+    spark::CallTree prevalidated;
+    std::size_t bounded_nodes = 32;
+    std::size_t bounded_times = 32;
+    std::size_t prevalidated_nodes = 32;
+    std::size_t prevalidated_times = 32;
+    for (std::int32_t window = 0; window < 4; ++window) {
+        const std::uint64_t weight = static_cast<std::uint64_t>(window + 1);
+        const auto required = prevalidated.requiredStorage(frames, window);
+        if (!bounded.logBounded(frames, window, weight, bounded_nodes, bounded_times) ||
+            !prevalidated.logBoundedPrevalidated(frames, window, weight, required, prevalidated_nodes,
+                                                 prevalidated_times)) {
+            return false;
+        }
+    }
+    if (bounded.sampleCount() != prevalidated.sampleCount() ||
+        bounded.storageUsage().child_nodes != prevalidated.storageUsage().child_nodes ||
+        bounded.storageUsage().time_entries != prevalidated.storageUsage().time_entries ||
+        bounded.root().times != prevalidated.root().times || bounded_nodes != prevalidated_nodes ||
+        bounded_times != prevalidated_times) {
+        return false;
+    }
+
+    spark::CallTree rejected;
+    const auto required = rejected.requiredStorage(frames, 0);
+    std::size_t nodes = required.child_nodes - 1;
+    std::size_t times = required.time_entries;
+    return !rejected.logBoundedPrevalidated(frames, 0, 1, required, nodes, times) && rejected.root().times.empty() &&
+           rejected.root().children.empty() && nodes == required.child_nodes - 1 && times == required.time_entries;
+}
+
 bool pruningReclaimsExactStorage()
 {
     spark::CallTree tree;
@@ -164,6 +205,33 @@ bool combinedTreeBudgetIsTransactional()
 
     return !spark::SamplerTestAccess::accept(sampler, sample) && sampler.tree().root().times.empty() &&
            sampler.threadTrees().empty() && sampler.sampleCount() == 0 && sampler.droppedProfileSamples() == 1 &&
+           sampler.droppedSamples() == 1 && sampler.profileStorageExhausted() && sampler.dataIncomplete();
+}
+
+bool newThreadPreflightUsesEmptyTree()
+{
+    spark::Sampler sampler;
+    spark::SamplerTestAccess::reset(sampler);
+    spark::SamplerTestAccess::setRemainingStorage(sampler, 2, 4);
+    const spark::Sample first{.frames = {frame(9)}, .thread_id = 1, .thread_name = "first", .window = 1};
+    const spark::Sample second{.frames = {frame(9)}, .thread_id = 2, .thread_name = "second", .window = 1};
+
+    if (!spark::SamplerTestAccess::accept(sampler, first) ||
+        spark::SamplerTestAccess::profileNodesRemaining(sampler) != 0 ||
+        spark::SamplerTestAccess::profileTimeEntriesRemaining(sampler) != 0 || sampler.threadTrees().size() != 1 ||
+        sampler.tree().storageUsage().child_nodes != 1 || sampler.tree().storageUsage().time_entries != 2 ||
+        sampler.threadTrees().begin()->second.tree.storageUsage().child_nodes != 1 ||
+        sampler.threadTrees().begin()->second.tree.storageUsage().time_entries != 2) {
+        return false;
+    }
+
+    if (spark::SamplerTestAccess::accept(sampler, second)) {
+        return false;
+    }
+    return spark::SamplerTestAccess::profileNodesRemaining(sampler) == 0 &&
+           spark::SamplerTestAccess::profileTimeEntriesRemaining(sampler) == 0 && sampler.threadTrees().size() == 1 &&
+           sampler.tree().sampleCount() == 1 && sampler.tree().storageUsage().child_nodes == 1 &&
+           sampler.tree().storageUsage().time_entries == 2 && sampler.droppedProfileSamples() == 1 &&
            sampler.droppedSamples() == 1 && sampler.profileStorageExhausted() && sampler.dataIncomplete();
 }
 
@@ -464,10 +532,11 @@ bool terminalTickFailureCleanup()
 
 int main()
 {
-    if (!transactionalNodeAndTimeBudget() || !pruningReclaimsExactStorage() || !boundedModulesAndSamplerConstants() ||
-        !combinedTreeBudgetIsTransactional() || !recoveryModuleDefinitionsPrecedeSamples() ||
-        !excessThreadsUseOverflowRoot() || !terminalTickClassification() || !terminalTickLifecycle() ||
-        !terminalTickFailureCleanup()) {
+    if (!transactionalNodeAndTimeBudget() || !prevalidatedMutationMatchesBoundedLogging() ||
+        !pruningReclaimsExactStorage() || !boundedModulesAndSamplerConstants() ||
+        !combinedTreeBudgetIsTransactional() || !newThreadPreflightUsesEmptyTree() ||
+        !recoveryModuleDefinitionsPrecedeSamples() || !excessThreadsUseOverflowRoot() ||
+        !terminalTickClassification() || !terminalTickLifecycle() || !terminalTickFailureCleanup()) {
         std::fprintf(stderr, "bounded aggregation test failed\n");
         return 1;
     }

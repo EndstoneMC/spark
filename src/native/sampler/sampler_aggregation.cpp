@@ -106,7 +106,8 @@ bool Sampler::acceptSample(const Sample &sample)
         return reject_profile_sample();
     }
     const CallTree::StorageUsage thread_required =
-        new_thread ? global_required : thread_it->second.tree.requiredStorage(normalized.frames, normalized.window);
+        new_thread ? CallTree{}.requiredStorage(normalized.frames, normalized.window)
+                   : thread_it->second.tree.requiredStorage(normalized.frames, normalized.window);
     if (global_required.child_nodes > profile_nodes_remaining_ ||
         thread_required.child_nodes > profile_nodes_remaining_ - global_required.child_nodes ||
         global_required.time_entries > profile_time_entries_remaining_ ||
@@ -122,10 +123,12 @@ bool Sampler::acceptSample(const Sample &sample)
             normalized.thread_id == 0 ? std::string(KOtherThreadsName) : normalized.thread_name;
     }
     ThreadCallTree &thread = thread_it->second;
-    const bool global_logged = tree_.logBounded(normalized.frames, normalized.window, normalized.weight,
-                                                profile_nodes_remaining_, profile_time_entries_remaining_);
-    const bool thread_logged = thread.tree.logBounded(normalized.frames, normalized.window, normalized.weight,
-                                                      profile_nodes_remaining_, profile_time_entries_remaining_);
+    const bool global_logged =
+        tree_.logBoundedPrevalidated(normalized.frames, normalized.window, normalized.weight, global_required,
+                                     profile_nodes_remaining_, profile_time_entries_remaining_);
+    const bool thread_logged =
+        thread.tree.logBoundedPrevalidated(normalized.frames, normalized.window, normalized.weight, thread_required,
+                                           profile_nodes_remaining_, profile_time_entries_remaining_);
     if (!global_logged || !thread_logged) {
         // Preflight failure indicates inconsistent storage accounting.
         return reject_profile_sample();

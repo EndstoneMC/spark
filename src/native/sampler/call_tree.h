@@ -33,6 +33,10 @@ public:
                     std::size_t &remaining_nodes);
     bool logBounded(const std::vector<FrameKey> &frames, std::int32_t window, std::uint64_t weight,
                     std::size_t &remaining_nodes, std::size_t &remaining_time_entries);
+    // Mutate with storage already computed by requiredStorage.
+    bool logBoundedPrevalidated(const std::vector<FrameKey> &frames, std::int32_t window, std::uint64_t weight,
+                                const StorageUsage &required, std::size_t &remaining_nodes,
+                                std::size_t &remaining_time_entries);
 
     // Return the storage that a sample would add without mutating the tree.
     StorageUsage requiredStorage(const std::vector<FrameKey> &frames, std::int32_t window) const;

@@ -373,7 +373,8 @@ bool AllocationProfileAggregation::admitToTrees(const Sample &sample, CallTree &
         return false;
     }
 
-    if (!tree.logBounded(sample.frames, sample.window, sample.weight, remaining_nodes, remaining_time_entries)) {
+    if (!tree.logBoundedPrevalidated(sample.frames, sample.window, sample.weight, global_required, remaining_nodes,
+                                     remaining_time_entries)) {
         return false;
     }
     if (existing == thread_trees.end()) {
@@ -382,8 +383,8 @@ bool AllocationProfileAggregation::admitToTrees(const Sample &sample, CallTree &
         thread.thread_name = thread_id == 0 ? "<other threads>" : sample.thread_name;
         existing = thread_trees.emplace(thread_id, std::move(thread)).first;
     }
-    if (!existing->second.tree.logBounded(sample.frames, sample.window, sample.weight, remaining_nodes,
-                                          remaining_time_entries)) {
+    if (!existing->second.tree.logBoundedPrevalidated(sample.frames, sample.window, sample.weight, thread_required,
+                                                      remaining_nodes, remaining_time_entries)) {
         return false;
     }
     if (sample_count != nullptr) {
