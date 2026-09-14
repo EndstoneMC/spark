@@ -65,6 +65,110 @@ void testRecoveryGrouping()
     std::cout << "testRecoveryGrouping: PASS\n";
 }
 
+void testRecoveryRepeatedStackMultipleThreads()
+{
+    for (const auto grouping : {ThreadGrouperMode::ByName, ThreadGrouperMode::AsOne}) {
+        const auto dir = makeTempDir();
+        const auto config = buildSessionConfigPayload(
+            4000, 0, true, false, false, static_cast<std::uint8_t>(grouping), 0, false, "Console", false, {}, {}, 0);
+        std::vector<RecordSpec> records{{.type = RecordType::SessionConfig, .sequence = 0, .payload = config},
+                                        {.type = RecordType::ModuleDef,
+                                         .sequence = 1,
+                                         .payload = buildModuleDefPayload(0, "repeated-stack-fixture")},
+                                        {.type = RecordType::ThreadDef,
+                                         .sequence = 2,
+                                         .payload = buildThreadDefPayload(101, 101, "Worker-1")},
+                                        {.type = RecordType::ThreadDef,
+                                         .sequence = 3,
+                                         .payload = buildThreadDefPayload(202, 202, "Worker-2")}};
+        for (const std::uint64_t thread_id : {101ULL, 202ULL}) {
+            for (const std::int32_t window : {0, 1}) {
+                Sample sample;
+                sample.thread_id = thread_id;
+                sample.tick_id = (thread_id == 101 ? 0 : 2) + static_cast<std::uint64_t>(window);
+                sample.window = window;
+                sample.weight = window == 0 ? 2000 : 3000;
+                sample.frames = {{.module = 0, .rva = 0x1000, .raw_address = 0},
+                                 {.module = 0, .rva = 0x1100, .raw_address = 0}};
+                records.push_back({.type = RecordType::Sample,
+                                   .sequence = static_cast<std::uint32_t>(records.size()),
+                                   .payload = buildSamplePayload(sample)});
+            }
+        }
+        writeSegmentMulti(dir / "segment-0.jnl", 1100, 0, records);
+
+        const auto result = RecoveryPlayer::replay(dir);
+        assert(result.valid);
+        assert(result.sample_count == 4);
+        assert(result.thread_count == 2);
+
+        struct ThreadSummary {
+            std::string name;
+            std::vector<double> weights;
+        };
+        std::vector<ThreadSummary> summaries;
+        std::vector<std::int32_t> windows;
+        ProtoReader reader(result.serialized_proto);
+        int field = 0;
+        int wire_type = 0;
+        while (reader.nextField(field, wire_type)) {
+            if (field == 2 && wire_type == 2) {
+                ProtoReader thread(reader.readMessage());
+                ThreadSummary summary;
+                while (thread.nextField(field, wire_type)) {
+                    if (field == 1 && wire_type == 2) {
+                        summary.name = std::string(thread.readString());
+                    }
+                    else if (field == 4 && wire_type == 2) {
+                        summary.weights = groupingWeights(thread.readString());
+                    }
+                    else {
+                        thread.skip(wire_type);
+                    }
+                }
+                assert(thread.valid());
+                summaries.push_back(std::move(summary));
+            }
+            else if (field == 6 && wire_type == 2) {
+                ProtoReader packed(reader.readMessage());
+                while (!packed.eof()) {
+                    windows.push_back(packed.readInt32());
+                }
+                assert(packed.valid());
+            }
+            else {
+                reader.skip(wire_type);
+            }
+        }
+        assert(reader.valid());
+        assert((windows == std::vector<std::int32_t>{0, 1}));
+        if (grouping == ThreadGrouperMode::ByName) {
+            assert(summaries.size() == 2);
+            const std::vector<double> expected_weights{2, 3};
+            bool found_worker_one = false;
+            bool found_worker_two = false;
+            for (const auto &summary : summaries) {
+                if (summary.name == "Worker-1") {
+                    found_worker_one = true;
+                    assert(summary.weights == expected_weights);
+                }
+                else if (summary.name == "Worker-2") {
+                    found_worker_two = true;
+                    assert(summary.weights == expected_weights);
+                }
+            }
+            assert(found_worker_one && found_worker_two);
+        }
+        else {
+            assert(summaries.size() == 1);
+            assert(summaries[0].name == "All (x2)");
+            const std::vector<double> expected_weights{4, 6};
+            assert(summaries[0].weights == expected_weights);
+        }
+    }
+    std::cout << "testRecoveryRepeatedStackMultipleThreads: PASS\n";
+}
+
 void testLegacyV2Replay()
 {
     auto dir = makeTempDir() / "legacy-v2";

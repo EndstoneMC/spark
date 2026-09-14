@@ -16,6 +16,7 @@ void testUnsupportedAndMixedVersionsRejected();
 void testV3GlobalWindowsAndClippedStats();
 void testRecoveryPlayerReplay();
 void testRecoveryGrouping();
+void testRecoveryRepeatedStackMultipleThreads();
 void testRecoveryPlayerEmptyJournal();
 void testCleanEndDetected();
 void testNoCleanEndRecovered();

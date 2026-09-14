@@ -64,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   storage preflight results during admitted sample mutations.
 - Reduce temporary allocations during profile export by encoding packed
   floating-point fields directly.
+- Reduce crash-recovery replay memory by releasing parsed journal records and
+  temporary window indexes before reconstructing and serializing the profile.
 - Keep Linux string hints tentative, validate their reference owners, and reject
   virtual-table labels without direct evidence.
 - Distribute Linux builds as `endstone_spark-linux-x86_64.tar.gz` containing only

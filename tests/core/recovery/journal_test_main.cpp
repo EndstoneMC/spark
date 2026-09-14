@@ -19,6 +19,7 @@ int main()
     testV3GlobalWindowsAndClippedStats();
     testRecoveryPlayerReplay();
     testRecoveryGrouping();
+    testRecoveryRepeatedStackMultipleThreads();
     testRecoveryPlayerEmptyJournal();
     testCleanEndDetected();
     testNoCleanEndRecovered();

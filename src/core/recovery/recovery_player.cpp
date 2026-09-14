@@ -181,7 +181,6 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     }
 
     // Replay samples into per-thread call trees.
-    CallTree global_tree;
     std::map<std::uint64_t, ThreadCallTree> thread_trees;
     std::unordered_map<std::uint64_t, std::string> thread_names;
     std::optional<std::int32_t> max_sample_window;
@@ -313,7 +312,6 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
                 }
             }
 
-            global_tree.log(frames, window, weight);
             auto [it, inserted] = thread_trees.try_emplace(thread_id);
             if (inserted) {
                 it->second.thread_id = thread_id;
@@ -334,9 +332,16 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
         }
     }
 
+    if (sample_count == 0) {
+        result.error = "journal contains no samples";
+        return result;
+    }
+
     result.sample_count = sample_count;
     result.thread_count = thread_trees.size();
     result.tick_count = max_tick_id ? *max_tick_id - retained_tick_start + 1 : 0;
+
+    std::vector<JournalRecord>().swap(journal.records);
 
     // Reconstruct per-window tick statistics; the viewer divides total time by per-window ticks.
     struct WindowAccumulator {
@@ -363,6 +368,8 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
         acc.mspts.push_back(te.mspt);
         acc.mspt_max = std::max(te.mspt, acc.mspt_max);
     }
+    std::vector<TickEventEntry>().swap(tick_events);
+    std::map<std::uint64_t, std::int32_t>().swap(tick_to_window);
 
     std::map<std::int32_t, WindowStats> window_stats;
     for (const auto &[window, acc] : window_acc) {
@@ -394,11 +401,7 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
             ws.duration_ms > 0 ? static_cast<double>(acc.ticks) * 1000.0 / static_cast<double>(ws.duration_ms) : 0.0;
         window_stats[window] = ws;
     }
-
-    if (sample_count == 0) {
-        result.error = "journal contains no samples";
-        return result;
-    }
+    std::map<std::int32_t, WindowAccumulator>().swap(window_acc);
 
     // Build profile metadata from the session config record.
     if (sc.present && sc.live_only) {
@@ -436,10 +439,6 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
             meta.thread_ids.push_back(static_cast<std::int64_t>(id));
         }
     }
-    if (input.empty()) {
-        input.emplace_back(0, std::make_pair(meta.thread_name, &global_tree));
-    }
-
     // Group threads (matching the normal export path).
     ThreadGrouper grouper(meta.thread_grouper);
     std::map<ThreadGrouper::GroupKey, std::vector<const CallTree *>> groups;
