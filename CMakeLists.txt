@@ -121,7 +121,7 @@ if (ENDSTONE_SPARK_BUILD_PLUGIN)
     # pass -DFETCHCONTENT_SOURCE_DIR_ENDSTONE=<path> to reuse an existing checkout.
     set(ENDSTONE_SPARK_ENDSTONE_GIT_REPOSITORY "https://github.com/EndstoneMC/endstone.git" CACHE STRING
             "Repository providing the Endstone public plugin API")
-    set(ENDSTONE_SPARK_ENDSTONE_GIT_TAG "v0.12" CACHE STRING
+    set(ENDSTONE_SPARK_ENDSTONE_GIT_TAG "e7eab9222abb92103714837ebe26672ee213f688" CACHE STRING
             "Git ref providing the Endstone public plugin API")
     FetchContent_Declare(endstone
             GIT_REPOSITORY ${ENDSTONE_SPARK_ENDSTONE_GIT_REPOSITORY}
@@ -131,12 +131,11 @@ if (ENDSTONE_SPARK_BUILD_PLUGIN)
     # PAPI is optional at runtime; only its public headers are fetched.
     set(ENDSTONE_SPARK_PAPI_GIT_REPOSITORY "https://github.com/EndstoneMC/papi.git" CACHE STRING
             "Repository providing the public Endstone PAPI headers")
-    set(ENDSTONE_SPARK_PAPI_GIT_TAG "main" CACHE STRING
+    set(ENDSTONE_SPARK_PAPI_GIT_TAG "3bc3dbf99010e7af09b967d913b5b6a7e182e989" CACHE STRING
             "Git ref providing the public Endstone PAPI headers")
     FetchContent_Declare(endstone_papi_headers
             GIT_REPOSITORY ${ENDSTONE_SPARK_PAPI_GIT_REPOSITORY}
-            GIT_TAG ${ENDSTONE_SPARK_PAPI_GIT_TAG}
-            GIT_SHALLOW TRUE)
+            GIT_TAG ${ENDSTONE_SPARK_PAPI_GIT_TAG})
     FetchContent_MakeAvailable(endstone_papi_headers)
     add_library(spark_papi_headers INTERFACE)
     target_include_directories(spark_papi_headers INTERFACE "${endstone_papi_headers_SOURCE_DIR}/include")
