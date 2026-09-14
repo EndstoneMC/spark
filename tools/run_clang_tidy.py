@@ -23,6 +23,7 @@ TARGET_SHARDS = {
 }
 
 TARGET_PATTERN = re.compile(r"(?:^|[/\\])CMakeFiles[/\\]([^/\\]+)\.dir(?:[/\\]|$)")
+C_CPP_EXTENSIONS = frozenset({".c", ".cc", ".cpp", ".cxx", ".c++"})
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,6 +54,10 @@ def _relative_source(source: str, root: pathlib.Path) -> tuple[pathlib.Path, pat
     except ValueError:
         return None
     return path, pathlib.PurePosixPath(relative.as_posix())
+
+
+def _is_c_cpp_translation_unit(source: pathlib.Path) -> bool:
+    return source.suffix.lower() in C_CPP_EXTENSIONS
 
 
 def _path_shard(relative: pathlib.PurePosixPath) -> str | None:
@@ -108,6 +113,8 @@ def source_shards(
         if source_info is None:
             continue
         source, relative = source_info
+        if not _is_c_cpp_translation_unit(source):
+            continue
         if not relative.parts or relative.parts[0] not in {"src", "tests"}:
             continue
         record = records.setdefault(source, (relative, set()))

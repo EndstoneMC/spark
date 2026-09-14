@@ -104,6 +104,45 @@ class ClangTidyDriverTest(unittest.TestCase):
         self.assertEqual(len(matrix["selftest"]), 1)
         self.assertFalse(matrix["native"])
 
+    def test_selects_only_c_cpp_translation_units(self) -> None:
+        database = [
+            entry(ROOT, "src/core/core.c", "/build/CMakeFiles/spark_core.dir/src/core/core.c.o"),
+            entry(ROOT, "src/core/core.cc", "/build/CMakeFiles/spark_core.dir/src/core/core.cc.o"),
+            entry(ROOT, "src/core/core.cpp", "/build/CMakeFiles/spark_core.dir/src/core/core.cpp.o"),
+            entry(ROOT, "src/core/core.cxx", "/build/CMakeFiles/spark_core.dir/src/core/core.cxx.o"),
+            entry(ROOT, "src/core/core.c++", "/build/CMakeFiles/spark_core.dir/src/core/core.c++.o"),
+            entry(ROOT, "src/core/core.C", "/build/CMakeFiles/spark_core.dir/src/core/core.C.o"),
+            entry(
+                ROOT,
+                "tests/native/sampler_test.cpp",
+                "/build/CMakeFiles/spark_native.dir/tests/native/sampler_test.cpp.o",
+            ),
+            entry(
+                ROOT,
+                "tests/native/symbol/symbol_guess_linux_fixture.S",
+                "/build/CMakeFiles/spark_native.dir/tests/native/symbol/symbol_guess_linux_fixture.S.o",
+            ),
+            entry(ROOT, "src/native/fixture.s", "/build/CMakeFiles/spark_native.dir/src/native/fixture.s.o"),
+            entry(ROOT, "tests/core/fixture.asm", "/build/CMakeFiles/spark_core.dir/tests/core/fixture.asm.o"),
+            entry(ROOT, "src/core/fixture.h", "/build/CMakeFiles/spark_core.dir/src/core/fixture.h.o"),
+            entry(ROOT, "tests/core/fixture.txt", "/build/CMakeFiles/spark_core.dir/tests/core/fixture.txt.o"),
+        ]
+
+        matrix = run_clang_tidy.source_shards(database, ROOT)
+        self.assertEqual(
+            matrix["core"],
+            {
+                ROOT / "src/core/core.c",
+                ROOT / "src/core/core.cc",
+                ROOT / "src/core/core.cpp",
+                ROOT / "src/core/core.cxx",
+                ROOT / "src/core/core.c++",
+                ROOT / "src/core/core.C",
+            },
+        )
+        self.assertEqual(matrix["native"], {ROOT / "tests/native/sampler_test.cpp"})
+        self.assertEqual(set().union(*matrix.values()), set(matrix["core"]) | set(matrix["native"]))
+
 
 if __name__ == "__main__":
     unittest.main()
