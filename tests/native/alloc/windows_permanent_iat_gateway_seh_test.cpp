@@ -31,13 +31,13 @@ namespace {
 using FourArgFn = std::uint64_t(__cdecl *)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
 using FiveArgFn = std::uint64_t(__cdecl *)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
 
-constexpr DWORD kNoncontinuableCode = 0xE0420001;
-constexpr DWORD kContinuableCode = 0xE0420002;
-constexpr std::uint64_t kHandlerBias = 0x100000000ULL;
+constexpr DWORD KNoncontinuableCode = 0xE0420001;
+constexpr DWORD KContinuableCode = 0xE0420002;
+constexpr std::uint64_t KHandlerBias = 0x100000000ULL;
 
-std::atomic<std::uint64_t> g_fourth_argument{0};
-std::atomic<std::uint64_t> g_fifth_argument{0};
-std::atomic<std::uint64_t> g_continuable_calls{0};
+std::atomic<std::uint64_t> GFourthArgument{0};
+std::atomic<std::uint64_t> GFifthArgument{0};
+std::atomic<std::uint64_t> GContinuableCalls{0};
 
 struct ExceptionObservation {
     DWORD code = 0;
@@ -46,8 +46,8 @@ struct ExceptionObservation {
     ULONG_PTR information[3]{};
 };
 
-PermanentIatGatewayHandle *g_continuable_gateway = nullptr;
-std::atomic<std::uint64_t> g_continuable_filter_active{0};
+PermanentIatGatewayHandle *GContinuableGateway = nullptr;
+std::atomic<std::uint64_t> GContinuableFilterActive{0};
 
 [[nodiscard]] std::uint64_t fourArgValue(std::uint64_t a, std::uint64_t b, std::uint64_t c, std::uint64_t d) noexcept
 {
@@ -75,44 +75,44 @@ extern "C" __declspec(noinline) std::uint64_t __cdecl originalFive(std::uint64_t
 extern "C" __declspec(noinline) std::uint64_t __cdecl throwingFour(std::uint64_t a, std::uint64_t b, std::uint64_t c,
                                                                    std::uint64_t d) noexcept
 {
-    g_fourth_argument.store(d, std::memory_order_release);
+    GFourthArgument.store(d, std::memory_order_release);
     const ULONG_PTR information[3] = {0xF0F0F0F0ULL, 0x01020304ULL, 0x55667788ULL};
-    ::RaiseException(kNoncontinuableCode, EXCEPTION_NONCONTINUABLE, 3, information);
+    ::RaiseException(KNoncontinuableCode, EXCEPTION_NONCONTINUABLE, 3, information);
     return fourArgValue(a, b, c, d);
 }
 
 extern "C" __declspec(noinline) std::uint64_t __cdecl throwingFive(std::uint64_t a, std::uint64_t b, std::uint64_t c,
                                                                    std::uint64_t d, std::uint64_t e) noexcept
 {
-    g_fifth_argument.store(e, std::memory_order_release);
+    GFifthArgument.store(e, std::memory_order_release);
     const ULONG_PTR information[3] = {0xA0A0A0A0ULL, 0x11223344ULL, 0x99AABBCCULL};
-    ::RaiseException(kNoncontinuableCode, EXCEPTION_NONCONTINUABLE, 3, information);
+    ::RaiseException(KNoncontinuableCode, EXCEPTION_NONCONTINUABLE, 3, information);
     return fiveArgValue(a, b, c, d, e);
 }
 
 extern "C" __declspec(noinline) std::uint64_t __cdecl handledFive(std::uint64_t a, std::uint64_t b, std::uint64_t c,
                                                                   std::uint64_t d, std::uint64_t e) noexcept
 {
-    g_continuable_calls.fetch_add(1, std::memory_order_relaxed);
+    GContinuableCalls.fetch_add(1, std::memory_order_relaxed);
     const ULONG_PTR information[2] = {0x12345678ULL, 0xCAFEBABEULL};
-    ::RaiseException(kContinuableCode, 0, 2, information);
-    return fiveArgValue(a, b, c, d, e) + kHandlerBias;
+    ::RaiseException(KContinuableCode, 0, 2, information);
+    return fiveArgValue(a, b, c, d, e) + KHandlerBias;
 }
 
 LONG WINAPI continueExecutionFilter(EXCEPTION_POINTERS *exception) noexcept
 {
-    if (exception == nullptr || exception->ExceptionRecord == nullptr || g_continuable_gateway == nullptr) {
+    if (exception == nullptr || exception->ExceptionRecord == nullptr || GContinuableGateway == nullptr) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     const EXCEPTION_RECORD *record = exception->ExceptionRecord;
-    if (record->ExceptionCode != kContinuableCode ||
+    if (record->ExceptionCode != KContinuableCode ||
         (record->ExceptionFlags &
          (EXCEPTION_NONCONTINUABLE | EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND | EXCEPTION_TARGET_UNWIND)) != 0 ||
         record->NumberParameters != 2 || record->ExceptionInformation[0] != 0x12345678ULL ||
         record->ExceptionInformation[1] != 0xCAFEBABEULL) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
-    g_continuable_filter_active.store(permanentIatGatewayActive(*g_continuable_gateway), std::memory_order_release);
+    GContinuableFilterActive.store(permanentIatGatewayActive(*GContinuableGateway), std::memory_order_release);
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
@@ -213,14 +213,14 @@ bool runFourArgumentNoncontinuable()
 
     ExceptionObservation observation;
     const bool caught = invokeCaught(reinterpret_cast<FourArgFn>(handle.gateway), observation);
-    if (!require(caught && observation.code == kNoncontinuableCode &&
+    if (!require(caught && observation.code == KNoncontinuableCode &&
                      (observation.flags & EXCEPTION_NONCONTINUABLE) != 0 && observation.arguments == 3 &&
                      observation.information[0] == 0xF0F0F0F0ULL && observation.information[1] == 0x01020304ULL &&
                      observation.information[2] == 0x55667788ULL,
                  "four-exception")) {
         return false;
     }
-    if (!require(g_fourth_argument.load(std::memory_order_acquire) == 4, "four-argument")) {
+    if (!require(GFourthArgument.load(std::memory_order_acquire) == 4, "four-argument")) {
         return false;
     }
     if (!require(permanentIatGatewayActive(handle) == 0, "four-active-cleanup")) {
@@ -245,14 +245,14 @@ bool runFiveArgumentNoncontinuable()
 
     ExceptionObservation observation;
     const bool caught = invokeCaught(reinterpret_cast<FiveArgFn>(handle.gateway), observation);
-    if (!require(caught && observation.code == kNoncontinuableCode &&
+    if (!require(caught && observation.code == KNoncontinuableCode &&
                      (observation.flags & EXCEPTION_NONCONTINUABLE) != 0 && observation.arguments == 3 &&
                      observation.information[0] == 0xA0A0A0A0ULL && observation.information[1] == 0x11223344ULL &&
                      observation.information[2] == 0x99AABBCCULL,
                  "five-exception")) {
         return false;
     }
-    if (!require(g_fifth_argument.load(std::memory_order_acquire) == 9, "five-argument")) {
+    if (!require(GFifthArgument.load(std::memory_order_acquire) == 9, "five-argument")) {
         return false;
     }
     if (!require(permanentIatGatewayActive(handle) == 0, "five-active-cleanup")) {
@@ -274,9 +274,9 @@ bool runContinuableFiveArgument()
         return false;
     }
 
-    g_continuable_gateway = &handle;
-    g_continuable_filter_active.store(0, std::memory_order_release);
-    const std::uint64_t expected = fiveArgValue(5, 6, 7, 8, 9) + kHandlerBias;
+    GContinuableGateway = &handle;
+    GContinuableFilterActive.store(0, std::memory_order_release);
+    const std::uint64_t expected = fiveArgValue(5, 6, 7, 8, 9) + KHandlerBias;
     std::uint64_t result = 0;
     __try {
         result = reinterpret_cast<FiveArgFn>(handle.gateway)(5, 6, 7, 8, 9);
@@ -284,9 +284,9 @@ bool runContinuableFiveArgument()
     __except (continueExecutionFilter(GetExceptionInformation())) {
         return require(false, "continuable-filter-search");
     }
-    g_continuable_gateway = nullptr;
-    if (!require(result == expected && g_continuable_calls.load(std::memory_order_acquire) == 1 &&
-                     g_continuable_filter_active.load(std::memory_order_acquire) == 1,
+    GContinuableGateway = nullptr;
+    if (!require(result == expected && GContinuableCalls.load(std::memory_order_acquire) == 1 &&
+                     GContinuableFilterActive.load(std::memory_order_acquire) == 1,
                  "continuable-result")) {
         return false;
     }

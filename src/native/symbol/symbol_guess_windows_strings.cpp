@@ -17,11 +17,11 @@ namespace spark::symbol_guess::windows {
 
 namespace {
 
-constexpr std::size_t kMaximumDiagnosticCounter = 1000000U;
+constexpr std::size_t KMaximumDiagnosticCounter = 1000000U;
 
 void incrementDiagnostic(std::size_t &counter)
 {
-    if (counter < kMaximumDiagnosticCounter) {
+    if (counter < KMaximumDiagnosticCounter) {
         ++counter;
     }
 }
@@ -38,7 +38,8 @@ bool isEligibleStringLea(const _DInst &instruction)
 
 std::optional<_DInst> decodeOne(const std::uint8_t *code, std::uint32_t rva, std::size_t size)
 {
-    if (code == nullptr || size == 0 || size > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+    const auto maximum_int = std::numeric_limits<int>::max();
+    if (code == nullptr || size == 0 || size > static_cast<std::size_t>(maximum_int)) {
         return std::nullopt;
     }
     _CodeInfo info{};
@@ -60,7 +61,7 @@ std::optional<_DInst> decodeOne(const std::uint8_t *code, std::uint32_t rva, std
 bool addRipDisplacement(std::uint32_t opcode_rva, std::int32_t displacement, std::uint32_t &target)
 {
     const std::int64_t value = static_cast<std::int64_t>(opcode_rva) + 6 + displacement;
-    if (value < 0 || value > std::numeric_limits<std::uint32_t>::max()) {
+    if (value < 0 || std::cmp_greater(value, std::numeric_limits<std::uint32_t>::max())) {
         return false;
     }
     target = static_cast<std::uint32_t>(value);
@@ -117,8 +118,8 @@ Engine::Impl::RootValidation Engine::Impl::validateRoot(std::uint32_t root, Vali
     validation.instructions.reserve(256);
     std::vector<std::uint32_t> work;
     work.reserve(fragments.size());
-    for (auto it = fragments.rbegin(); it != fragments.rend(); ++it) {
-        work.push_back((*it)->begin);
+    for (const FunctionRange *fragment : std::views::reverse(fragments)) {
+        work.push_back(fragment->begin);
     }
     std::unordered_set<std::uint32_t> visited;
     visited.reserve(kMaximumFunctionDecodeInstructions);
@@ -126,7 +127,7 @@ Engine::Impl::RootValidation Engine::Impl::validateRoot(std::uint32_t root, Vali
     std::size_t root_instructions = 0;
     std::size_t decoded_bytes = 0;
 
-    auto hardFailure = [&]() {
+    auto hard_failure = [&]() {
         validation.instructions.clear();
         validation.eligible_targets.clear();
         validation.complete = false;
@@ -141,19 +142,19 @@ Engine::Impl::RootValidation Engine::Impl::validateRoot(std::uint32_t root, Vali
         }
         const FunctionRange *fragment = fragmentContaining(root, cursor);
         if (fragment == nullptr) {
-            hardFailure();
+            hard_failure();
             return validation;
         }
         visited.insert(cursor);
         if (root_instructions >= kMaximumFunctionDecodeInstructions) {
             validation.budget_exhausted = true;
-            hardFailure();
+            hard_failure();
             incrementDiagnostic(batch.string_function_instruction_budget_exhausted);
             return validation;
         }
         if (budget.instructions >= kMaximumBatchDecodedInstructions) {
             validation.budget_exhausted = true;
-            hardFailure();
+            hard_failure();
             if (!budget.instruction_budget_reported) {
                 budget.instruction_budget_reported = true;
                 incrementDiagnostic(batch.string_instruction_budget_exhausted);
@@ -164,17 +165,17 @@ Engine::Impl::RootValidation Engine::Impl::validateRoot(std::uint32_t root, Vali
         const std::size_t available = fragment->end - cursor;
         const auto instruction = decodeOne(image + cursor, cursor, available);
         if (!instruction) {
-            hardFailure();
+            hard_failure();
             return validation;
         }
         const std::uint64_t instruction_end = static_cast<std::uint64_t>(cursor) + instruction->size;
         if (instruction_end > fragment->end) {
-            hardFailure();
+            hard_failure();
             return validation;
         }
         if (instruction->size > kMaximumFunctionDecodeBytes - decoded_bytes) {
             validation.budget_exhausted = true;
-            hardFailure();
+            hard_failure();
             incrementDiagnostic(batch.string_function_byte_budget_exhausted);
             return validation;
         }
@@ -196,7 +197,7 @@ Engine::Impl::RootValidation Engine::Impl::validateRoot(std::uint32_t root, Vali
 
         const unsigned flow = META_GET_FC(instruction->meta);
         std::vector<std::uint32_t> destinations;
-        auto addKnownEdge = [&](std::uint64_t destination) {
+        auto add_known_edge = [&](std::uint64_t destination) {
             if (destination > std::numeric_limits<std::uint32_t>::max() ||
                 fragmentContaining(root, static_cast<std::uint32_t>(destination)) == nullptr) {
                 control_flow_incomplete = true;
@@ -204,9 +205,9 @@ Engine::Impl::RootValidation Engine::Impl::validateRoot(std::uint32_t root, Vali
             }
             destinations.push_back(static_cast<std::uint32_t>(destination));
         };
-        auto addFallthrough = [&]() {
+        auto add_fallthrough = [&]() {
             if (instruction_end > fragment->end) {
-                hardFailure();
+                hard_failure();
                 return false;
             }
             if (instruction_end == fragment->end) {
@@ -219,34 +220,30 @@ Engine::Impl::RootValidation Engine::Impl::validateRoot(std::uint32_t root, Vali
 
         if (flow == FC_CND_BRANCH || flow == FC_UNC_BRANCH) {
             if (instruction->opsNo == 1 && instruction->ops[0].type == O_PC) {
-                addKnownEdge(INSTRUCTION_GET_TARGET(&*instruction));
+                add_known_edge(INSTRUCTION_GET_TARGET(&*instruction));
             }
             else {
                 control_flow_incomplete = true;
             }
-            if (flow == FC_CND_BRANCH && !addFallthrough()) {
+            if (flow == FC_CND_BRANCH && !add_fallthrough()) {
                 return validation;
             }
         }
         else if (flow == FC_NONE || flow == FC_CMOV || flow == FC_CALL) {
-            if (!addFallthrough()) {
+            if (!add_fallthrough()) {
                 return validation;
             }
         }
-        else if (flow == FC_SYS || flow == FC_INT || flow == FC_HLT) {
-            hardFailure();
-            return validation;
-        }
         else if (flow != FC_RET) {
-            hardFailure();
+            hard_failure();
             return validation;
         }
 
         std::ranges::sort(destinations);
         const auto duplicate = std::ranges::unique(destinations);
         destinations.erase(duplicate.begin(), duplicate.end());
-        for (auto it = destinations.rbegin(); it != destinations.rend(); ++it) {
-            work.push_back(*it);
+        for (const std::uint32_t destination : std::views::reverse(destinations)) {
+            work.push_back(destination);
         }
     }
 
@@ -330,7 +327,7 @@ void Engine::Impl::scanCandidateReferences(const std::unordered_set<std::uint32_
                                            std::map<std::uint32_t, RootValidation> &validations,
                                            ValidationBudget &budget, BuildStats &batch) const
 {
-    batch.string_reference_candidates = std::min<std::size_t>(targets.size(), kMaximumDiagnosticCounter);
+    batch.string_reference_candidates = std::min<std::size_t>(targets.size(), KMaximumDiagnosticCounter);
     enum class ReferenceState {
         Active,
         Ambiguous,
@@ -357,7 +354,7 @@ void Engine::Impl::scanCandidateReferences(const std::unordered_set<std::uint32_
         Invalid,
         Budget,
     };
-    const auto markAmbiguous = [&](std::uint32_t target, AmbiguityReason reason) {
+    const auto mark_ambiguous = [&](std::uint32_t target, AmbiguityReason reason) {
         const auto state = states.find(target);
         if (state == states.end() || state->second != ReferenceState::Active) {
             return active_targets == 0;
@@ -375,7 +372,7 @@ void Engine::Impl::scanCandidateReferences(const std::unordered_set<std::uint32_
         return active_targets == 0;
     };
 
-    const auto recordOwner = [&](std::uint32_t target, std::uint32_t root) {
+    const auto record_owner = [&](std::uint32_t target, std::uint32_t root) {
         const auto state = states.find(target);
         if (state == states.end() || state->second != ReferenceState::Active) {
             return active_targets == 0;
@@ -389,10 +386,8 @@ void Engine::Impl::scanCandidateReferences(const std::unordered_set<std::uint32_
         return active_targets == 0;
     };
 
-    const auto findInstruction = [](const std::vector<ReferenceInstruction> &instructions, std::uint32_t rva) {
-        const auto it = std::upper_bound(
-            instructions.begin(), instructions.end(), rva,
-            [](std::uint32_t value, const ReferenceInstruction &instruction) { return value < instruction.begin; });
+    const auto find_instruction = [](const std::vector<ReferenceInstruction> &instructions, std::uint32_t rva) {
+        const auto it = std::ranges::upper_bound(instructions, rva, std::ranges::less{}, &ReferenceInstruction::begin);
         if (it == instructions.begin()) {
             return static_cast<const ReferenceInstruction *>(nullptr);
         }
@@ -413,7 +408,7 @@ void Engine::Impl::scanCandidateReferences(const std::unordered_set<std::uint32_
         const FunctionRange *primary = function != nullptr ? containing(function->root) : nullptr;
         if (function == nullptr || primary == nullptr || primary->begin != function->root ||
             primary->root != function->root) {
-            return markAmbiguous(target, AmbiguityReason::Unindexed);
+            return mark_ambiguous(target, AmbiguityReason::Unindexed);
         }
         const auto existing = references.find(target);
         if (existing != references.end() && existing->second.contains(function->root)) {
@@ -421,35 +416,42 @@ void Engine::Impl::scanCandidateReferences(const std::unordered_set<std::uint32_
         }
         auto validation_it = validations.find(function->root);
         RootValidation uncached_validation;
+        const RootValidation *validation = nullptr;
         if (validation_it == validations.end()) {
             const std::size_t roots_before = budget.roots;
             uncached_validation = validateRoot(function->root, budget, batch);
             if (budget.roots != roots_before) {
-                validation_it = validations.emplace(function->root, std::move(uncached_validation)).first;
+                const auto inserted = validations.emplace(function->root, std::move(uncached_validation));
+                validation_it = inserted.first;
+                validation = &validation_it->second;
+            }
+            else {
+                validation = &uncached_validation;
             }
         }
-        const RootValidation &validation =
-            validation_it != validations.end() ? validation_it->second : uncached_validation;
-        if (!validation.witness_valid) {
-            return markAmbiguous(target,
-                                 validation.budget_exhausted ? AmbiguityReason::Budget : AmbiguityReason::Invalid);
+        else {
+            validation = &validation_it->second;
+        }
+        if (!validation->witness_valid) {
+            return mark_ambiguous(target,
+                                  validation->budget_exhausted ? AmbiguityReason::Budget : AmbiguityReason::Invalid);
         }
 
-        const ReferenceInstruction *instruction = findInstruction(validation.instructions, rva);
+        const ReferenceInstruction *instruction = find_instruction(validation->instructions, rva);
         if (instruction != nullptr && instruction->eligible && instruction->rip_target == target) {
             incrementDiagnostic(batch.string_reference_exact_hits);
-            return recordOwner(target, function->root);
+            return record_owner(target, function->root);
         }
-        if (validation.complete) {
+        if (validation->complete) {
             if (instruction != nullptr) {
                 if (rva > instruction->begin) {
                     incrementDiagnostic(batch.string_reference_interior_rejections);
                 }
                 return active_targets == 0;
             }
-            return markAmbiguous(target, AmbiguityReason::Unreachable);
+            return mark_ambiguous(target, AmbiguityReason::Unreachable);
         }
-        return markAmbiguous(target, AmbiguityReason::Unreachable);
+        return mark_ambiguous(target, AmbiguityReason::Unreachable);
     };
 
     std::size_t scanned_bytes = 0;
@@ -505,7 +507,7 @@ void Engine::Impl::scanCandidateReferences(const std::unordered_set<std::uint32_
         for (const std::uint32_t target : targets) {
             const auto state = states.find(target);
             if (state != states.end() && state->second == ReferenceState::Active) {
-                markAmbiguous(target, AmbiguityReason::Budget);
+                mark_ambiguous(target, AmbiguityReason::Budget);
             }
         }
     }

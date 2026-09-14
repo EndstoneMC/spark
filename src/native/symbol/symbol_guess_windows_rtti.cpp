@@ -20,10 +20,10 @@ namespace spark::symbol_guess::windows {
 
 namespace {
 
-constexpr std::size_t kMaximumTypeDescriptorBytes = 1024;
-constexpr std::size_t kMaximumTypeNameBytes = 512;
-constexpr std::size_t kMaximumTypeNameAttempts = 4096;
-constexpr std::size_t kUnDecorateBufferBytes = 2048;
+constexpr std::size_t KMaximumTypeDescriptorBytes = 1024;
+constexpr std::size_t KMaximumTypeNameBytes = 512;
+constexpr std::size_t KMaximumTypeNameAttempts = 4096;
+constexpr std::size_t KUnDecorateBufferBytes = 2048;
 
 bool printableAscii(std::string_view value)
 {
@@ -53,7 +53,7 @@ std::optional<std::string> Engine::Impl::decodeTypeDescriptorName(std::uint32_t 
         ++stats.rtti_name_cache_hits;
         return it->second.name;
     }
-    if (names.entries.size() >= kMaximumTypeNameAttempts) {
+    if (names.entries.size() >= KMaximumTypeNameAttempts) {
         ++stats.rtti_name_budget_exhausted;
         return std::nullopt;
     }
@@ -62,15 +62,14 @@ std::optional<std::string> Engine::Impl::decodeTypeDescriptorName(std::uint32_t 
     std::optional<std::string> result;
     std::string raw_encoding;
     std::uint32_t name_rva = 0;
-    if (!detail::checkedAdd(rva, 16U, name_rva)) {
-        ++stats.rtti_name_failures;
-    }
-    else if (const Section *section = sectionContaining(name_rva); section == nullptr || section->executable) {
+    const bool valid_name_rva = detail::checkedAdd(rva, 16U, name_rva);
+    const Section *section = valid_name_rva ? sectionContaining(name_rva) : nullptr;
+    if (!valid_name_rva || section == nullptr || section->executable) {
         ++stats.rtti_name_failures;
     }
     else {
         const std::uint32_t available = std::min<std::uint32_t>(
-            static_cast<std::uint32_t>(kMaximumTypeDescriptorBytes + 1), section->end - name_rva);
+            static_cast<std::uint32_t>(KMaximumTypeDescriptorBytes + 1), section->end - name_rva);
         const char *text = reinterpret_cast<const char *>(image + name_rva);
         std::size_t length = 0;
         bool terminated = false;
@@ -89,21 +88,20 @@ std::optional<std::string> Engine::Impl::decodeTypeDescriptorName(std::uint32_t 
             ++stats.rtti_name_length_rejections;
             ++stats.rtti_name_raw_length_rejections;
         }
-        else if (length == 0 || length > kMaximumTypeDescriptorBytes) {
+        else if (length == 0 || length > KMaximumTypeDescriptorBytes) {
             ++stats.rtti_name_length_rejections;
         }
         else {
             const std::string raw(text, length);
             raw_encoding = raw;
-            if (!raw.starts_with(".?AV") && !raw.starts_with(".?AU")) {
+            const bool has_valid_prefix = raw.starts_with(".?AV") || raw.starts_with(".?AU");
+            const bool complex = has_valid_prefix && isComplexTypeDescriptor(raw);
+            if (!has_valid_prefix || (!complex && !raw.ends_with("@@"))) {
                 ++stats.rtti_name_failures;
             }
-            else if (!isComplexTypeDescriptor(raw) && !raw.ends_with("@@")) {
-                ++stats.rtti_name_failures;
-            }
-            else if (!isComplexTypeDescriptor(raw)) {
+            else if (!complex) {
                 std::string plain = detail::classNameFromTypeDescriptor(raw);
-                if (plain.empty() || plain.size() > kMaximumTypeNameBytes) {
+                if (plain.empty() || plain.size() > KMaximumTypeNameBytes) {
                     ++stats.rtti_name_length_rejections;
                     ++stats.rtti_name_output_length_rejections;
                 }
@@ -116,7 +114,7 @@ std::optional<std::string> Engine::Impl::decodeTypeDescriptorName(std::uint32_t 
                 std::string decorated("??_R0");
                 decorated.append(raw.substr(1));
                 decorated += "@8";
-                std::array<char, kUnDecorateBufferBytes> output{};
+                std::array<char, KUnDecorateBufferBytes> output{};
                 DWORD returned = 0;
                 {
                     std::scoped_lock lock(::spark::dbgHelpMutex());
@@ -136,7 +134,7 @@ std::optional<std::string> Engine::Impl::decodeTypeDescriptorName(std::uint32_t 
                     }
                     else {
                         decoded.resize(decoded.size() - suffix.size());
-                        if (decoded.empty() || decoded.size() > kMaximumTypeNameBytes || decoded == decorated) {
+                        if (decoded.empty() || decoded.size() > KMaximumTypeNameBytes || decoded == decorated) {
                             ++stats.rtti_name_length_rejections;
                             ++stats.rtti_name_output_length_rejections;
                         }

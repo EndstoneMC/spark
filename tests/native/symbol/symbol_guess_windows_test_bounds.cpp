@@ -12,35 +12,35 @@ namespace spark::symbol_guess::windows_test {
 
 namespace {
 
-constexpr std::uint32_t kLargeText = 0xc0000;
-constexpr std::uint32_t kLargeRdata = 0x2000;
-constexpr std::uint32_t kLargePdata = 0x90000;
-constexpr std::uint32_t kLargeXdata = 0xb0000;
+constexpr std::uint32_t KLargeText = 0xc0000;
+constexpr std::uint32_t KLargeRdata = 0x2000;
+constexpr std::uint32_t KLargePdata = 0x90000;
+constexpr std::uint32_t KLargeXdata = 0xb0000;
 
 void layoutLargeFixture(PeFixture &fixture, std::uint32_t text_size, std::uint32_t rdata_size, std::uint32_t pdata_size)
 {
-    fixture.section(0, ".text", kLargeText, text_size, IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
-    fixture.section(1, ".rdata", kLargeRdata, rdata_size, IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    fixture.section(2, ".pdata", kLargePdata, pdata_size, IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    fixture.section(3, ".xdata", kLargeXdata, 0x1000, IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    fixture.leafUnwind(kLargeXdata);
+    fixture.section(0, ".text", KLargeText, text_size, IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
+    fixture.section(1, ".rdata", KLargeRdata, rdata_size, IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    fixture.section(2, ".pdata", KLargePdata, pdata_size, IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    fixture.section(3, ".xdata", KLargeXdata, 0x1000, IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    fixture.leafUnwind(KLargeXdata);
 }
 
 PeFixture makeValidationFixture(std::size_t root_count, std::size_t base_instruction_count = 2,
                                 std::size_t extra_instruction_roots = 0)
 {
     constexpr std::size_t k_stride = 0x120;
-    const std::uint32_t text_size = static_cast<std::uint32_t>(0x1000 + root_count * k_stride);
-    const std::uint32_t rdata_size = static_cast<std::uint32_t>(0x2000 + root_count * 32);
-    const std::uint32_t pdata_size = static_cast<std::uint32_t>(0x1000 + root_count * sizeof(RUNTIME_FUNCTION));
+    const auto text_size = static_cast<std::uint32_t>(0x1000 + root_count * k_stride);
+    const auto rdata_size = static_cast<std::uint32_t>(0x2000 + root_count * 32);
+    const auto pdata_size = static_cast<std::uint32_t>(0x1000 + root_count * sizeof(RUNTIME_FUNCTION));
     PeFixture fixture(0x200000);
     layoutLargeFixture(fixture, text_size, rdata_size, pdata_size);
     for (std::size_t i = 0; i < root_count; ++i) {
-        const auto root = kLargeText + static_cast<std::uint32_t>(i * k_stride);
-        const auto target = kLargeRdata + 0x1000 + static_cast<std::uint32_t>(i * 32);
+        const auto root = KLargeText + static_cast<std::uint32_t>(i * k_stride);
+        const auto target = KLargeRdata + 0x1000 + static_cast<std::uint32_t>(i * 32);
         const std::size_t instruction_count = base_instruction_count + (i < extra_instruction_roots ? 1 : 0);
-        fixture.runtimeFunctionAt(kLargePdata, static_cast<unsigned>(i), root,
-                                  root + static_cast<std::uint32_t>(7 + instruction_count - 1), kLargeXdata);
+        fixture.runtimeFunctionAt(KLargePdata, static_cast<unsigned>(i), root,
+                                  root + static_cast<std::uint32_t>(7 + instruction_count - 1), KLargeXdata);
         fixture.string(target, "Level - tick root " + std::to_string(i));
         fixture.lea(root, target);
         fixture.fillBytes(root + 7, instruction_count - 2, 0x90);
@@ -54,7 +54,7 @@ std::vector<std::uint64_t> roots(std::size_t count)
     std::vector<std::uint64_t> out;
     out.reserve(count);
     for (std::size_t i = 0; i < count; ++i) {
-        out.push_back(kLargeText + static_cast<std::uint32_t>(i * 0x120));
+        out.push_back(KLargeText + static_cast<std::uint32_t>(i * 0x120));
     }
     return out;
 }

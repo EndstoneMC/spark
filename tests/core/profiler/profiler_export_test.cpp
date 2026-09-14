@@ -261,6 +261,7 @@ bool metadataString(std::string_view profile, std::string_view key, std::string_
     return findExtraMetadataValue(profile, key, value) && value == expected;
 }
 
+// NOLINTNEXTLINE(misc-no-recursion): fixture normalization is bounded to export levels 0 through 4.
 std::string normalizeExportVolatileFields(std::string_view bytes, int level = 0)
 {
     spark::ProtoReader reader(bytes);
@@ -282,8 +283,8 @@ std::string normalizeExportVolatileFields(std::string_view bytes, int level = 0)
             const bool process_stats = level == 2 && field == 1;
             const bool process_heap = level == 3 && field == 1;
             writer.message(field, metadata || platform || process_stats || process_heap
-                                         ? normalizeExportVolatileFields(value, level + 1)
-                                         : value);
+                                      ? normalizeExportVolatileFields(value, level + 1)
+                                      : value);
         }
         else {
             assert(false && "unexpected sampler-data wire type");
@@ -328,7 +329,8 @@ spark::ExportContext exportContextFixture(bool include_net_snapshots)
     if (include_net_snapshots) {
         context.net_snapshots.emplace("network-interface", network);
     }
-    context.native_plugin_sources.push_back({.module_base = 0x1000, .module_path = "plugin.dll", .source_id = "TestPlugin"});
+    context.native_plugin_sources.push_back(
+        {.module_base = 0x1000, .module_path = "plugin.dll", .source_id = "TestPlugin"});
     context.socket_channel_info_proto = "socket-channel-info";
     return context;
 }

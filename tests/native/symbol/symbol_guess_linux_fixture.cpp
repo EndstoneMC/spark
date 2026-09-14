@@ -42,7 +42,7 @@ namespace fixture {
 
 class VtableOwner {
 public:
-    virtual int run() const;
+    [[nodiscard]] virtual int run() const;
 };
 
 __attribute__((noinline, used)) int VtableOwner::run() const
@@ -50,12 +50,14 @@ __attribute__((noinline, used)) int VtableOwner::run() const
     return 17;
 }
 
-VtableOwner owner;
+static VtableOwner owner;
 
 // Itanium vtable metadata followed by an interior target.
-__attribute__((used, visibility("hidden"))) const void *interior_vtable[] = {
+__attribute__((used, visibility("hidden"))) static const void *interior_vtable[] = {
     nullptr,
     &typeid(VtableOwner),
+    // This deliberately points one byte into a function for the invalid fixture case.
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
     reinterpret_cast<const void *>(reinterpret_cast<std::uintptr_t>(&sparkFixtureUniqueStringTarget) + 1),
     nullptr,
 };
@@ -207,7 +209,7 @@ int main()
                 static_cast<unsigned long long>(weak_shared_rva), static_cast<unsigned long long>(weak_other_rva),
                 static_cast<unsigned long long>(weak_ambiguous_rva), static_cast<unsigned long long>(vtable_rva),
                 static_cast<unsigned long long>(thunk_rva));
-    const auto printStats = [](const char *prefix, const spark::symbol_guess::linux::BuildStats &stats) {
+    const auto print_stats = [](const char *prefix, const spark::symbol_guess::linux::BuildStats &stats) {
         std::printf("%s_vtable_interior_target_rejections=%llu\n%s_thunk_interior_destination_rejections=%llu\n"
                     "%s_string_reference_exact_hits=%llu\n%s_string_reference_interior_rejections=%llu\n"
                     "%s_string_reference_ambiguities=%llu\n%s_string_reference_shared=%llu\n"
@@ -233,16 +235,16 @@ int main()
                     static_cast<unsigned long long>(stats.string_function_instruction_budget_exhausted), prefix,
                     static_cast<unsigned long long>(stats.string_instruction_budget_exhausted));
     };
-    printStats("cache", cache_stats);
-    printStats("shared", shared_stats);
-    printStats("embedded", embedded_stats);
-    printStats("unreachable", unreachable_stats);
-    printStats("overlap", overlap_stats);
-    printStats("unindexed", unindexed_stats);
-    printStats("large", large_stats);
-    printStats("function", function_stats);
-    printStats("batch", batch_stats);
-    printStats("thunk", thunk_stats);
+    print_stats("cache", cache_stats);
+    print_stats("shared", shared_stats);
+    print_stats("embedded", embedded_stats);
+    print_stats("unreachable", unreachable_stats);
+    print_stats("overlap", overlap_stats);
+    print_stats("unindexed", unindexed_stats);
+    print_stats("large", large_stats);
+    print_stats("function", function_stats);
+    print_stats("batch", batch_stats);
+    print_stats("thunk", thunk_stats);
     return 0;
 }
 

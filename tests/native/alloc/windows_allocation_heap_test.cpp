@@ -27,13 +27,13 @@ using FixtureHeapAllocFn = void *(*)(HANDLE, DWORD, SIZE_T);
 using FixtureHeapReAllocFn = void *(*)(HANDLE, DWORD, void *, SIZE_T);
 using FixtureHeapFreeFn = BOOL (*)(HANDLE, DWORD, void *);
 
-constexpr DWORD kEntryError = 0x13572468;
-constexpr SIZE_T kSmallSize = 64;
-constexpr SIZE_T kExpandedSize = 128;
-constexpr SIZE_T kImpossibleSize = 1024 * 1024;
-constexpr DWORD kCreateExceptionFlags = HEAP_GENERATE_EXCEPTIONS;
-constexpr DWORD kCallExceptionFlags = HEAP_GENERATE_EXCEPTIONS;
-constexpr DWORD kCallNormalFlags = 0;
+constexpr DWORD KEntryError = 0x13572468;
+constexpr SIZE_T KSmallSize = 64;
+constexpr SIZE_T KExpandedSize = 128;
+constexpr SIZE_T KImpossibleSize = 1024 * 1024;
+constexpr DWORD KCreateExceptionFlags = HEAP_GENERATE_EXCEPTIONS;
+constexpr DWORD KCallExceptionFlags = HEAP_GENERATE_EXCEPTIONS;
+constexpr DWORD KCallNormalFlags = 0;
 
 [[nodiscard]] HeapAllocFn directHeapAlloc() noexcept
 {
@@ -96,43 +96,43 @@ bool invokeHeapException(Call call, DWORD &code) noexcept
 
 int main()
 {
-    const HeapAllocFn direct_alloc = directHeapAlloc();
-    const HeapReAllocFn direct_realloc = directHeapReAlloc();
-    const HeapFreeFn direct_free = directHeapFree();
+    auto const direct_alloc = directHeapAlloc();
+    auto const direct_realloc = directHeapReAlloc();
+    auto const direct_free = directHeapFree();
     if (direct_alloc == nullptr || direct_realloc == nullptr || direct_free == nullptr) {
         return fail("kernel32-heap-exports") ? 0 : 1;
     }
 
-    HANDLE heap = ::HeapCreate(kCreateExceptionFlags, 0, 64 * 1024);
+    HANDLE heap = ::HeapCreate(KCreateExceptionFlags, 0, 64 * 1024);
     if (heap == nullptr) {
         return fail("heap-create") ? 0 : 1;
     }
 
     DWORD direct_alloc_code = 0;
     void *direct_failed_alloc = nullptr;
-    ::SetLastError(kEntryError);
+    ::SetLastError(KEntryError);
     const bool direct_alloc_caught = invokeHeapException(
-        [&] { direct_failed_alloc = direct_alloc(heap, kCallNormalFlags, kImpossibleSize); }, direct_alloc_code);
+        [&] { direct_failed_alloc = direct_alloc(heap, KCallNormalFlags, KImpossibleSize); }, direct_alloc_code);
     const DWORD direct_alloc_error = ::GetLastError();
     if (!direct_alloc_caught || direct_failed_alloc != nullptr) {
         ::HeapDestroy(heap);
         return fail("direct-failed-allocation") ? 0 : 1;
     }
 
-    void *direct_pointer = direct_alloc(heap, 0, kSmallSize);
+    void *direct_pointer = direct_alloc(heap, 0, KSmallSize);
     if (direct_pointer == nullptr) {
         ::HeapDestroy(heap);
         return fail("direct-small-allocation") ? 0 : 1;
     }
-    std::memset(direct_pointer, 0xA5, kSmallSize);
-    ::SetLastError(kEntryError);
+    std::memset(direct_pointer, 0xA5, KSmallSize);
+    ::SetLastError(KEntryError);
     void *direct_failed = nullptr;
     DWORD direct_realloc_code = 0;
     const bool direct_realloc_caught = invokeHeapException(
-        [&] { direct_failed = direct_realloc(heap, kCallNormalFlags, direct_pointer, kImpossibleSize); },
+        [&] { direct_failed = direct_realloc(heap, KCallNormalFlags, direct_pointer, KImpossibleSize); },
         direct_realloc_code);
     const DWORD direct_failure_error = ::GetLastError();
-    if (!direct_realloc_caught || direct_failed != nullptr || !hasPattern(direct_pointer, kSmallSize, 0xA5)) {
+    if (!direct_realloc_caught || direct_failed != nullptr || !hasPattern(direct_pointer, KSmallSize, 0xA5)) {
         (void)direct_free(heap, 0, direct_failed != nullptr ? direct_failed : direct_pointer);
         ::HeapDestroy(heap);
         return fail("direct-failed-realloc") ? 0 : 1;
@@ -181,9 +181,9 @@ int main()
 
     DWORD hooked_alloc_code = 0;
     void *hooked_failed_alloc = nullptr;
-    ::SetLastError(kEntryError);
+    ::SetLastError(KEntryError);
     const bool hooked_alloc_caught = invokeHeapException(
-        [&] { hooked_failed_alloc = fixture_alloc(heap, kCallNormalFlags, kImpossibleSize); }, hooked_alloc_code);
+        [&] { hooked_failed_alloc = fixture_alloc(heap, KCallNormalFlags, KImpossibleSize); }, hooked_alloc_code);
     const DWORD hooked_alloc_error = ::GetLastError();
     if (!hooked_alloc_caught || hooked_failed_alloc != nullptr || hooked_alloc_code != direct_alloc_code ||
         hooked_alloc_error != direct_alloc_error) {
@@ -196,10 +196,10 @@ int main()
     const std::uint64_t hooks_before = sampler.hookCalls();
     const std::uint64_t successful_before = sampler.successfulAllocationCalls();
     const std::uint64_t live_before = sampler.liveSamples();
-    ::SetLastError(kEntryError);
-    void *pointer = fixture_alloc(heap, 0, kSmallSize);
+    ::SetLastError(KEntryError);
+    void *pointer = fixture_alloc(heap, 0, KSmallSize);
     const DWORD allocation_error = ::GetLastError();
-    if (pointer == nullptr || allocation_error != kEntryError || sampler.hookCalls() <= hooks_before ||
+    if (pointer == nullptr || allocation_error != KEntryError || sampler.hookCalls() <= hooks_before ||
         sampler.successfulAllocationCalls() <= successful_before || sampler.liveSamples() <= live_before) {
         std::fprintf(
             stderr,
@@ -215,12 +215,12 @@ int main()
         ::HeapDestroy(heap);
         return fail("hooked-small-allocation") ? 0 : 1;
     }
-    std::memset(pointer, 0x5A, kSmallSize);
+    std::memset(pointer, 0x5A, KSmallSize);
 
-    ::SetLastError(kEntryError);
-    void *expanded = fixture_realloc(heap, 0, pointer, kExpandedSize);
+    ::SetLastError(KEntryError);
+    void *expanded = fixture_realloc(heap, 0, pointer, KExpandedSize);
     const DWORD expanded_error = ::GetLastError();
-    if (expanded == nullptr || expanded_error != kEntryError || !hasPattern(expanded, kSmallSize, 0x5A)) {
+    if (expanded == nullptr || expanded_error != KEntryError || !hasPattern(expanded, KSmallSize, 0x5A)) {
         if (expanded != nullptr) {
             (void)fixture_free(heap, 0, expanded);
         }
@@ -233,14 +233,14 @@ int main()
         return fail("hooked-successful-realloc") ? 0 : 1;
     }
     pointer = expanded;
-    std::memset(pointer, 0x5A, kExpandedSize);
+    std::memset(pointer, 0x5A, KExpandedSize);
 
     const std::uint64_t live_before_failed_realloc = sampler.liveSamples();
-    ::SetLastError(kEntryError);
+    ::SetLastError(KEntryError);
     void *failed = nullptr;
     DWORD hooked_realloc_code = 0;
     const bool hooked_realloc_caught = invokeHeapException(
-        [&] { failed = fixture_realloc(heap, kCallNormalFlags, pointer, kImpossibleSize); }, hooked_realloc_code);
+        [&] { failed = fixture_realloc(heap, KCallNormalFlags, pointer, KImpossibleSize); }, hooked_realloc_code);
     const DWORD failure_error = ::GetLastError();
     if (!hooked_realloc_caught || failed != nullptr || hooked_realloc_code != direct_realloc_code ||
         failure_error != direct_failure_error || sampler.liveSamples() != live_before_failed_realloc) {
@@ -255,7 +255,7 @@ int main()
         ::HeapDestroy(heap);
         return fail("hooked-failed-realloc") ? 0 : 1;
     }
-    for (SIZE_T index = 0; index < kExpandedSize; ++index) {
+    for (SIZE_T index = 0; index < KExpandedSize; ++index) {
         if (static_cast<const unsigned char *>(pointer)[index] != 0x5A) {
             (void)fixture_free(heap, 0, pointer);
             (void)sampler.shutdown(error);
@@ -272,7 +272,7 @@ int main()
         return fail("hooked-free-after-failure") ? 0 : 1;
     }
 
-    void *subsequent = fixture_alloc(heap, 0, kSmallSize);
+    void *subsequent = fixture_alloc(heap, 0, KSmallSize);
     if (subsequent == nullptr || !fixture_free(heap, 0, subsequent)) {
         (void)sampler.shutdown(error);
         (void)::FreeLibrary(fixture);
@@ -289,16 +289,16 @@ int main()
     }
     DWORD second_direct_alloc_code = 0;
     void *second_direct_failed_alloc = nullptr;
-    ::SetLastError(kEntryError);
+    ::SetLastError(KEntryError);
     const bool second_direct_alloc_caught = invokeHeapException(
-        [&] { second_direct_failed_alloc = direct_alloc(second_heap, kCallExceptionFlags, kImpossibleSize); },
+        [&] { second_direct_failed_alloc = direct_alloc(second_heap, KCallExceptionFlags, KImpossibleSize); },
         second_direct_alloc_code);
     const DWORD second_direct_alloc_error = ::GetLastError();
     DWORD second_hooked_alloc_code = 0;
     void *second_hooked_failed_alloc = nullptr;
-    ::SetLastError(kEntryError);
+    ::SetLastError(KEntryError);
     const bool second_hooked_alloc_caught = invokeHeapException(
-        [&] { second_hooked_failed_alloc = fixture_alloc(second_heap, kCallExceptionFlags, kImpossibleSize); },
+        [&] { second_hooked_failed_alloc = fixture_alloc(second_heap, KCallExceptionFlags, KImpossibleSize); },
         second_hooked_alloc_code);
     const DWORD second_hooked_alloc_error = ::GetLastError();
     if (!second_direct_alloc_caught || second_direct_failed_alloc != nullptr || !second_hooked_alloc_caught ||
@@ -311,7 +311,7 @@ int main()
         return fail("second-heap-allocation-mode") ? 0 : 1;
     }
 
-    void *second_direct_pointer = direct_alloc(second_heap, 0, kSmallSize);
+    void *second_direct_pointer = direct_alloc(second_heap, 0, KSmallSize);
     if (second_direct_pointer == nullptr) {
         (void)sampler.shutdown(error);
         (void)::FreeLibrary(fixture);
@@ -319,19 +319,19 @@ int main()
         ::HeapDestroy(heap);
         return fail("second-direct-small-allocation") ? 0 : 1;
     }
-    std::memset(second_direct_pointer, 0xA5, kSmallSize);
+    std::memset(second_direct_pointer, 0xA5, KSmallSize);
     DWORD second_direct_realloc_code = 0;
     void *second_direct_failed = nullptr;
-    ::SetLastError(kEntryError);
+    ::SetLastError(KEntryError);
     const bool second_direct_realloc_caught = invokeHeapException(
         [&] {
             second_direct_failed =
-                direct_realloc(second_heap, kCallExceptionFlags, second_direct_pointer, kImpossibleSize);
+                direct_realloc(second_heap, KCallExceptionFlags, second_direct_pointer, KImpossibleSize);
         },
         second_direct_realloc_code);
     const DWORD second_direct_realloc_error = ::GetLastError();
     if (!second_direct_realloc_caught || second_direct_failed != nullptr ||
-        !hasPattern(second_direct_pointer, kSmallSize, 0xA5)) {
+        !hasPattern(second_direct_pointer, KSmallSize, 0xA5)) {
         (void)direct_free(second_heap, 0,
                           second_direct_failed != nullptr ? second_direct_failed : second_direct_pointer);
         (void)sampler.shutdown(error);
@@ -342,7 +342,7 @@ int main()
     }
     (void)direct_free(second_heap, 0, second_direct_pointer);
 
-    void *second_fixture_pointer = fixture_alloc(second_heap, 0, kSmallSize);
+    void *second_fixture_pointer = fixture_alloc(second_heap, 0, KSmallSize);
     if (second_fixture_pointer == nullptr) {
         (void)sampler.shutdown(error);
         (void)::FreeLibrary(fixture);
@@ -350,22 +350,22 @@ int main()
         ::HeapDestroy(heap);
         return fail("second-fixture-small-allocation") ? 0 : 1;
     }
-    std::memset(second_fixture_pointer, 0x5A, kSmallSize);
+    std::memset(second_fixture_pointer, 0x5A, KSmallSize);
     const std::uint64_t second_live_before_realloc = sampler.liveSamples();
     DWORD second_hooked_realloc_code = 0;
     void *second_hooked_failed = nullptr;
-    ::SetLastError(kEntryError);
+    ::SetLastError(KEntryError);
     const bool second_hooked_realloc_caught = invokeHeapException(
         [&] {
             second_hooked_failed =
-                fixture_realloc(second_heap, kCallExceptionFlags, second_fixture_pointer, kImpossibleSize);
+                fixture_realloc(second_heap, KCallExceptionFlags, second_fixture_pointer, KImpossibleSize);
         },
         second_hooked_realloc_code);
     const DWORD second_hooked_realloc_error = ::GetLastError();
     if (!second_hooked_realloc_caught || second_hooked_failed != nullptr ||
         second_hooked_realloc_code != second_direct_realloc_code ||
         second_hooked_realloc_error != second_direct_realloc_error ||
-        sampler.liveSamples() != second_live_before_realloc || !hasPattern(second_fixture_pointer, kSmallSize, 0x5A)) {
+        sampler.liveSamples() != second_live_before_realloc || !hasPattern(second_fixture_pointer, KSmallSize, 0x5A)) {
         std::fprintf(stderr,
                      "stage=windows-allocation-heap detail=second-realloc direct-code=0x%08lx hooked-code=0x%08lx "
                      "direct-error=%lu hooked-error=%lu live=%llu/%llu caught=%d/%d\n",

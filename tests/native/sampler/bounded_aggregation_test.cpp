@@ -142,7 +142,7 @@ bool prevalidatedMutationMatchesBoundedLogging()
     std::size_t prevalidated_nodes = 32;
     std::size_t prevalidated_times = 32;
     for (std::int32_t window = 0; window < 4; ++window) {
-        const std::uint64_t weight = static_cast<std::uint64_t>(window + 1);
+        const auto weight = static_cast<std::uint64_t>(window) + std::uint64_t{1};
         const auto required = prevalidated.requiredStorage(frames, window);
         if (!bounded.logBounded(frames, window, weight, bounded_nodes, bounded_times) ||
             !prevalidated.logBoundedPrevalidated(frames, window, weight, required, prevalidated_nodes,

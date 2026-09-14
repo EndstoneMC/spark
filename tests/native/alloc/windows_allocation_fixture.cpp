@@ -4,12 +4,6 @@
 #include <cstddef>
 #include <cstdlib>
 
-extern "C" {
-__declspec(dllimport) void *__cdecl _malloc_base(std::size_t);
-__declspec(dllimport) void *__cdecl _calloc_base(std::size_t, std::size_t);
-__declspec(dllimport) void *__cdecl _realloc_base(void *, std::size_t);
-}
-
 extern "C" __declspec(dllexport) void sparkAllocationFixtureOnce()
 {
     void *pointer = std::malloc(256);

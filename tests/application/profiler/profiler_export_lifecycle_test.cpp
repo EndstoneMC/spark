@@ -525,6 +525,7 @@ void testCancellationBeforeOwnedExportLeavesContext()
 
     spark::CancellationSource cancellation;
     cancellation.requestStop();
+    // NOLINTBEGIN(bugprone-use-after-move): cancellation returns before consuming the owned context.
     const auto result = exporter.exportProfile(profiler, std::move(context), false, cancellation.token());
     assert(result.outcome == spark::ExportOutcome::Failed);
     assert(result.retain_recovery_journal);
@@ -533,6 +534,7 @@ void testCancellationBeforeOwnedExportLeavesContext()
     assert(context.metrics.tps.size() == expected_metrics);
     assert(context.plugins.size() == expected_plugins);
     assert(context.server_configurations.at("difficulty") == "normal");
+    // NOLINTEND(bugprone-use-after-move)
 }
 
 void testSuccessfulExportReportsCleanupWarning()

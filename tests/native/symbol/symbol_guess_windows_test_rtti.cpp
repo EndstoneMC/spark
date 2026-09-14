@@ -192,7 +192,7 @@ bool testRttiNameCoverage()
         SPARK_SYMBOL_GUESS_CHECK(engine.guess(std::span(&query, 1)).empty());
     }
 
-    const auto rejected = [](std::string name) {
+    const auto rejected = [](const std::string &name) {
         PeFixture fixture;
         fixture.leafUnwind(0x5000);
         fixture.runtimeFunction(0, 0x1000, 0x1080, 0x5000);

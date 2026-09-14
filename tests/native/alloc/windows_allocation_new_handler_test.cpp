@@ -15,6 +15,7 @@
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -54,17 +55,17 @@ using FixtureAlignedOffsetRecallocFn = void *(*)(void *, std::size_t, std::size_
 using FixtureFreeFn = void (*)(void *);
 using FixtureAlignedFreeFn = void (*)(void *);
 
-constexpr DWORD kEntryError = 0x13572468;
-constexpr std::size_t kSmallSize = 64;
-constexpr std::size_t kSmallAlignment = 64;
-constexpr std::size_t kSmallOffset = 5;
-constexpr std::size_t kImpossibleSize = std::size_t{1} << 60;
-constexpr std::size_t kHeapMaxReq = 0xFFFFFFFFFFFFFFE0ULL;
+constexpr DWORD KEntryError = 0x13572468;
+constexpr std::size_t KSmallSize = 64;
+constexpr std::size_t KSmallAlignment = 64;
+constexpr std::size_t KSmallOffset = 5;
+constexpr std::size_t KImpossibleSize = std::size_t{1} << 60;
+constexpr std::size_t KHeapMaxReq = 0xFFFFFFFFFFFFFFE0ULL;
 
-std::atomic<unsigned> g_new_handler_calls{0};
-std::array<void *, 16> g_gateway_states{};
-std::size_t g_gateway_state_count = 0;
-std::atomic<bool> g_gateway_active_observed{false};
+std::atomic<unsigned> GNewHandlerCalls{0};
+std::array<void *, 16> GGatewayStates{};
+std::size_t GGatewayStateCount = 0;
+std::atomic<bool> GGatewayActiveObserved{false};
 
 class NewHandlerMarker final : public std::bad_alloc {
 public:
@@ -74,21 +75,21 @@ public:
 int __cdecl throwingNewHandler(std::size_t)
 {
     bool active = false;
-    for (std::size_t index = 0; index < g_gateway_state_count; ++index) {
-        const auto state = static_cast<const std::uint8_t *>(g_gateway_states[index]);
+    for (std::size_t index = 0; index < GGatewayStateCount; ++index) {
+        const auto *const state = static_cast<const std::uint8_t *>(GGatewayStates[index]);
         std::uint64_t gate = 0;
         std::uint64_t active_calls = 0;
         void *handler = nullptr;
         std::memcpy(&gate, state + 24, sizeof(gate));
         std::memcpy(&active_calls, state + 32, sizeof(active_calls));
-        std::memcpy(&handler, state + 40, sizeof(handler));
+        std::memcpy(static_cast<void *>(&handler), state + 40, sizeof(handler));
         if (gate == 1 && active_calls != 0 && handler != nullptr) {
             active = true;
             break;
         }
     }
-    g_gateway_active_observed.store(active, std::memory_order_release);
-    g_new_handler_calls.fetch_add(1, std::memory_order_relaxed);
+    GGatewayActiveObserved.store(active, std::memory_order_release);
+    GNewHandlerCalls.fetch_add(1, std::memory_order_relaxed);
     throw NewHandlerMarker{};
 }
 
@@ -173,7 +174,7 @@ bool importSlot(HMODULE module, const char *import_name, void *&slot_value, void
             }
             auto *slot = &address[index].u1.Function;
             std::atomic_ref<std::uintptr_t> atomic_slot(*slot);
-            slot_value = reinterpret_cast<void *>(atomic_slot.load(std::memory_order_acquire));
+            slot_value = std::bit_cast<void *>(atomic_slot.load(std::memory_order_acquire));
             slot_address = slot;
             return true;
         }
@@ -184,21 +185,21 @@ bool importSlot(HMODULE module, const char *import_name, void *&slot_value, void
 bool inspectGatewayImports(HMODULE fixture, const UcrtExports &direct, const char *&failure) noexcept
 {
     const GatewayImportExpectation expectations[] = {
-        {"malloc", reinterpret_cast<void *>(direct.malloc)},
-        {"calloc", reinterpret_cast<void *>(direct.calloc)},
-        {"realloc", reinterpret_cast<void *>(direct.realloc)},
-        {"_recalloc", reinterpret_cast<void *>(direct.recalloc)},
-        {"_aligned_malloc", reinterpret_cast<void *>(direct.aligned_malloc)},
-        {"_aligned_realloc", reinterpret_cast<void *>(direct.aligned_realloc)},
-        {"_aligned_recalloc", reinterpret_cast<void *>(direct.aligned_recalloc)},
-        {"_aligned_offset_malloc", reinterpret_cast<void *>(direct.aligned_offset_malloc)},
-        {"_aligned_offset_realloc", reinterpret_cast<void *>(direct.aligned_offset_realloc)},
-        {"_aligned_offset_recalloc", reinterpret_cast<void *>(direct.aligned_offset_recalloc)},
-        {"_malloc_base", reinterpret_cast<void *>(direct.malloc_base)},
-        {"_calloc_base", reinterpret_cast<void *>(direct.calloc_base)},
-        {"_realloc_base", reinterpret_cast<void *>(direct.realloc_base)},
+        {.name = "malloc", .original = reinterpret_cast<void *>(direct.malloc)},
+        {.name = "calloc", .original = reinterpret_cast<void *>(direct.calloc)},
+        {.name = "realloc", .original = reinterpret_cast<void *>(direct.realloc)},
+        {.name = "_recalloc", .original = reinterpret_cast<void *>(direct.recalloc)},
+        {.name = "_aligned_malloc", .original = reinterpret_cast<void *>(direct.aligned_malloc)},
+        {.name = "_aligned_realloc", .original = reinterpret_cast<void *>(direct.aligned_realloc)},
+        {.name = "_aligned_recalloc", .original = reinterpret_cast<void *>(direct.aligned_recalloc)},
+        {.name = "_aligned_offset_malloc", .original = reinterpret_cast<void *>(direct.aligned_offset_malloc)},
+        {.name = "_aligned_offset_realloc", .original = reinterpret_cast<void *>(direct.aligned_offset_realloc)},
+        {.name = "_aligned_offset_recalloc", .original = reinterpret_cast<void *>(direct.aligned_offset_recalloc)},
+        {.name = "_malloc_base", .original = reinterpret_cast<void *>(direct.malloc_base)},
+        {.name = "_calloc_base", .original = reinterpret_cast<void *>(direct.calloc_base)},
+        {.name = "_realloc_base", .original = reinterpret_cast<void *>(direct.realloc_base)},
     };
-    g_gateway_state_count = 0;
+    GGatewayStateCount = 0;
     for (const auto &expectation : expectations) {
         void *slot_value = nullptr;
         void *slot_address = nullptr;
@@ -216,7 +217,7 @@ bool inspectGatewayImports(HMODULE fixture, const UcrtExports &direct, const cha
             return false;
         }
         void *state = nullptr;
-        std::memcpy(&state, gateway_bytes + 2, sizeof(state));
+        std::memcpy(static_cast<void *>(&state), gateway_bytes + 2, sizeof(state));
         if (state == nullptr) {
             failure = expectation.name;
             return false;
@@ -226,16 +227,17 @@ bool inspectGatewayImports(HMODULE fixture, const UcrtExports &direct, const cha
         void *gateway_identity = nullptr;
         std::memcpy(&magic, state, sizeof(magic));
         std::memcpy(&abi, static_cast<const std::uint8_t *>(state) + 8, sizeof(abi));
-        std::memcpy(&gateway_identity, static_cast<const std::uint8_t *>(state) + 56, sizeof(gateway_identity));
+        std::memcpy(static_cast<void *>(&gateway_identity), static_cast<const std::uint8_t *>(state) + 56,
+                    sizeof(gateway_identity));
         if (magic != 0x3154414947504B53ULL || abi != 3 || gateway_identity != slot_value) {
             failure = expectation.name;
             return false;
         }
-        if (g_gateway_state_count >= g_gateway_states.size()) {
+        if (GGatewayStateCount >= GGatewayStates.size()) {
             failure = "gateway-state-capacity";
             return false;
         }
-        g_gateway_states[g_gateway_state_count++] = state;
+        GGatewayStates[GGatewayStateCount++] = state;
     }
     return true;
 }
@@ -243,7 +245,7 @@ bool inspectGatewayImports(HMODULE fixture, const UcrtExports &direct, const cha
 struct NewHandlerState {
     UcrtExports &ucrt;
     const int previous_mode;
-    NewHandlerFn const previous_handler;
+    int(__cdecl *const previous_handler)(std::size_t);
     bool active = false;
 
     void enable() noexcept
@@ -276,11 +278,12 @@ template <typename Call>
 bool runThrowingCall(NewHandlerState &state, const char *name, Call call, DWORD &last_error, bool expect_gateway_active,
                      bool check_gateway_active)
 {
-    g_new_handler_calls.store(0, std::memory_order_relaxed);
-    g_gateway_active_observed.store(false, std::memory_order_release);
+    GNewHandlerCalls.store(0, std::memory_order_relaxed);
+    GGatewayActiveObserved.store(false, std::memory_order_release);
     state.enable();
-    ::SetLastError(kEntryError);
+    ::SetLastError(KEntryError);
     bool caught = false;
+    bool unexpected_exception = false;
     try {
         (void)call();
     }
@@ -288,12 +291,13 @@ bool runThrowingCall(NewHandlerState &state, const char *name, Call call, DWORD 
         caught = std::strcmp(exception.what(), "spark real new-handler marker") == 0;
     }
     catch (...) {
+        unexpected_exception = true;
     }
     last_error = ::GetLastError();
-    const unsigned handler_calls = g_new_handler_calls.load(std::memory_order_relaxed);
+    const unsigned handler_calls = GNewHandlerCalls.load(std::memory_order_relaxed);
     state.restore();
-    if (!caught || handler_calls != 1 ||
-        (check_gateway_active && g_gateway_active_observed.load(std::memory_order_acquire) != expect_gateway_active)) {
+    if (unexpected_exception || !caught || handler_calls != 1 ||
+        (check_gateway_active && GGatewayActiveObserved.load(std::memory_order_acquire) != expect_gateway_active)) {
         std::fprintf(stderr, "stage=windows-allocation-new-handler detail=%s caught=%d calls=%u\n", name,
                      caught ? 1 : 0, handler_calls);
         return false;
@@ -327,14 +331,14 @@ bool runReallocCase(spark::AllocationSampler &sampler, NewHandlerState &state, c
     if (direct_pointer == nullptr) {
         return fail("direct realloc setup allocation failed");
     }
-    std::memset(direct_pointer, 0xA5, kSmallSize);
+    std::memset(direct_pointer, 0xA5, KSmallSize);
     DWORD direct_error = 0;
     const bool direct_ok = runThrowingCall(
-        state, name, [&] { return direct_realloc(direct_pointer, kImpossibleSize); }, direct_error, false, false);
+        state, name, [&] { return direct_realloc(direct_pointer, KImpossibleSize); }, direct_error, false, false);
     bool direct_preserved = direct_ok && direct_pointer != nullptr;
     if (direct_preserved) {
         const auto *bytes = static_cast<const unsigned char *>(direct_pointer);
-        for (std::size_t index = 0; index < kSmallSize; ++index) {
+        for (std::size_t index = 0; index < KSmallSize; ++index) {
             if (bytes[index] != 0xA5) {
                 std::fprintf(stderr, "stage=windows-allocation-new-handler detail=%s direct-byte-index=%zu value=%u\n",
                              name, index, static_cast<unsigned>(bytes[index]));
@@ -365,16 +369,16 @@ bool runReallocCase(spark::AllocationSampler &sampler, NewHandlerState &state, c
     if (fixture_pointer == nullptr) {
         return fail("fixture realloc record was not observed before exception");
     }
-    std::memset(fixture_pointer, 0x5A, kSmallSize);
+    std::memset(fixture_pointer, 0x5A, KSmallSize);
     const std::uint64_t live_before_exception = sampler.liveSamples();
     DWORD fixture_error = 0;
     const bool fixture_ok = runThrowingCall(
-        state, name, [&] { return fixture_realloc(fixture_pointer, kImpossibleSize); }, fixture_error, true, true);
+        state, name, [&] { return fixture_realloc(fixture_pointer, KImpossibleSize); }, fixture_error, true, true);
     const bool record_survived = sampler.liveSamples() == live_before_exception;
     const bool fixture_preserved = fixture_ok && fixture_pointer != nullptr;
     if (fixture_preserved) {
         const auto *bytes = static_cast<const unsigned char *>(fixture_pointer);
-        for (std::size_t index = 0; index < kSmallSize; ++index) {
+        for (std::size_t index = 0; index < KSmallSize; ++index) {
             if (bytes[index] != 0x5A) {
                 return fail("fixture realloc changed original memory");
             }
@@ -469,13 +473,14 @@ int main()
     SYSTEM_INFO system_info{};
     ::GetSystemInfo(&system_info);
     const auto max_application_address = reinterpret_cast<std::uintptr_t>(system_info.lpMaximumApplicationAddress);
-    if (sizeof(std::size_t) != 8 || kImpossibleSize <= max_application_address ||
-        kImpossibleSize + 256 >= kHeapMaxReq) {
+    if (sizeof(std::size_t) != 8 || KImpossibleSize <= max_application_address ||
+        KImpossibleSize + 256 >= KHeapMaxReq) {
         (void)::FreeLibrary(fixture_module);
         return fail("impossible-request-precondition") ? 0 : 1;
     }
 
-    NewHandlerState state{direct, direct.query_new_mode(), direct.query_new_handler()};
+    NewHandlerState state{
+        .ucrt = direct, .previous_mode = direct.query_new_mode(), .previous_handler = direct.query_new_handler()};
     spark::AllocationSampler sampler;
     spark::AllocationSamplerConfig config;
     config.interval_bytes = 1;
@@ -498,76 +503,76 @@ int main()
 
     const bool cases_ok =
         runAllocationCase(
-            sampler, state, "malloc", [&] { return direct.malloc(kImpossibleSize); },
-            [&] { return fixture.malloc(kImpossibleSize); }) &&
+            sampler, state, "malloc", [&] { return direct.malloc(KImpossibleSize); },
+            [&] { return fixture.malloc(KImpossibleSize); }) &&
         runAllocationCase(
-            sampler, state, "calloc", [&] { return direct.calloc(1, kImpossibleSize); },
-            [&] { return fixture.calloc(1, kImpossibleSize); }) &&
+            sampler, state, "calloc", [&] { return direct.calloc(1, KImpossibleSize); },
+            [&] { return fixture.calloc(1, KImpossibleSize); }) &&
         runReallocCase(
-            sampler, state, "realloc", [&] { return direct.malloc(kSmallSize); },
+            sampler, state, "realloc", [&] { return direct.malloc(KSmallSize); },
             [&](void *pointer, std::size_t size) { return direct.realloc(pointer, size); }, direct.free,
-            [&] { return fixture.malloc(kSmallSize); },
+            [&] { return fixture.malloc(KSmallSize); },
             [&](void *pointer, std::size_t size) { return fixture.realloc(pointer, size); }, fixture.free) &&
         runReallocCase(
-            sampler, state, "recalloc", [&] { return direct.malloc(kSmallSize); },
+            sampler, state, "recalloc", [&] { return direct.malloc(KSmallSize); },
             [&](void *pointer, std::size_t size) { return direct.recalloc(pointer, 1, size); }, direct.free,
-            [&] { return fixture.malloc(kSmallSize); },
+            [&] { return fixture.malloc(KSmallSize); },
             [&](void *pointer, std::size_t size) { return fixture.recalloc(pointer, 1, size); }, fixture.free) &&
         runAllocationCase(
-            sampler, state, "aligned_malloc", [&] { return direct.aligned_malloc(kImpossibleSize, kSmallAlignment); },
-            [&] { return fixture.aligned_malloc(kImpossibleSize, kSmallAlignment); }) &&
+            sampler, state, "aligned_malloc", [&] { return direct.aligned_malloc(KImpossibleSize, KSmallAlignment); },
+            [&] { return fixture.aligned_malloc(KImpossibleSize, KSmallAlignment); }) &&
         runReallocCase(
-            sampler, state, "aligned_realloc", [&] { return direct.aligned_malloc(kSmallSize, kSmallAlignment); },
-            [&](void *pointer, std::size_t size) { return direct.aligned_realloc(pointer, size, kSmallAlignment); },
-            direct.aligned_free, [&] { return fixture.aligned_malloc(kSmallSize, kSmallAlignment); },
-            [&](void *pointer, std::size_t size) { return fixture.aligned_realloc(pointer, size, kSmallAlignment); },
+            sampler, state, "aligned_realloc", [&] { return direct.aligned_malloc(KSmallSize, KSmallAlignment); },
+            [&](void *pointer, std::size_t size) { return direct.aligned_realloc(pointer, size, KSmallAlignment); },
+            direct.aligned_free, [&] { return fixture.aligned_malloc(KSmallSize, KSmallAlignment); },
+            [&](void *pointer, std::size_t size) { return fixture.aligned_realloc(pointer, size, KSmallAlignment); },
             fixture.aligned_free) &&
         runReallocCase(
-            sampler, state, "aligned_recalloc", [&] { return direct.aligned_malloc(kSmallSize, kSmallAlignment); },
-            [&](void *pointer, std::size_t size) { return direct.aligned_recalloc(pointer, 1, size, kSmallAlignment); },
-            direct.aligned_free, [&] { return fixture.aligned_malloc(kSmallSize, kSmallAlignment); },
+            sampler, state, "aligned_recalloc", [&] { return direct.aligned_malloc(KSmallSize, KSmallAlignment); },
+            [&](void *pointer, std::size_t size) { return direct.aligned_recalloc(pointer, 1, size, KSmallAlignment); },
+            direct.aligned_free, [&] { return fixture.aligned_malloc(KSmallSize, KSmallAlignment); },
             [&](void *pointer, std::size_t size) {
-                return fixture.aligned_recalloc(pointer, 1, size, kSmallAlignment);
+                return fixture.aligned_recalloc(pointer, 1, size, KSmallAlignment);
             },
             fixture.aligned_free) &&
         runAllocationCase(
             sampler, state, "aligned_offset_malloc",
-            [&] { return direct.aligned_offset_malloc(kImpossibleSize, kSmallAlignment, kSmallOffset); },
-            [&] { return fixture.aligned_offset_malloc(kImpossibleSize, kSmallAlignment, kSmallOffset); }) &&
+            [&] { return direct.aligned_offset_malloc(KImpossibleSize, KSmallAlignment, KSmallOffset); },
+            [&] { return fixture.aligned_offset_malloc(KImpossibleSize, KSmallAlignment, KSmallOffset); }) &&
         runReallocCase(
             sampler, state, "aligned_offset_realloc",
-            [&] { return direct.aligned_offset_malloc(kSmallSize, kSmallAlignment, kSmallOffset); },
+            [&] { return direct.aligned_offset_malloc(KSmallSize, KSmallAlignment, KSmallOffset); },
             [&](void *pointer, std::size_t size) {
-                return direct.aligned_offset_realloc(pointer, size, kSmallAlignment, kSmallOffset);
+                return direct.aligned_offset_realloc(pointer, size, KSmallAlignment, KSmallOffset);
             },
             direct.aligned_free,
-            [&] { return fixture.aligned_offset_malloc(kSmallSize, kSmallAlignment, kSmallOffset); },
+            [&] { return fixture.aligned_offset_malloc(KSmallSize, KSmallAlignment, KSmallOffset); },
             [&](void *pointer, std::size_t size) {
-                return fixture.aligned_offset_realloc(pointer, size, kSmallAlignment, kSmallOffset);
+                return fixture.aligned_offset_realloc(pointer, size, KSmallAlignment, KSmallOffset);
             },
             fixture.aligned_free) &&
         runReallocCase(
             sampler, state, "aligned_offset_recalloc",
-            [&] { return direct.aligned_offset_malloc(kSmallSize, kSmallAlignment, kSmallOffset); },
+            [&] { return direct.aligned_offset_malloc(KSmallSize, KSmallAlignment, KSmallOffset); },
             [&](void *pointer, std::size_t size) {
-                return direct.aligned_offset_recalloc(pointer, 1, size, kSmallAlignment, kSmallOffset);
+                return direct.aligned_offset_recalloc(pointer, 1, size, KSmallAlignment, KSmallOffset);
             },
             direct.aligned_free,
-            [&] { return fixture.aligned_offset_malloc(kSmallSize, kSmallAlignment, kSmallOffset); },
+            [&] { return fixture.aligned_offset_malloc(KSmallSize, KSmallAlignment, KSmallOffset); },
             [&](void *pointer, std::size_t size) {
-                return fixture.aligned_offset_recalloc(pointer, 1, size, kSmallAlignment, kSmallOffset);
+                return fixture.aligned_offset_recalloc(pointer, 1, size, KSmallAlignment, KSmallOffset);
             },
             fixture.aligned_free) &&
         runAllocationCase(
-            sampler, state, "malloc_base", [&] { return direct.malloc_base(kImpossibleSize); },
-            [&] { return fixture.malloc_base(kImpossibleSize); }) &&
+            sampler, state, "malloc_base", [&] { return direct.malloc_base(KImpossibleSize); },
+            [&] { return fixture.malloc_base(KImpossibleSize); }) &&
         runAllocationCase(
-            sampler, state, "calloc_base", [&] { return direct.calloc_base(1, kImpossibleSize); },
-            [&] { return fixture.calloc_base(1, kImpossibleSize); }) &&
+            sampler, state, "calloc_base", [&] { return direct.calloc_base(1, KImpossibleSize); },
+            [&] { return fixture.calloc_base(1, KImpossibleSize); }) &&
         runReallocCase(
-            sampler, state, "realloc_base", [&] { return direct.malloc_base(kSmallSize); },
+            sampler, state, "realloc_base", [&] { return direct.malloc_base(KSmallSize); },
             [&](void *pointer, std::size_t size) { return direct.realloc_base(pointer, size); }, direct.free,
-            [&] { return fixture.malloc_base(kSmallSize); },
+            [&] { return fixture.malloc_base(KSmallSize); },
             [&](void *pointer, std::size_t size) { return fixture.realloc_base(pointer, size); }, fixture.free);
 
     state.restore();
@@ -577,7 +582,7 @@ int main()
         return 1;
     }
 
-    void *subsequent = fixture.malloc(kSmallSize);
+    void *subsequent = fixture.malloc(KSmallSize);
     if (subsequent == nullptr) {
         (void)sampler.shutdown(error);
         (void)::FreeLibrary(fixture_module);

@@ -375,7 +375,12 @@ std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnaps
         meta.engine_version = std::string("endstone-spark ") + kVersion;
     }
     if (!ctx.comment.empty()) {
-        meta.comment = owned_ctx != nullptr ? std::move(owned_ctx->comment) : ctx.comment;
+        if (owned_ctx != nullptr) {
+            meta.comment = std::move(owned_ctx->comment);
+        }
+        else {
+            meta.comment = ctx.comment;
+        }
     }
     else {
         meta.comment = options_.comment;

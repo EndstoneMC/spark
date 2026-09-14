@@ -1276,11 +1276,11 @@ struct ReferenceValidationBudget {
     bool instruction_budget_reported = false;
 };
 
-constexpr std::size_t kMaximumDiagnosticCounter = 1000000U;
+constexpr std::size_t k_maximum_diagnostic_counter = 1000000U;
 
 void incrementDiagnostic(std::size_t &counter)
 {
-    if (counter < kMaximumDiagnosticCounter) {
+    if (counter < k_maximum_diagnostic_counter) {
         ++counter;
     }
 }
@@ -1313,7 +1313,7 @@ FunctionReferenceValidation validateFunctionReferences(const ImageView &img, con
     ++budget.functions;
     incrementDiagnostic(stats.string_validation_functions);
 
-    const std::size_t size = static_cast<std::size_t>(function_size);
+    const auto size = static_cast<std::size_t>(function_size);
     const symbol_guess::linux::InstructionReader reader{.image = &img, .base = function.begin, .size = size};
     std::vector<std::size_t> work{0};
     std::unordered_set<std::size_t> visited;
@@ -1395,11 +1395,7 @@ FunctionReferenceValidation validateFunctionReferences(const ImageView &img, con
                 work.push_back(fallthrough);
             }
         }
-        else if (flow == FC_SYS || flow == FC_INT || flow == FC_HLT) {
-            validation.instructions.clear();
-            return validation;
-        }
-        else if (flow != FC_RET && flow != FC_UNC_BRANCH) {
+        else if (flow == FC_SYS || flow == FC_INT || flow == FC_HLT || (flow != FC_RET && flow != FC_UNC_BRANCH)) {
             validation.instructions.clear();
             return validation;
         }
@@ -1497,7 +1493,7 @@ void scanCandidateReferences(const ImageView &img, const GuessTable &table,
                              std::unordered_map<std::uint64_t, std::set<std::uint64_t>> &references,
                              std::unordered_set<std::uint64_t> &ambiguous, symbol_guess::linux::BuildStats &stats)
 {
-    stats.string_reference_candidates = std::min<std::size_t>(targets.size(), kMaximumDiagnosticCounter);
+    stats.string_reference_candidates = std::min<std::size_t>(targets.size(), k_maximum_diagnostic_counter);
     ReferenceValidationBudget budget;
     std::unordered_map<std::uint64_t, FunctionReferenceValidation> validations;
     validations.reserve(std::min<std::size_t>(targets.size(), symbol_guess::linux::kMaximumBatchFunctionValidations));
@@ -1520,7 +1516,7 @@ void scanCandidateReferences(const ImageView &img, const GuessTable &table,
         Invalid,
         Budget
     };
-    const auto markAmbiguous = [&](std::uint64_t target, AmbiguityReason reason) {
+    const auto mark_ambiguous = [&](std::uint64_t target, AmbiguityReason reason) {
         const auto state = states.find(target);
         if (state == states.end() || state->second != ReferenceState::Active) {
             return active_targets == 0;
@@ -1537,14 +1533,13 @@ void scanCandidateReferences(const ImageView &img, const GuessTable &table,
             incrementDiagnostic(stats.string_reference_unreachable);
             break;
         case AmbiguityReason::Invalid:
-            break;
         case AmbiguityReason::Budget:
             break;
         }
         return active_targets == 0;
     };
 
-    const auto recordOwner = [&](std::uint64_t target, std::uint64_t root) {
+    const auto record_owner = [&](std::uint64_t target, std::uint64_t root) {
         const auto state = states.find(target);
         if (state == states.end() || state->second != ReferenceState::Active) {
             return active_targets == 0;
@@ -1569,7 +1564,7 @@ void scanCandidateReferences(const ImageView &img, const GuessTable &table,
         }
         const FunctionRange *function = functionContaining(table, rva);
         if (function == nullptr || function->root != function->begin) {
-            return markAmbiguous(target, AmbiguityReason::Unindexed);
+            return mark_ambiguous(target, AmbiguityReason::Unindexed);
         }
         const auto existing = references.find(target);
         if (existing != references.end() && existing->second.contains(function->root)) {
@@ -1582,30 +1577,29 @@ void scanCandidateReferences(const ImageView &img, const GuessTable &table,
                     budget.function_budget_reported = true;
                     incrementDiagnostic(stats.string_validation_budget_exhausted);
                 }
-                return markAmbiguous(target, AmbiguityReason::Budget);
+                return mark_ambiguous(target, AmbiguityReason::Budget);
             }
             auto validation = validateFunctionReferences(img, *function, budget, stats);
             it = validations.emplace(function->root, std::move(validation)).first;
         }
         const FunctionReferenceValidation &validation = it->second;
         if (!validation.witness_valid) {
-            return markAmbiguous(target,
-                                 validation.budget_exhausted ? AmbiguityReason::Budget : AmbiguityReason::Invalid);
+            return mark_ambiguous(target,
+                                  validation.budget_exhausted ? AmbiguityReason::Budget : AmbiguityReason::Invalid);
         }
-        if (std::binary_search(validation.eligible_targets.begin(), validation.eligible_targets.end(), target)) {
+        if (std::ranges::binary_search(validation.eligible_targets, target)) {
             incrementDiagnostic(stats.string_reference_exact_hits);
-            return recordOwner(target, function->root);
+            return record_owner(target, function->root);
         }
         if (!validation.complete) {
-            return markAmbiguous(target, AmbiguityReason::Invalid);
+            return mark_ambiguous(target, AmbiguityReason::Invalid);
         }
-        const auto exact = std::lower_bound(
-            validation.instructions.begin(), validation.instructions.end(), rva,
-            [](const ReferenceInstruction &instruction, std::uint64_t value) { return instruction.begin < value; });
+        const auto exact =
+            std::ranges::lower_bound(validation.instructions, rva, std::ranges::less{}, &ReferenceInstruction::begin);
         if (exact != validation.instructions.end() && exact->begin == rva) {
             if (exact->eligible && exact->rip_target == target) {
                 incrementDiagnostic(stats.string_reference_exact_hits);
-                return recordOwner(target, function->root);
+                return record_owner(target, function->root);
             }
             return active_targets == 0;
         }
@@ -1614,13 +1608,13 @@ void scanCandidateReferences(const ImageView &img, const GuessTable &table,
             if (previous->begin < rva && rva < previous->end) {
                 if (previous->eligible && previous->rip_target == target) {
                     incrementDiagnostic(stats.string_reference_exact_hits);
-                    return recordOwner(target, function->root);
+                    return record_owner(target, function->root);
                 }
                 incrementDiagnostic(stats.string_reference_interior_rejections);
                 return active_targets == 0;
             }
         }
-        return markAmbiguous(target, AmbiguityReason::Unreachable);
+        return mark_ambiguous(target, AmbiguityReason::Unreachable);
     };
 
     for (const Section &section : img.sections()) {
