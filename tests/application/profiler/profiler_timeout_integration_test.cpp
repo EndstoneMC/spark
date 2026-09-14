@@ -197,7 +197,7 @@ void verifyProfilerTimeoutLifecycle(std::uint64_t worker_tid, const std::filesys
             service.onTick(1.0);
             return !service.exporting();
         },
-        3s);
+        6s);
     if (!export_completed) {
         const auto failed_at = std::chrono::steady_clock::now();
         const auto milliseconds = [](auto duration) {

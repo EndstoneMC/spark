@@ -301,6 +301,7 @@ target_link_libraries(spark_profiler_timeout_integration_test PRIVATE spark_appl
 set_target_properties(spark_profiler_timeout_integration_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_profiler_timeout_integration_test COMMAND spark_profiler_timeout_integration_test)
+set_tests_properties(spark_profiler_timeout_integration_test PROPERTIES TIMEOUT 20)
 
 add_executable(spark_profiler_service_failure_test application/profiler/profiler_service_failure_test.cpp)
 target_link_libraries(spark_profiler_service_failure_test PRIVATE spark_application)
