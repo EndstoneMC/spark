@@ -107,14 +107,11 @@ jobs:
       - name: Check formatting
         run: git ls-files '*.cpp' '*.h' | xargs clang-format-20 --dry-run --Werror
 
-      - name: Package Linux runtime
-        run: cmake --build --preset conan-relwithdebinfo --target spark_linux_archive
-
       - name: Upload test artifact
         uses: actions/upload-artifact@v7
         with:
           name: spark-linux-${{ github.run_id }}
-          path: build/RelWithDebInfo/endstone_spark-linux-x86_64.tar.gz
+          path: build/RelWithDebInfo/endstone_spark.so
           if-no-files-found: error
           retention-days: 14
 

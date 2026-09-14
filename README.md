@@ -461,16 +461,14 @@ with StackWalk64.
 On Windows, copy `build/endstone_spark.dll` into your server's `plugins/`
 directory.
 
-On Linux, extract `endstone_spark-linux-x86_64.tar.gz` into the server's `plugins/`
-directory:
+On Linux, copy `build/endstone_spark.so` into the server's `plugins/` directory:
 
 ```text
 plugins/
   endstone_spark.so
 ```
 
-The archive contains exactly one file, `endstone_spark.so`. For a local build,
-copy `build/endstone_spark.so` into `plugins/`. No helper library is required.
+No helper library is required.
 Restart the server process when upgrading from a helper-based build or changing
 the permanent gateway's code identity.
 

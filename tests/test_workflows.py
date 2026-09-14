@@ -91,10 +91,24 @@ class WorkflowTest(unittest.TestCase):
         self.assertLess(workflow.index("  linux:"), workflow.index("  publish:"))
         self.assertIn("ctest --test-dir build/RelWithDebInfo --output-on-failure", workflow)
         self.assertEqual(workflow.count("tools/verify_windows_artifacts.ps1"), 2)
-        self.assertIn("cp release-windows/SHA256SUMS release-windows/SHA256SUMS-windows", workflow)
-        self.assertIn("cmp -- release-windows/SHA256SUMS release-windows/SHA256SUMS-windows", workflow)
-        self.assertIn("release-windows/SHA256SUMS-windows", workflow)
-        self.assertNotIn("SHA256SUMS#SHA256SUMS-windows", workflow)
+        self.assertIn("release-windows/SHA256SUMS", workflow)
+        self.assertNotIn("SHA256SUMS-windows", workflow)
+        self.assertIn("python tests/native/alloc/verify_linux_gateway.py elf release-linux/endstone_spark.so", workflow)
+        self.assertNotIn("endstone_spark-linux-x86_64.tar.gz", workflow)
+        publish_command = workflow.split("            --notes-file release-notes/release_body.md \\\n", 1)[1]
+        assets = [
+            line.strip().rstrip("\\").strip()
+            for line in publish_command.splitlines()
+            if line.startswith("            release-")
+        ]
+        self.assertEqual(
+            assets,
+            [
+                "release-windows/endstone_spark.dll",
+                "release-windows/endstone_spark.pdb",
+                "release-linux/endstone_spark.so",
+            ],
+        )
 
     def test_windows_version_resource_is_configure_time_generated(self):
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")

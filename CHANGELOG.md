@@ -70,9 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serialization while preserving the exported profile contents.
 - Keep Linux string hints tentative, validate their reference owners, and reject
   virtual-table labels without direct evidence.
-- Distribute Linux builds as `endstone_spark-linux-x86_64.tar.gz` containing only
-  `endstone_spark.so`. Restart the server when upgrading from the old helper-based
-  runtime or changing permanent gateway code.
+- Distribute Linux builds as the single `endstone_spark.so` plugin file. Restart
+  the server when upgrading from the old helper-based runtime or changing
+  permanent gateway code.
 - **BREAKING**: Limit Linux allocation providers to those provably in the main
   executable's startup `DT_NEEDED` dependency closure. Dynamically loaded custom
   providers outside that closure are unsupported.

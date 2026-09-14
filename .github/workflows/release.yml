@@ -374,14 +374,11 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build/RelWithDebInfo --output-on-failure
 
-      - name: Package Linux runtime
-        run: cmake --build --preset conan-relwithdebinfo --target spark_linux_archive
-
       - name: Upload release asset
         uses: actions/upload-artifact@v7
         with:
           name: release-linux
-          path: build/RelWithDebInfo/endstone_spark-linux-x86_64.tar.gz
+          path: build/RelWithDebInfo/endstone_spark.so
           if-no-files-found: error
 
   publish:
@@ -416,8 +413,8 @@ jobs:
           name: release-linux
           path: release-linux
 
-      - name: Verify Linux runtime archive
-        run: python tests/native/alloc/verify_linux_gateway.py archive release-linux/endstone_spark-linux-x86_64.tar.gz
+      - name: Verify Linux ELF
+        run: python tests/native/alloc/verify_linux_gateway.py elf release-linux/endstone_spark.so
 
       - name: Verify Windows hashes before publishing
         shell: pwsh
@@ -438,15 +435,11 @@ jobs:
           test -f release-windows/endstone_spark.dll
           test -f release-windows/endstone_spark.pdb
           test -f release-windows/SHA256SUMS
-          cp release-windows/SHA256SUMS release-windows/SHA256SUMS-windows
-          cmp -- release-windows/SHA256SUMS release-windows/SHA256SUMS-windows
-          test -f release-windows/SHA256SUMS-windows
-          test -f release-linux/endstone_spark-linux-x86_64.tar.gz
+          test -f release-linux/endstone_spark.so
           gh release create "v${{ needs.release.outputs.version }}" \
             --repo "${{ github.repository }}" \
             --title "v${{ needs.release.outputs.version }}" \
             --notes-file release-notes/release_body.md \
             release-windows/endstone_spark.dll \
             release-windows/endstone_spark.pdb \
-            release-windows/SHA256SUMS-windows \
-            release-linux/endstone_spark-linux-x86_64.tar.gz
+            release-linux/endstone_spark.so
