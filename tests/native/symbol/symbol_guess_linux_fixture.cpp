@@ -50,10 +50,12 @@ __attribute__((noinline, used)) int VtableOwner::run() const
     return 17;
 }
 
-static VtableOwner owner;
+namespace {
+
+VtableOwner Owner;
 
 // Itanium vtable metadata followed by an interior target.
-__attribute__((used, visibility("hidden"))) static const void *interior_vtable[] = {
+__attribute__((used, visibility("hidden"))) const void *InteriorVtable[] = {
     nullptr,
     &typeid(VtableOwner),
     // This deliberately points one byte into a function for the invalid fixture case.
@@ -61,6 +63,8 @@ __attribute__((used, visibility("hidden"))) static const void *interior_vtable[]
     reinterpret_cast<const void *>(reinterpret_cast<std::uintptr_t>(&sparkFixtureUniqueStringTarget) + 1),
     nullptr,
 };
+
+}  // namespace
 
 }  // namespace fixture
 
@@ -141,7 +145,7 @@ int main()
         functionRva(reinterpret_cast<void *>(&sparkFixtureWeakAmbiguousTarget), base);
     const std::uint64_t thunk_rva = functionRva(reinterpret_cast<void *>(&sparkFixtureInteriorThunk), base);
 
-    void **vtable = *reinterpret_cast<void ***>(&fixture::owner);
+    void **vtable = *reinterpret_cast<void ***>(&fixture::Owner);
     const std::uint64_t vtable_rva = functionRva(vtable[0], base);
 
     // The shared pair is negative even when queried alone; query order must not change it.

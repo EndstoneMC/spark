@@ -1276,11 +1276,11 @@ struct ReferenceValidationBudget {
     bool instruction_budget_reported = false;
 };
 
-constexpr std::size_t k_maximum_diagnostic_counter = 1000000U;
+constexpr std::size_t KMaximumDiagnosticCounter = 1000000U;
 
 void incrementDiagnostic(std::size_t &counter)
 {
-    if (counter < k_maximum_diagnostic_counter) {
+    if (counter < KMaximumDiagnosticCounter) {
         ++counter;
     }
 }
@@ -1493,7 +1493,7 @@ void scanCandidateReferences(const ImageView &img, const GuessTable &table,
                              std::unordered_map<std::uint64_t, std::set<std::uint64_t>> &references,
                              std::unordered_set<std::uint64_t> &ambiguous, symbol_guess::linux::BuildStats &stats)
 {
-    stats.string_reference_candidates = std::min<std::size_t>(targets.size(), k_maximum_diagnostic_counter);
+    stats.string_reference_candidates = std::min<std::size_t>(targets.size(), KMaximumDiagnosticCounter);
     ReferenceValidationBudget budget;
     std::unordered_map<std::uint64_t, FunctionReferenceValidation> validations;
     validations.reserve(std::min<std::size_t>(targets.size(), symbol_guess::linux::kMaximumBatchFunctionValidations));
