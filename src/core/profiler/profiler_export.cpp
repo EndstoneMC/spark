@@ -7,6 +7,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "core/profiler/native_attribution.h"
 #include "core/profiler/profiler.h"
@@ -336,10 +337,21 @@ void Profiler::addNativePluginSources(ProfileMetadata &meta, const ExportContext
 
 std::string Profiler::exportData(const ExportContext &ctx) const
 {
-    return exportData(ctx, nullptr);
+    return exportData(ctx, nullptr, nullptr);
+}
+
+std::string Profiler::exportData(ExportContext &&ctx) const
+{
+    return exportData(ctx, nullptr, &ctx);
 }
 
 std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnapshot *allocation_snapshot) const
+{
+    return exportData(ctx, allocation_snapshot, nullptr);
+}
+
+std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnapshot *allocation_snapshot,
+                                 ExportContext *owned_ctx) const
 {
     ProfileMetadata meta;
     meta.start_time_ms = start_time_ms_;
@@ -348,15 +360,26 @@ std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnaps
     meta.mode = mode_;
     meta.number_of_ticks = static_cast<std::int32_t>(
         allocation_snapshot != nullptr ? allocation_snapshot->number_of_ticks : activeNumberOfTicks());
-    meta.endstone_version = ctx.endstone_version;
-    meta.minecraft_version = ctx.minecraft_version;
+    if (owned_ctx != nullptr) {
+        meta.endstone_version = std::move(owned_ctx->endstone_version);
+        meta.minecraft_version = std::move(owned_ctx->minecraft_version);
+    }
+    else {
+        meta.endstone_version = ctx.endstone_version;
+        meta.minecraft_version = ctx.minecraft_version;
+    }
     if (mode_ == ProfileMode::Allocation) {
         meta.engine_version = std::string("endstone-spark ") + kVersion + " " + AllocationSampler::backendId();
     }
     else {
         meta.engine_version = std::string("endstone-spark ") + kVersion;
     }
-    meta.comment = !ctx.comment.empty() ? ctx.comment : options_.comment;
+    if (!ctx.comment.empty()) {
+        meta.comment = owned_ctx != nullptr ? std::move(owned_ctx->comment) : ctx.comment;
+    }
+    else {
+        meta.comment = options_.comment;
+    }
     meta.creator_name = options_.creator_name;
     meta.creator_is_player = options_.creator_is_player;
     meta.creator_unique_id = options_.creator_unique_id;
@@ -661,16 +684,31 @@ std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnaps
     meta.platform_stats.process_virtual_bytes = process.virtual_bytes;
 
     meta.statistics = ctx.statistics;
-    meta.metrics = ctx.metrics;
-    meta.system_stats = ctx.system_stats;
+    if (owned_ctx != nullptr) {
+        meta.metrics = std::move(owned_ctx->metrics);
+        meta.system_stats = std::move(owned_ctx->system_stats);
+    }
+    else {
+        meta.metrics = ctx.metrics;
+        meta.system_stats = ctx.system_stats;
+    }
     meta.system_stats.uptime_present = true;
     meta.system_stats.uptime_ms = ctx.uptime_ms;
     meta.system_stats.present = true;
-    meta.plugins = ctx.plugins;
-    meta.world = ctx.world;
-    meta.server_configurations = ctx.server_configurations;
-    meta.window_stats = ctx.window_stats;
-    meta.socket_channel_info_proto = ctx.socket_channel_info_proto;
+    if (owned_ctx != nullptr) {
+        meta.plugins = std::move(owned_ctx->plugins);
+        meta.world = std::move(owned_ctx->world);
+        meta.server_configurations = std::move(owned_ctx->server_configurations);
+        meta.window_stats = std::move(owned_ctx->window_stats);
+        meta.socket_channel_info_proto = std::move(owned_ctx->socket_channel_info_proto);
+    }
+    else {
+        meta.plugins = ctx.plugins;
+        meta.world = ctx.world;
+        meta.server_configurations = ctx.server_configurations;
+        meta.window_stats = ctx.window_stats;
+        meta.socket_channel_info_proto = ctx.socket_channel_info_proto;
+    }
     meta.extra_platform_metadata["Statistics history available ms"] = std::to_string(ctx.statistics.history_span_ms);
 
     // Populate ping rolling average if samples were collected.
@@ -688,7 +726,13 @@ std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnaps
     }
 
     // Populate network rolling averages if snapshots were collected.
-    if (!ctx.net_snapshots.empty()) {
+    if (owned_ctx != nullptr) {
+        if (!owned_ctx->net_snapshots.empty()) {
+            meta.system_stats.net_present = true;
+            meta.system_stats.net_averages = std::move(owned_ctx->net_snapshots);
+        }
+    }
+    else if (!ctx.net_snapshots.empty()) {
         meta.system_stats.net_present = true;
         meta.system_stats.net_averages = ctx.net_snapshots;
     }

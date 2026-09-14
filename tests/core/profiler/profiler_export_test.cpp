@@ -6,10 +6,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -20,6 +22,7 @@
 #include "core/profiler/profiler.h"
 #include "native/sampler/thread_info.h"
 #include "proto/proto_reader.h"
+#include "proto/proto_writer.h"
 
 namespace spark {
 
@@ -48,6 +51,12 @@ struct ProfilerTestAccess {
     }
 
     static void setMode(Profiler &profiler, ProfileMode mode) { profiler.mode_ = mode; }
+
+    static void setExportTimes(Profiler &profiler, std::int64_t start_time_ms, std::int64_t end_time_ms)
+    {
+        profiler.start_time_ms_ = start_time_ms;
+        profiler.end_time_ms_ = end_time_ms;
+    }
 
     static bool allocationSnapshot(Profiler &profiler, AllocationSnapshot &snapshot, std::string &error)
     {
@@ -250,6 +259,95 @@ bool metadataString(std::string_view profile, std::string_view key, std::string_
 {
     std::string value;
     return findExtraMetadataValue(profile, key, value) && value == expected;
+}
+
+std::string normalizeExportVolatileFields(std::string_view bytes, int level = 0)
+{
+    spark::ProtoReader reader(bytes);
+    std::string normalized;
+    spark::ProtoWriter writer(normalized);
+    int field = 0;
+    int wire_type = 0;
+    while (reader.nextField(field, wire_type)) {
+        if (wire_type == 0) {
+            const std::int64_t value = reader.readInt64();
+            const bool process_memory = level == 4 && (field == 1 || field == 2 || field == 4);
+            const bool profile_time = level == 1 && (field == 2 || field == 11);
+            writer.int64(field, process_memory || profile_time ? 0 : value);
+        }
+        else if (wire_type == 2) {
+            const std::string value = reader.readBytes();
+            const bool metadata = level == 0 && field == 1;
+            const bool platform = level == 1 && field == 8;
+            const bool process_stats = level == 2 && field == 1;
+            const bool process_heap = level == 3 && field == 1;
+            writer.message(field, metadata || platform || process_stats || process_heap
+                                         ? normalizeExportVolatileFields(value, level + 1)
+                                         : value);
+        }
+        else {
+            assert(false && "unexpected sampler-data wire type");
+            reader.skip(wire_type);
+        }
+    }
+    assert(reader.valid());
+    return normalized;
+}
+
+spark::ExportContext exportContextFixture(bool include_net_snapshots)
+{
+    spark::ExportContext context;
+    context.endstone_version = "endstone-test";
+    context.minecraft_version = "1.21.0";
+    context.bds_executable_sha256 = "test-hash";
+    context.comment = "owned export context";
+    context.player_count = 3;
+    context.online_mode = 2;
+    context.uptime_ms = 123456;
+    context.statistics.history_span_ms = 654321;
+    context.metrics.tps.push_back({.timestamp_ms = 1000, .value = 19.5});
+    context.system_stats.present = true;
+    context.system_stats.cpu_present = true;
+    context.system_stats.cpu_threads = 8;
+    context.system_stats.cpu_model = "test-cpu";
+    spark::NetworkInterfaceSnapshot network;
+    network.rx_bytes_per_second.present = true;
+    network.rx_bytes_per_second.mean = 12.5;
+    context.system_stats.net_averages.emplace("system-interface", network);
+    context.plugins.push_back({.name = "TestPlugin", .version = "1.0", .author = "Author", .description = "Test"});
+    context.world.present = true;
+    context.world.total_entities = 9;
+    context.world.entity_counts.emplace("minecraft:zombie", 9);
+    spark::WorldEntry world;
+    world.name = "world";
+    world.total_entities = 9;
+    context.world.worlds.push_back(std::move(world));
+    context.server_configurations.emplace("difficulty", "normal");
+    context.window_stats.emplace(0, spark::WindowStats{.ticks_present = true, .ticks = 20});
+    context.ping_samples = {20, 40, 60};
+    if (include_net_snapshots) {
+        context.net_snapshots.emplace("network-interface", network);
+    }
+    context.native_plugin_sources.push_back({.module_base = 0x1000, .module_path = "plugin.dll", .source_id = "TestPlugin"});
+    context.socket_channel_info_proto = "socket-channel-info";
+    return context;
+}
+
+void verifyOwnedExportContext()
+{
+    for (const bool include_net_snapshots : {false, true}) {
+        spark::Profiler profiler;
+        spark::ProfilerTestAccess::setExportTimes(profiler, 1000, 2000);
+        spark::ExportContext context = exportContextFixture(include_net_snapshots);
+        const std::string legacy_profile = profiler.exportData(context);
+        const std::string reusable_profile = profiler.exportData(context);
+        assert(!legacy_profile.empty());
+        assert(normalizeExportVolatileFields(reusable_profile) == normalizeExportVolatileFields(legacy_profile));
+
+        spark::ExportContext owned_context = context;
+        const std::string owned_profile = profiler.exportData(std::move(owned_context));
+        assert(normalizeExportVolatileFields(owned_profile) == normalizeExportVolatileFields(legacy_profile));
+    }
 }
 
 bool verifyTerminalMetadataExport()
@@ -932,6 +1030,7 @@ bool verifyRetainedAllocationLiveExport()
 
 int main()
 {
+    verifyOwnedExportContext();
     for (const auto mode : {spark::ProfileMode::Execution, spark::ProfileMode::Allocation}) {
         for (const auto grouping :
              {spark::ThreadGrouperMode::ByName, spark::ThreadGrouperMode::ByPool, spark::ThreadGrouperMode::AsOne}) {

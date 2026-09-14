@@ -30,6 +30,19 @@ ProfileExporter::ProfileExporter(std::filesystem::path storage_dir, std::string 
 ProfileExporter::Result ProfileExporter::exportProfile(Profiler &profiler, const ExportContext &ctx, bool save_to_file,
                                                        const CancellationToken &cancellation)
 {
+    return exportProfile(profiler, ctx, save_to_file, nullptr, cancellation);
+}
+
+ProfileExporter::Result ProfileExporter::exportProfile(Profiler &profiler, ExportContext &&ctx, bool save_to_file,
+                                                       const CancellationToken &cancellation)
+{
+    return exportProfile(profiler, ctx, save_to_file, &ctx, cancellation);
+}
+
+ProfileExporter::Result ProfileExporter::exportProfile(Profiler &profiler, const ExportContext &ctx, bool save_to_file,
+                                                       ExportContext *owned_ctx,
+                                                       const CancellationToken &cancellation)
+{
     Result result;
     const auto cancelled = [&]() {
         result.outcome = ExportOutcome::Failed;
@@ -41,7 +54,7 @@ ProfileExporter::Result ProfileExporter::exportProfile(Profiler &profiler, const
         if (cancellation.stopRequested()) {
             return cancelled();
         }
-        std::string body = profiler.exportData(ctx);
+        std::string body = owned_ctx != nullptr ? profiler.exportData(std::move(*owned_ctx)) : profiler.exportData(ctx);
         // Serialization has copied the completed allocation tree. Persistent
         // count-only may now safely reset/reuse the native allocation sampler
         // while gzip and network/file I/O continue in this export worker.

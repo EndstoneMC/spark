@@ -41,8 +41,13 @@ public:
     // Saves raw protobuf locally; bytebin uploads use gzip with local fallback.
     Result exportProfile(Profiler &profiler, const ExportContext &ctx, bool save_to_file,
                          const CancellationToken &cancellation = {});
+    Result exportProfile(Profiler &profiler, ExportContext &&ctx, bool save_to_file,
+                         const CancellationToken &cancellation = {});
 
 private:
+    Result exportProfile(Profiler &profiler, const ExportContext &ctx, bool save_to_file, ExportContext *owned_ctx,
+                         const CancellationToken &cancellation);
+
 #if defined(SPARK_ALLOCATION_LIFECYCLE_TESTING)
     friend struct ProfileExporterTestAccess;
     friend struct ProfilerServiceTestAccess;

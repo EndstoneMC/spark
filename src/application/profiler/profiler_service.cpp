@@ -37,12 +37,6 @@ ProfilerService::ProfilerService(StatisticsService &statistics, std::string bds_
       background_thread_dumper_(std::move(background_thread_dumper)), bytebin_url_(std::move(bytebin_url)),
       viewer_url_(std::move(viewer_url)), bytesocks_host_(std::move(bytesocks_host)), trusted_viewers_(trusted_viewers)
 {
-#ifdef SPARK_ALLOCATION_LIFECYCLE_TESTING
-    export_function_ = [this](Profiler &profiler, const ExportContext &context, bool save_to_file,
-                              const CancellationToken &cancellation) {
-        return exporter_.exportProfile(profiler, context, save_to_file, cancellation);
-    };
-#endif
     viewer_open_ = std::make_unique<ProfilerOpenOrchestrator>(
         profiler_, statistics_, bds_executable_sha256_, bytebin_url_, viewer_url_, bytesocks_host_, trusted_viewers_,
         dispatcher_, metadata_provider_, notifier_);
@@ -395,11 +389,18 @@ void ProfilerService::exportWorkerLoop() noexcept
                                                       CiDiagnosticPhase::ExportEnter, CiDiagnosticPhase::ExportComplete,
                                                       CiDiagnosticPhase::ExportFailed, worker_tid);
 #ifdef SPARK_ALLOCATION_LIFECYCLE_TESTING
-                ProfileExporter::Result result = export_function_(profiler_, active_job->context,
-                                                                  active_job->save_to_file, active_job->cancellation);
+                ProfileExporter::Result result;
+                if (export_function_) {
+                    result = export_function_(profiler_, active_job->context, active_job->save_to_file,
+                                              active_job->cancellation);
+                }
+                else {
+                    result = exporter_.exportProfile(profiler_, std::move(active_job->context), active_job->save_to_file,
+                                                     active_job->cancellation);
+                }
 #else
                 ProfileExporter::Result result = exporter_.exportProfile(
-                    profiler_, active_job->context, active_job->save_to_file, active_job->cancellation);
+                    profiler_, std::move(active_job->context), active_job->save_to_file, active_job->cancellation);
 #endif
                 published.outcome = result.outcome;
                 published.message = std::move(result.message);

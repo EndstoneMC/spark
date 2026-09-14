@@ -146,6 +146,7 @@ public:
     void stopSampling();  // compatibility helper that discards the error
     void requestStop() noexcept;
     std::string exportData(const ExportContext &ctx) const;
+    std::string exportData(ExportContext &&ctx) const;
 
     // Export while the profiler is still running.
     std::string liveExport(const ExportContext &ctx);
@@ -197,6 +198,8 @@ private:
     const ModuleTable &activeModules() const;
     std::uint64_t activeNumberOfTicks() const;
     std::string exportData(const ExportContext &ctx, const AllocationSnapshot *allocation_snapshot) const;
+    std::string exportData(const ExportContext &ctx, const AllocationSnapshot *allocation_snapshot,
+                           ExportContext *owned_ctx) const;
     void stopRecoveryWriter();
     bool reapRecoveryWriter();
     bool hasPendingRecoveryWriter() const;

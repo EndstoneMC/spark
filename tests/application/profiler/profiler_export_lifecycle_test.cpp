@@ -510,6 +510,31 @@ void testExporterFallbackCancellationStatus()
     assert(saves.load() == 1);
 }
 
+void testCancellationBeforeOwnedExportLeavesContext()
+{
+    spark::ProfileExporter exporter(testRoot("owned-cancel"), "https://bytebin/", "https://viewer/");
+    spark::Profiler profiler;
+    spark::ExportContext context;
+    context.endstone_version = "endstone-test";
+    context.comment = "cancelled export";
+    context.metrics.tps.push_back({.timestamp_ms = 1, .value = 20.0});
+    context.plugins.push_back({.name = "Plugin", .version = "1", .author = "Author", .description = "Description"});
+    context.server_configurations.emplace("difficulty", "normal");
+    const auto expected_metrics = context.metrics.tps.size();
+    const auto expected_plugins = context.plugins.size();
+
+    spark::CancellationSource cancellation;
+    cancellation.requestStop();
+    const auto result = exporter.exportProfile(profiler, std::move(context), false, cancellation.token());
+    assert(result.outcome == spark::ExportOutcome::Failed);
+    assert(result.retain_recovery_journal);
+    assert(context.endstone_version == "endstone-test");
+    assert(context.comment == "cancelled export");
+    assert(context.metrics.tps.size() == expected_metrics);
+    assert(context.plugins.size() == expected_plugins);
+    assert(context.server_configurations.at("difficulty") == "normal");
+}
+
 void testSuccessfulExportReportsCleanupWarning()
 {
     const auto root = testRoot("cleanup-warning");
@@ -1035,6 +1060,7 @@ int main(int argc, char **argv)
     testPreparationThrowPublishesTerminalFailure();
     testShutdownConsumesResultSilentlyAndRetainsJournal();
     testExporterFallbackCancellationStatus();
+    testCancellationBeforeOwnedExportLeavesContext();
     testSuccessfulExportReportsCleanupWarning();
     testGzipCancellationAndRoundTrip();
     testActualFinalUploadCancellation();

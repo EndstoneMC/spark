@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   floating-point fields directly.
 - Reduce crash-recovery replay memory by releasing parsed journal records and
   temporary window indexes before reconstructing and serializing the profile.
+- Reduce normal profile-export metadata copies by moving owned snapshots into
+  serialization while preserving the exported profile contents.
 - Keep Linux string hints tentative, validate their reference owners, and reject
   virtual-table labels without direct evidence.
 - Distribute Linux builds as `endstone_spark-linux-x86_64.tar.gz` containing only
