@@ -69,18 +69,15 @@ void testRecoveryRepeatedStackMultipleThreads()
 {
     for (const auto grouping : {ThreadGrouperMode::ByName, ThreadGrouperMode::AsOne}) {
         const auto dir = makeTempDir();
-        const auto config = buildSessionConfigPayload(
-            4000, 0, true, false, false, static_cast<std::uint8_t>(grouping), 0, false, "Console", false, {}, {}, 0);
-        std::vector<RecordSpec> records{{.type = RecordType::SessionConfig, .sequence = 0, .payload = config},
-                                        {.type = RecordType::ModuleDef,
-                                         .sequence = 1,
-                                         .payload = buildModuleDefPayload(0, "repeated-stack-fixture")},
-                                        {.type = RecordType::ThreadDef,
-                                         .sequence = 2,
-                                         .payload = buildThreadDefPayload(101, 101, "Worker-1")},
-                                        {.type = RecordType::ThreadDef,
-                                         .sequence = 3,
-                                         .payload = buildThreadDefPayload(202, 202, "Worker-2")}};
+        const auto config = buildSessionConfigPayload(4000, 0, true, false, false, static_cast<std::uint8_t>(grouping),
+                                                      0, false, "Console", false, {}, {}, 0);
+        std::vector<RecordSpec> records{
+            {.type = RecordType::SessionConfig, .sequence = 0, .payload = config},
+            {.type = RecordType::ModuleDef,
+             .sequence = 1,
+             .payload = buildModuleDefPayload(0, "repeated-stack-fixture")},
+            {.type = RecordType::ThreadDef, .sequence = 2, .payload = buildThreadDefPayload(101, 101, "Worker-1")},
+            {.type = RecordType::ThreadDef, .sequence = 3, .payload = buildThreadDefPayload(202, 202, "Worker-2")}};
         for (const std::uint64_t thread_id : {101ULL, 202ULL}) {
             for (const std::int32_t window : {0, 1}) {
                 Sample sample;

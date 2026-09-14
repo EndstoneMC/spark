@@ -129,9 +129,9 @@ bool verifyDistinctTidCapacityPerSession()
 
     shadow.resetSession();
     shadow.onEvent(spark::PythonShadowStack::kThreadCapacity + 1, spark::PythonExecutionEvent::Start, 1000);
-    ok &= expect(shadow.registeredThreads() == 1 && shadow.snapshot(spark::PythonShadowStack::kThreadCapacity + 1,
-                                                                    snapshot) &&
-                     snapshot.depth == 1 && snapshot.codes[0] == 1000,
+    ok &= expect(shadow.registeredThreads() == 1 &&
+                     shadow.snapshot(spark::PythonShadowStack::kThreadCapacity + 1, snapshot) && snapshot.depth == 1 &&
+                     snapshot.codes[0] == 1000,
                  "session reset did not reclaim native thread ID capacity");
     return ok;
 }

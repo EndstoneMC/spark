@@ -9,8 +9,7 @@
 
 namespace spark {
 
-inline void gatherPlatformServerMetadata(ProfileMetadataProvider &provider, ExportContext &context,
-                                          std::int64_t now_ms)
+inline void gatherPlatformServerMetadata(ProfileMetadataProvider &provider, ExportContext &context, std::int64_t now_ms)
 {
     ServerMetadata metadata;
     metadata.endstone_version = std::move(context.endstone_version);

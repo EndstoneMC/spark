@@ -1,5 +1,4 @@
 #include "application/profiler/profiler_service.h"
-#include "application/profiler/platform_metadata_capture.h"
 
 #include <algorithm>
 #include <chrono>
@@ -10,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "application/profiler/platform_metadata_capture.h"
 #include "core/util/monotonic_time.h"
 #include "native/diagnostics/ci_diagnostics.h"
 
@@ -396,8 +396,8 @@ void ProfilerService::exportWorkerLoop() noexcept
                                               active_job->cancellation);
                 }
                 else {
-                    result = exporter_.exportProfile(profiler_, std::move(active_job->context), active_job->save_to_file,
-                                                     active_job->cancellation);
+                    result = exporter_.exportProfile(profiler_, std::move(active_job->context),
+                                                     active_job->save_to_file, active_job->cancellation);
                 }
 #else
                 ProfileExporter::Result result = exporter_.exportProfile(

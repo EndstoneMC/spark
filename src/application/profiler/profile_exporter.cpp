@@ -40,8 +40,7 @@ ProfileExporter::Result ProfileExporter::exportProfile(Profiler &profiler, Expor
 }
 
 ProfileExporter::Result ProfileExporter::exportProfile(Profiler &profiler, const ExportContext &ctx, bool save_to_file,
-                                                       ExportContext *owned_ctx,
-                                                       const CancellationToken &cancellation)
+                                                       ExportContext *owned_ctx, const CancellationToken &cancellation)
 {
     Result result;
     const auto cancelled = [&]() {

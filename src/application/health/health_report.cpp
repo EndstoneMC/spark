@@ -1,9 +1,9 @@
 #include "application/health/health_report.h"
-#include "application/profiler/platform_metadata_capture.h"
 
 #include <algorithm>
 #include <utility>
 
+#include "application/profiler/platform_metadata_capture.h"
 #include "core/profiler/profiler.h"
 #include "core/stats/ping_statistics.h"
 #include "core/stats/system_stats.h"

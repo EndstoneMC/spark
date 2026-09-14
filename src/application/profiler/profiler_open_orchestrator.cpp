@@ -1,10 +1,10 @@
 #include "application/profiler/profiler_open_orchestrator.h"
-#include "application/profiler/platform_metadata_capture.h"
 
 #include <string>
 #include <utility>
 
 #include "application/profiler/live_statistics_payload.h"
+#include "application/profiler/platform_metadata_capture.h"
 #include "core/stats/system_stats.h"
 #include "core/util/base64.h"
 #include "core/util/format.h"
