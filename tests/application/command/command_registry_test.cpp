@@ -39,6 +39,8 @@ int main()
     registry.registerCommand(
         {"activity"}, "activity command", "spark.activity", false,
         [&values](spark::CommandSender &, const spark::Arguments &args) { values = args.stringFlag("value"); });
+    registry.registerCommand({"health"}, "health command", "spark.health", true,
+                             [](spark::CommandSender &, const spark::Arguments &) {});
     registry.registerCommand({"public"}, "public command", "", false,
                              [](spark::CommandSender &, const spark::Arguments &) {});
 
@@ -58,16 +60,19 @@ int main()
     registry.sendHelp(sender);
     bool saw_profile = false;
     bool saw_activity = false;
+    bool saw_health_details = false;
     bool saw_public = false;
     bool saw_profiler_details = false;
     for (const std::string &message : sender.messages) {
         saw_profile = saw_profile || message.find("/spark profile ") != std::string::npos;
         saw_activity = saw_activity || message.find("/spark activity ") != std::string::npos;
+        saw_health_details = saw_health_details || message.find("health show: --memory") != std::string::npos;
         saw_public = saw_public || message.find("/spark public ") != std::string::npos;
         saw_profiler_details = saw_profiler_details || message.find("Modes: --alloc") != std::string::npos;
     }
     assert(!saw_profile);
     assert(saw_activity);
+    assert(!saw_health_details);
     assert(saw_public);
     assert(!saw_profiler_details);
 
@@ -75,6 +80,11 @@ int main()
     sender.messages.clear();
     registry.sendHelp(sender);
     assert(sender.messages.size() >= 5);
+    saw_health_details = false;
+    for (const std::string &message : sender.messages) {
+        saw_health_details = saw_health_details || message.find("health show: --memory") != std::string::npos;
+    }
+    assert(saw_health_details);
 
     sender.permissions["endstone.command.spark"] = false;
     sender.permissions["spark"] = true;

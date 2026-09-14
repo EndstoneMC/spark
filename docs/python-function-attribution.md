@@ -14,7 +14,7 @@ The implementation deliberately separates Python execution tracking from CPU acc
 
 The sampler does not acquire the GIL, call the Python C API, take a normal mutex, perform filesystem work, or symbolize Python objects.
 
-The shadow stack is bounded to 256 visible frames per Python thread. Deeper execution remains safe: overflow depth is counted and diagnostics expose the maximum observed depth and truncation events. A process-wide fixed table supports up to 256 concurrently registered native Python threads per profiling session.
+The shadow stack is bounded to 256 visible frames per Python thread. Deeper execution remains safe: overflow depth is counted and diagnostics expose the maximum observed depth and truncation events. A process-wide fixed table supports up to 256 distinct native thread IDs per profiling session. A slot is retained for the rest of that session after its thread exits or its ID stops producing events; slots are reclaimed only by the next session reset.
 
 ## Lifecycle events
 
@@ -57,4 +57,8 @@ Synthetic Python frames use profiling-session-local `PythonCodeId` values. They 
 
 Export metadata includes backend/version/support state, event counts, registered threads, maximum and overflow depth, snapshot attempts/failures, attributed/native-only samples, native/Python boundary misses, thread mismatches, unknown IDs, code-category counts, cache hits/misses and monitoring callback failures.
 
-These counters are intended both for production diagnosis and for the real-BDS validation and performance harnesses.
+If public CPython APIs cannot be resolved, or a code object cannot be registered,
+Spark keeps native sampling available and exports a native-only/support-state
+diagnostic. After a registration failure, the session rejects new Python symbols
+while retaining already registered metadata. The counters are intended both for
+production diagnosis and for the real-BDS validation and performance harnesses.

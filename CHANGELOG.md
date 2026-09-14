@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Object limits when available.
 - Add process-wide native allocation-rate metrics and 1m/5m/15m rolling rates on
   Linux and Windows.
+- Make allocation-rate metrics configurable through `allocationRateMetrics` and
+  expose `health show --memory` and `--network` detail switches.
 - Attribute sampled Python plugin call chains on CPython 3.12+ using a bounded PEP
   669 shadow stack while keeping sampling native; CPython 3.11 remains native-only.
 - Expose detailed allocation capacity, loss, and accounting-validity diagnostics,

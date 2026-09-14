@@ -107,9 +107,38 @@ bool verifyConcurrentSnapshots()
     return ok;
 }
 
+bool verifyDistinctTidCapacityPerSession()
+{
+    spark::PythonShadowStack shadow;
+    shadow.resetSession();
+    bool ok = true;
+    spark::PythonStackProvider::Snapshot snapshot;
+    for (std::uint64_t tid = 1; tid <= spark::PythonShadowStack::kThreadCapacity; ++tid) {
+        shadow.onEvent(tid, spark::PythonExecutionEvent::Start, tid);
+        shadow.onEvent(tid, spark::PythonExecutionEvent::Return, tid);
+        ok &= expect(shadow.snapshot(tid, snapshot) && snapshot.depth == 0,
+                     "sequential native thread ID left an active Python frame");
+    }
+    ok &= expect(shadow.registeredThreads() == spark::PythonShadowStack::kThreadCapacity,
+                 "distinct native thread IDs did not fill the session capacity");
+
+    const auto mismatches = shadow.threadMismatches();
+    shadow.onEvent(spark::PythonShadowStack::kThreadCapacity + 1, spark::PythonExecutionEvent::Start, 999);
+    ok &= expect(shadow.threadMismatches() == mismatches + 1,
+                 "a 257th distinct native thread ID was accepted before reset");
+
+    shadow.resetSession();
+    shadow.onEvent(spark::PythonShadowStack::kThreadCapacity + 1, spark::PythonExecutionEvent::Start, 1000);
+    ok &= expect(shadow.registeredThreads() == 1 && shadow.snapshot(spark::PythonShadowStack::kThreadCapacity + 1,
+                                                                    snapshot) &&
+                     snapshot.depth == 1 && snapshot.codes[0] == 1000,
+                 "session reset did not reclaim native thread ID capacity");
+    return ok;
+}
+
 }  // namespace
 
 int main()
 {
-    return verifyLifecycleAndOverflow() && verifyConcurrentSnapshots() ? 0 : 1;
+    return verifyLifecycleAndOverflow() && verifyConcurrentSnapshots() && verifyDistinctTidCapacityPerSession() ? 0 : 1;
 }

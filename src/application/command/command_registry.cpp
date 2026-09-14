@@ -109,6 +109,7 @@ void CommandRegistry::sendHelp(CommandSender &sender) const
     }
     if (can_use("health")) {
         sender.sendMessage(kColorGray + "Health: show/upload/dashboard/trust-viewer [--id <client id>]");
+        sender.sendMessage(kColorGray + "       health show: --memory (process details), --network (all interfaces)");
     }
     if (can_use("activity")) {
         sender.sendMessage(kColorGray + "Activity: --page <number>");

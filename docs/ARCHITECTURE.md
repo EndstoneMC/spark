@@ -84,7 +84,7 @@ platform/endstone -> application -> core -> native -> profiling_time
 
 ### Execution Sampler (`native/sampler/`)
 
-Captures native thread stacks at a bounded interval. Linux uses `SIGPROF` with cpptrace's safe raw-trace path; Windows suspends the target thread and walks it with `StackWalk64`. Samples are enqueued to a lock-free queue and aggregated on a background thread.
+Captures native thread stacks at a bounded interval. Linux uses `SIGPROF` with cpptrace's safe raw-trace path; Windows suspends the target thread and walks it with `StackWalk64`, retrying `ResumeThread` up to 32 times after each capture. If all retries fail while the target remains alive, the process is terminated before BDS can remain suspended. Samples are enqueued to a lock-free queue and aggregated on a background thread.
 
 ### Allocation Profiler (`native/alloc/`)
 
@@ -119,10 +119,10 @@ enable order when installed; no PAPI binary is linked into Spark.
 
 - Sampling stays off the BDS tick hot path except for the minimum bounded capture.
 - Linux signal-handler code remains async-signal-safe.
-- Windows thread suspension and stack walking always restore target-thread state.
+- Windows thread suspension and stack walking restore target-thread state on normal and recoverable failure paths; a bounded retry failure is fatal and terminates the process before unload.
 - Allocation hooks remain reentrancy-safe and never block allocator threads.
-- Plugin shutdown waits within bounded intervals and does not leave callbacks, hooks, or background work referring to unloaded code.
+- Plugin shutdown uses bounded waits for health, export, viewer, and native backend work. If quiescence is not proven before a deadline, shutdown reports failure and the bootstrap aborts before unloading the plugin; this is a fail-closed policy, not a guarantee that timed-out work is safe to unload.
 
 ## Dependencies
 
-Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, libcurl, and tomlplusplus. Linux additionally requires OpenSSL for crypto. CMake fetches Endstone's public plugin API and pinned public PAPI headers, and directly fetches the pinned distorm revision used for strict x86-64 instruction-boundary decoding. Windows allocation hooking is implemented entirely by Spark-owned `WindowsAllocationIatHooks` and Permanent-IAT gateways.
+Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, libcurl, and tomlplusplus. Linux additionally requires OpenSSL for crypto. When `ENDSTONE_SPARK_BUILD_PLUGIN=ON`, CMake fetches Endstone's public plugin API and pinned public PAPI headers; plugin-off builds do not fetch either host SDK. CMake also directly fetches the pinned distorm revision used for strict x86-64 instruction-boundary decoding. Windows allocation hooking is implemented entirely by Spark-owned `WindowsAllocationIatHooks` and Permanent-IAT gateways.

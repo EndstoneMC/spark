@@ -84,8 +84,13 @@ they have the same name.
 
 On CPython 3.12+, sampled Python plugin frames include the filename leaf and
 CodeId without exporting server-owner directory paths. Native frame identities
-and available line data are retained. If Python code registration fails, Spark
-stops admitting new Python symbols for the rest of that profiling session.
+and available line data are retained. If the public Python runtime API is
+unavailable, or code registration fails, Spark continues with native-only
+sampling and records the support state, reason, and native/Python attribution
+counters in export diagnostics. After a registration failure, Spark stops
+admitting new Python symbols for the rest of that profiling session. CPython
+3.11 remains native-only; see [Python function attribution](docs/python-function-attribution.md)
+for the runtime and fallback details.
 
 ### `/spark tps` and `/spark health`
 
@@ -97,13 +102,16 @@ Until enough server history exists, each label uses the data actually available
 and the command explicitly reports the shorter history span.
 
 `/spark health` includes that report, then adds server uptime and players plus
-available process RSS, virtual address space, thread count, physical memory,
-swap/page-file, disk, CPU/OS details, and per-interface network throughput
-(RX/TX bytes per second, 15-minute rolling mean). Resource-query failures are
-omitted instead of being displayed as zero. On Windows, the virtual-memory value
-is the process's reserved or committed address space; swap/page-file usage
-follows Windows commit limit semantics. On Linux, these values use `VmSize` and
-`/proc/meminfo`.
+available process RSS, physical memory, disk, CPU/OS details, and active
+per-interface network throughput (RX/TX bytes per second, 15-minute rolling
+mean). Resource-query failures are omitted instead of being displayed as zero.
+`/spark health show --memory` adds process virtual memory, process thread count,
+and swap/page-file details. `--network` includes interfaces whose current rate
+is zero as well as active interfaces. On Windows, the virtual-memory value is
+the process's reserved or committed address space; swap/page-file usage follows
+Windows commit-limit semantics. On Linux, process RSS and virtual memory come
+from `/proc/self/statm` (with process thread data from `/proc/self/status`),
+while host physical memory and swap values come from `/proc/meminfo`.
 
 `/spark health --upload` generates a spark `HealthData` protobuf containing the
 same statistics, platform metadata, system resources, 15-minute time-window
@@ -151,8 +159,9 @@ Viewer uploads support cancellation and compression runs in bounded steps. Befor
 any new profiling session starts, the previous timer thread must exit and the
 previous viewer must retire within a shared 500 ms budget. If either is still
 stopping, the command reports an error asking you to retry. An ordinary viewer
-close timeout does not terminate the server; destruction or plugin unload still
-fails fast if cleanup cannot complete safely.
+close timeout does not terminate the server. During plugin shutdown, Spark uses
+bounded quiescence checks and aborts before unloading if cleanup cannot be
+proven complete.
 
 When the automatic background profiler is enabled, a valid foreground start
 pauses it. An invalid start leaves it running. Explicitly stopping and exporting
@@ -200,6 +209,12 @@ response with access to the data stream.
 * `--alloc` — record sampled native allocation call stacks instead of execution time.
 * `--alloc-live-only` — record only sampled allocations currently retained for
   leak analysis; this implies `--alloc`.
+
+Numeric flags are parsed by absolute magnitude. `--interval 0` selects the
+execution default of 4 ms or the allocation default of 524287 bytes; after this
+normalization, the existing positive validation rules still apply (execution
+interval `1`-`1000` ms, allocation interval `1`-`524287` bytes, timeout over
+10 seconds, and `--only-ticks-over` greater than 0 ms).
 
 Multi-thread execution profiles treat the interval as a global stack-walk budget and
 rotate fairly through matching threads. `/spark profiler stop` also accepts
@@ -392,17 +407,26 @@ Unknown fields are silently ignored.
 | `backgroundProfilerInterval` | int | `10` | Background sampling interval in milliseconds (`1`-`1000`). |
 | `backgroundProfilerThreadGrouper` | string | `"by-pool"` | Thread grouping mode: `by-pool`, `by-name`, or `as-one`. |
 | `backgroundProfilerThreadDumper` | string | `"default"` | Thread selection: `default` (server thread) or `all`. |
+| `allocationRateMetrics` | bool | `true` | Keep the count-only native allocation-rate counter active when no allocation profile owns the hooks. It starts lazily when the first server main-thread ID is observed, records process-wide bytes on ticks, and resumes after an explicit allocation profile is exported. `false` disables this persistent counter only; explicit `--alloc` profiling remains available. |
+| `serverPropertiesAdditionalKeys` | string | `""` | Comma-separated, administrator-reviewed `server.properties` keys appended to the built-in safe allowlist. Up to 64 unique keys are accepted, each at most 128 characters and limited to letters, digits, `-`, `_`, and `.`. Known-sensitive names and names containing password, passcode, token, secret, credential, or private-key remain blocked. |
 | `disableResponseBroadcast` | bool | `false` | Restrict result notifications to the originating player. |
 
 The native plugin also accepts the Java-compatible environment variables
 `SPARK_VIEWERURL`, `SPARK_BYTEBINURL`, `SPARK_BYTESOCKSHOST`,
 `SPARK_BACKGROUNDPROFILER`, `SPARK_BACKGROUNDPROFILERINTERVAL`,
 `SPARK_BACKGROUNDPROFILERTHREADGROUPER`, `SPARK_BACKGROUNDPROFILERTHREADDUMPER`,
+`SPARK_ALLOCATIONRATEMETRICS`,
 and `SPARK_DISABLERESPONSEBROADCAST`. Environment values override TOML values
 in memory and are not written to `config.toml`. Boolean values follow Java's
 `Boolean.parseBoolean` behavior; invalid interval text leaves the TOML value
 unchanged, while endpoint, thread-mode, and out-of-range interval values make
-startup reject the configuration.
+startup reject the configuration. `serverPropertiesAdditionalKeys` has no
+environment-variable counterpart.
+
+The optional Python attribution diagnostic switch `SPARK_PYTHON_ATTRIBUTION_MODE`
+accepts `auto` (the default), `off`, or `shadow-only`. `off` keeps profiling
+native-only; `shadow-only` keeps the Python shadow stack active for diagnostics.
+Unknown values are ignored with a warning.
 
 Trusted viewer public keys are stored separately in `trusted-viewers.json` (a
 JSON array of base64-encoded X.509 keys). The `trust-viewer` command appends to
@@ -415,11 +439,35 @@ this file without touching `config.toml`.
 > import-slot redirection. Windows allocation profiling uses Spark-owned IAT redirection
 > through process-lifetime Permanent-IAT gateways.
 
-The platform requirements are:
+The platform requirements are CMake 3.29 or newer on both platforms. The
+minimum supported compiler is Clang 18 or clang-cl 18; CI currently tests Clang
+20 and clang-cl 20:
 
 * **Linux:** Clang 18 or newer, libc++, Ninja, and Conan 2.
+  The default Linux test suite also builds a statically linked symbol fixture;
+  make Clang's `libc++.a` and `libc++abi.a` archives available.
 * **Windows:** LLVM clang-cl 18 or newer, Visual Studio Build Tools, the Windows SDK,
   Ninja, and Conan 2. clang-cl must target the MSVC ABI.
+
+Python tooling and native Python runtime tests require Python 3.12 or newer with
+its shared runtime. Set `SPARK_TEST_LIBPYTHON` (or pass
+`-DSPARK_TEST_LIBPYTHON:FILEPATH=...`) to the matching `python312.dll` on Windows,
+or to the matching `.so` from Python's `LIBDIR`/`LDLIBRARY` on Linux. For
+example, the CI discovery commands are equivalent to:
+
+```powershell
+$env:SPARK_TEST_LIBPYTHON = python -c "import sys; from pathlib import Path; print(Path(sys.base_prefix) / f'python{sys.version_info.major}{sys.version_info.minor}.dll')"
+```
+
+```shell
+export SPARK_TEST_LIBPYTHON="$(python -c 'import sysconfig; from pathlib import Path; print(Path(sysconfig.get_config_var("LIBDIR")) / sysconfig.get_config_var("LDLIBRARY"))')"
+```
+
+An optional Linux-only CPython 3.11 fallback test is enabled separately with
+`-DSPARK_TEST_LIBPYTHON_311:FILEPATH=...`; it does not replace the required
+3.12-or-newer runtime. If only the plugin is needed, pass
+`-DENDSTONE_SPARK_BUILD_SELFTEST=OFF`. To build the offline self-tests without
+fetching Endstone or PAPI, pass `-DENDSTONE_SPARK_BUILD_PLUGIN=OFF` instead.
 
 Install Conan, resolve the dependencies, then configure CMake directly with the
 generated toolchain file:
@@ -439,8 +487,9 @@ without fetching Endstone or PAPI, add `-DENDSTONE_SPARK_BUILD_PLUGIN=OFF` to
 the configure command. The default is `ON` and retains the plugin build.
 
 For full Linux CTest coverage, including production-sampler, unload, and legacy
-tests, also pass `-DENDSTONE_SPARK_GATEWAY_SAMPLER_TESTS=ON` to the CMake configure
-command above. This option defaults to `OFF`.
+tests, leave `-DENDSTONE_SPARK_GATEWAY_SAMPLER_TESTS=ON` enabled (it is the
+default). Set it to `OFF` only when those isolated gateway sampler tests are not
+needed.
 
 With self-test tools enabled, Linux `spark_selftest --allocation-only` exercises exact,
 regex, multiple, dynamic, and no-match allocation thread selection, cross-thread

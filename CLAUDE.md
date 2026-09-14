@@ -15,9 +15,12 @@ The plugin must remain safe inside a long-running server process. Sampling and a
 - CMake 3.29+
 - Ninja
 - Conan 2
-- Python 3.12 for release-tool tests
+- Python 3.12 or newer for release-tool and native Python runtime tests
 - Windows: LLVM clang-cl 18 or newer, Visual Studio Build Tools, and the Windows SDK
-- Linux: Clang 18 or newer with libc++ and libc++abi
+- Linux: Clang 18 or newer with libc++, libc++abi, and the static `libc++.a`/
+  `libc++abi.a` archives required by the default symbol-fixture test
+
+CI currently tests Clang 20 and clang-cl 20; the documented compiler minimum remains 18.
 
 The repository ships `.conan2/profiles/default`, which selects clang-cl on Windows and Clang/libc++ on Linux. Do not run `conan profile detect` over this file.
 
@@ -134,9 +137,9 @@ Leave successfully symbolicated frames and non-BDS modules untouched
 
 - Sampling must stay off the BDS tick hot path except for the minimum bounded capture operation.
 - Linux signal-handler code must remain async-signal-safe.
-- Windows thread suspension and stack walking must always restore target-thread state on every exit path.
+- Windows thread suspension and stack walking must restore target-thread state on every recoverable exit path. `ResumeThread` is retried up to 32 times; if restoration still fails for a live target, the process is terminated before it can remain suspended.
 - Allocation hooks must remain reentrancy-safe and must never block allocator threads.
-- Plugin shutdown must wait only within bounded intervals and must not leave callbacks, hooks, or background work referring to unloaded code.
+- Plugin shutdown uses bounded waits and must fail closed if health, export, viewer, or native backend work does not quiesce. The bootstrap aborts before unloading when quiescence is not proven; timed-out work is not treated as safe to unload.
 
 ## Architecture
 
@@ -198,6 +201,7 @@ Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, libcurl, and toml
 - `CHANGELOG.md` follows Keep a Changelog and contains one non-empty `Unreleased` section before a release.
 - Release versions follow Semantic Versioning.
 - `.github/workflows/release.yml` can be dispatched from `main` with a version or triggered by pushing a `vX.Y.Z` tag. A release requires the selected ref, `main`, and `develop` to point to the same commit.
+- Manual release dispatch defaults `dry_run` to `true`; set it explicitly to `false` for a real release. Non-dry-run dispatches must run from `main`, while a tag push performs a real release automatically.
 - The release workflow updates `CMakeLists.txt`, `src/spark_constants.h`, `src/plugin.cpp`, and `CHANGELOG.md`; creates the release commit and tag; builds both platform artifacts; and uploads them to the GitHub release.
 - Do not manually duplicate version changes that the release workflow owns.
 
