@@ -61,6 +61,11 @@ public:
         std::memcpy(bytes_.data() + rva, bytes.begin(), bytes.size());
     }
 
+    void fillBytes(std::uint32_t rva, std::size_t count, std::uint8_t value)
+    {
+        std::fill(bytes_.begin() + rva, bytes_.begin() + rva + count, value);
+    }
+
     void string(std::uint32_t rva, std::string_view value)
     {
         std::memcpy(bytes_.data() + rva, value.data(), value.size());
@@ -95,12 +100,18 @@ public:
 
     void runtimeFunction(unsigned index, std::uint32_t begin, std::uint32_t end, std::uint32_t unwind)
     {
+        runtimeFunctionAt(0x4000, index, begin, end, unwind);
+    }
+
+    void runtimeFunctionAt(std::uint32_t table_rva, unsigned index, std::uint32_t begin, std::uint32_t end,
+                           std::uint32_t unwind)
+    {
         RUNTIME_FUNCTION function{};
         function.BeginAddress = begin;
         function.EndAddress = end;
         function.UnwindData = unwind;
-        put(0x4000 + index * sizeof(function), function);
-        exceptionDirectory(0x4000, (index + 1) * sizeof(function));
+        put(table_rva + index * sizeof(function), function);
+        exceptionDirectory(table_rva, (index + 1) * sizeof(function));
     }
 
     void leafUnwind(std::uint32_t rva, std::uint8_t code_count = 0) { putBytes(rva, {1, 0, code_count, 0}); }
@@ -198,8 +209,15 @@ bool testDuplicateOverlapAndDeterminism();
 bool testShortReadOnlySectionBounds();
 bool testRttiVtableAmbiguity();
 bool testInvalidRttiAndThunk();
+bool testRttiNameCoverage();
+bool testRttiNameCacheBudgetAndConcurrency();
+bool testRttiNameCollisions();
 bool testAslrIndependence();
 bool testDecodedStringsAndScoring();
+bool testDecodedStringLeaForms();
+bool testStringOwnershipProofs();
+bool testWindowsBudgetBoundaries();
+bool testWindowsMandatoryEvidenceCases();
 bool testInstructionMiddleAndSharedString();
 bool testChainedRootStringUniqueness();
 bool testLargeRangeLookup();

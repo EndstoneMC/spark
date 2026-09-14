@@ -653,12 +653,14 @@ if (WIN32)
             native/symbol/symbol_guess_windows_test_core.cpp
             native/symbol/symbol_guess_windows_test_rtti.cpp
             native/symbol/symbol_guess_windows_test_strings.cpp
+            native/symbol/symbol_guess_windows_test_bounds.cpp
             native/symbol/symbol_guess_windows_test_misc.cpp
             native/symbol/symbol_guess_windows_test_evaluator.cpp)
     target_link_libraries(spark_symbol_guess_windows_test PRIVATE spark_core)
     set_target_properties(spark_symbol_guess_windows_test PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     add_test(NAME spark_symbol_guess_windows_test COMMAND spark_symbol_guess_windows_test)
+    set_tests_properties(spark_symbol_guess_windows_test PROPERTIES TIMEOUT 30)
 
     add_custom_target(spark_windows_pe_evaluator_test DEPENDS spark_symbol_guess_windows_test)
     add_test(NAME spark_windows_pe_evaluator_test

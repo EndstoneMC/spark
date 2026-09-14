@@ -148,12 +148,67 @@ void addSymbolGuessMetadata(ProfileMetadata &meta)
     meta.extra_platform_metadata["Symbol guess vtable candidates"] = std::to_string(stats.vtable_candidates);
     meta.extra_platform_metadata["Symbol guess vtable labels"] = std::to_string(stats.vtable_labels);
     meta.extra_platform_metadata["Symbol guess vtable conflicts"] = std::to_string(stats.vtable_conflicts);
+    meta.extra_platform_metadata["Symbol guess RTTI name cache entries"] =
+        std::to_string(stats.rtti_name_cache_entries);
+    meta.extra_platform_metadata["Symbol guess RTTI name cache hits"] = std::to_string(stats.rtti_name_cache_hits);
+    meta.extra_platform_metadata["Symbol guess RTTI name attempts"] = std::to_string(stats.rtti_name_attempts);
+    meta.extra_platform_metadata["Symbol guess RTTI name API calls"] = std::to_string(stats.rtti_name_api_calls);
+    meta.extra_platform_metadata["Symbol guess RTTI plain names"] = std::to_string(stats.rtti_name_plain);
+    meta.extra_platform_metadata["Symbol guess RTTI complex names"] = std::to_string(stats.rtti_name_complex);
+    meta.extra_platform_metadata["Symbol guess RTTI name length rejections"] =
+        std::to_string(stats.rtti_name_length_rejections);
+    meta.extra_platform_metadata["Symbol guess RTTI raw length rejections"] =
+        std::to_string(stats.rtti_name_raw_length_rejections);
+    meta.extra_platform_metadata["Symbol guess RTTI output length rejections"] =
+        std::to_string(stats.rtti_name_output_length_rejections);
+    meta.extra_platform_metadata["Symbol guess RTTI name failures"] = std::to_string(stats.rtti_name_failures);
+    meta.extra_platform_metadata["Symbol guess RTTI name budget exhausted"] =
+        std::to_string(stats.rtti_name_budget_exhausted);
+    meta.extra_platform_metadata["Symbol guess RTTI name collisions"] = std::to_string(stats.rtti_name_collisions);
+    meta.extra_platform_metadata["Symbol guess RTTI collision roots"] = std::to_string(stats.rtti_name_collision_roots);
+    meta.extra_platform_metadata["Symbol guess thunk candidates"] = std::to_string(stats.thunk_candidates);
     meta.extra_platform_metadata["Symbol guess resolved thunks"] = std::to_string(stats.thunk_resolved);
     meta.extra_platform_metadata["Symbol guess sampled functions"] = std::to_string(stats.sampled_functions);
     meta.extra_platform_metadata["Symbol guess decoded instructions"] = std::to_string(stats.decoded_instructions);
     meta.extra_platform_metadata["Symbol guess string candidates"] = std::to_string(stats.string_candidates);
     meta.extra_platform_metadata["Symbol guess string labels"] = std::to_string(stats.string_labels);
     meta.extra_platform_metadata["Symbol guess shared strings"] = std::to_string(stats.shared_strings);
+    meta.extra_platform_metadata["Symbol guess string reference candidates"] =
+        std::to_string(stats.string_reference_candidates);
+    meta.extra_platform_metadata["Symbol guess string reference potential hits"] =
+        std::to_string(stats.string_reference_potential_hits);
+    meta.extra_platform_metadata["Symbol guess string reference exact hits"] =
+        std::to_string(stats.string_reference_exact_hits);
+    meta.extra_platform_metadata["Symbol guess string reference interior rejections"] =
+        std::to_string(stats.string_reference_interior_rejections);
+    meta.extra_platform_metadata["Symbol guess string reference ambiguities"] =
+        std::to_string(stats.string_reference_ambiguities);
+    meta.extra_platform_metadata["Symbol guess string reference shared"] =
+        std::to_string(stats.string_reference_shared);
+    meta.extra_platform_metadata["Symbol guess string reference terminal hits skipped"] =
+        std::to_string(stats.string_reference_terminal_hits_skipped);
+    meta.extra_platform_metadata["Symbol guess string reference unindexed"] =
+        std::to_string(stats.string_reference_unindexed);
+    meta.extra_platform_metadata["Symbol guess string reference unreachable"] =
+        std::to_string(stats.string_reference_unreachable);
+    meta.extra_platform_metadata["Symbol guess string reference overlaps"] =
+        std::to_string(stats.string_reference_overlaps);
+    meta.extra_platform_metadata["Symbol guess string validation functions"] =
+        std::to_string(stats.string_validation_functions);
+    meta.extra_platform_metadata["Symbol guess string function byte budget exhausted"] =
+        std::to_string(stats.string_function_byte_budget_exhausted);
+    meta.extra_platform_metadata["Symbol guess string function instruction budget exhausted"] =
+        std::to_string(stats.string_function_instruction_budget_exhausted);
+    meta.extra_platform_metadata["Symbol guess string validation budget exhausted"] =
+        std::to_string(stats.string_validation_budget_exhausted);
+    meta.extra_platform_metadata["Symbol guess string instruction budget exhausted"] =
+        std::to_string(stats.string_instruction_budget_exhausted);
+    meta.extra_platform_metadata["Symbol guess string scan byte budget exhausted"] =
+        std::to_string(stats.string_scan_byte_budget_exhausted);
+    meta.extra_platform_metadata["Symbol guess vtable interior target rejections"] =
+        std::to_string(stats.vtable_interior_target_rejections);
+    meta.extra_platform_metadata["Symbol guess thunk interior destinations"] =
+        std::to_string(stats.thunk_interior_destination_rejections);
     meta.extra_platform_metadata["Symbol guess index build microseconds"] = std::to_string(stats.build_microseconds);
     meta.extra_platform_metadata["Symbol guess batch microseconds"] = std::to_string(stats.batch_microseconds);
     meta.extra_platform_metadata["Symbol guess approximate bytes"] = std::to_string(stats.approximate_bytes);

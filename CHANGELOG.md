@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bound Windows string evidence decoding and PE reference validation, with
+  tentative labels and export diagnostics for rejected, shared, and budget-limited evidence.
+- Recognize MSVC template, lambda, and local-class RTTI names with bounded decoding
+  and reject ambiguous name collisions.
 - Match upstream live-viewer cadence with standalone statistics every 10 seconds
   and globally aligned sampler payload rotation every minute.
 - Record upstream-compatible rolling TPS, tick-duration, CPU, world, and ping metric series in health and sampler data.

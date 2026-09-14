@@ -23,18 +23,20 @@ bool checkedAdd(std::uint32_t a, std::uint32_t b, std::uint32_t &out)
 
 std::string classNameFromTypeDescriptor(std::string_view mangled)
 {
-    if (!mangled.starts_with(".?A")) {
+    if (!mangled.starts_with(".?AV") && !mangled.starts_with(".?AU")) {
         return {};
     }
     std::string_view encoded = mangled.substr(3);
     if (!encoded.empty() && (encoded.front() == 'V' || encoded.front() == 'U')) {
         encoded.remove_prefix(1);
     }
-    const std::size_t end = encoded.find("@@");
-    if (end == std::string_view::npos || end == 0) {
+    if (encoded.size() < 2 || !encoded.ends_with("@@")) {
         return {};
     }
-    encoded = encoded.substr(0, end);
+    encoded.remove_suffix(2);
+    if (encoded.empty()) {
+        return {};
+    }
     if (encoded.find('?') != std::string_view::npos || encoded.find('$') != std::string_view::npos) {
         return {};
     }
@@ -59,7 +61,7 @@ std::string classNameFromTypeDescriptor(std::string_view mangled)
         }
         out += part;
     }
-    if (out.size() > 80) {
+    if (out.size() > 512) {
         return {};
     }
     return out;

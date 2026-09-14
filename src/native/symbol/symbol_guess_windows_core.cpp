@@ -5,8 +5,6 @@
 #include <algorithm>
 #include <limits>
 #include <ranges>
-#include <set>
-#include <tuple>
 
 namespace spark::symbol_guess::windows {
 
@@ -35,12 +33,27 @@ bool Engine::Impl::validFunction(const RUNTIME_FUNCTION &function) const
 std::optional<std::uint32_t> Engine::Impl::chainRoot(const RUNTIME_FUNCTION &start) const
 {
     RUNTIME_FUNCTION function = start;
-    std::set<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> seen;
+    std::array<RUNTIME_FUNCTION, 32> seen{};
+    std::size_t seen_count = 0;
+
+    if (validFunction(function) && (function.UnwindData & RUNTIME_FUNCTION_INDIRECT) == 0) {
+        std::uint8_t header[4]{};
+        if (read(function.UnwindData, header) && ((header[0] >> 3) & UNW_FLAG_CHAININFO) == 0) {
+            return function.BeginAddress;
+        }
+    }
+
     for (unsigned depth = 0; depth < 32; ++depth) {
-        if (!validFunction(function) ||
-            !seen.emplace(function.BeginAddress, function.EndAddress, function.UnwindData).second) {
+        if (!validFunction(function)) {
             return std::nullopt;
         }
+        for (std::size_t i = 0; i < seen_count; ++i) {
+            if (seen[i].BeginAddress == function.BeginAddress && seen[i].EndAddress == function.EndAddress &&
+                seen[i].UnwindData == function.UnwindData) {
+                return std::nullopt;
+            }
+        }
+        seen[seen_count++] = function;
         if ((function.UnwindData & RUNTIME_FUNCTION_INDIRECT) != 0) {
             if (!read(function.UnwindData & ~RUNTIME_FUNCTION_INDIRECT, function)) {
                 return std::nullopt;

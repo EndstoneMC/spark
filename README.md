@@ -241,9 +241,11 @@ TPS marker, and Minecraft color codes. These placeholders are player-independent
 * **Windows:** the sampler suspends one selected target per interval, retains its
   current instruction address, and walks callers with `StackWalk64`; frames resolve
   against the shipped PDB (real names). Without a PDB, unresolved main-executable
-  frames use evidence-tagged guesses recovered from PE exception data, MSVC RTTI,
-  vtables, thunks, and decoded string references. A failed caller unwind therefore
-  shortens the sample instead of discarding it.
+  frames use evidence-tagged guesses recovered from PE exception data, decoded MSVC
+  RTTI names, vtables, thunks, and bounded string references. String evidence is
+  emitted as tentative `str?:` labels; rejected, shared, and
+  budget-limited references are reported in export metadata. A failed caller
+  unwind therefore shortens the sample instead of discarding it.
 * Samples aggregate into per-thread call trees and serialize to spark's protobuf.
   Bytebin uploads are gzip-compressed; local `.sparkprofile` files under
   `plugins/spark/profiles/` contain raw protobuf.

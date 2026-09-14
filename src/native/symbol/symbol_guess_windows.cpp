@@ -28,7 +28,17 @@ int scoreStringHint(std::string_view value)
 
 TypedLabel formatStringHint(std::string_view value)
 {
-    return ::spark::symbol_guess::formatStringHint(value, scoreStringHint(value));
+    const int score = scoreStringHint(value);
+    if (score < ::spark::symbol_guess::kMinimumStringHintScore) {
+        return {};
+    }
+    constexpr std::size_t k_maximum = 52;
+    std::string message(value.substr(0, k_maximum));
+    if (value.size() > k_maximum) {
+        message.resize(k_maximum - 3);
+        message += "...";
+    }
+    return ::spark::symbol_guess::formatEvidenceLabel(::spark::symbol_guess::EvidenceSource::String, message, true);
 }
 
 Engine::Engine(const std::uint8_t *image, std::size_t mapped_size, std::uint64_t load_address)

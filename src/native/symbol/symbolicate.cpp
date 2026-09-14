@@ -305,7 +305,6 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
     out.reserve(keys.size());
 
     DbgHelpReference session;
-    std::scoped_lock lock(dbgHelpMutex());
     HANDLE process = GetCurrentProcess();
     HMODULE executable_module = GetModuleHandleW(nullptr);
     MODULEINFO executable_info{};
@@ -314,57 +313,72 @@ std::unordered_map<FrameKey, ResolvedFrame, FrameKeyHash> resolveFrames(const Mo
         GetModuleInformation(process, executable_module, &executable_info, sizeof(executable_info)) != FALSE;
     const std::uint64_t executable_base =
         have_executable_range ? reinterpret_cast<std::uint64_t>(executable_info.lpBaseOfDll) : 0;
-    std::unordered_map<ModuleId, SYM_TYPE> module_symbol_types;
-    module_symbol_types.reserve(modules.size());
     std::vector<std::uint64_t> unresolved_main_rvas;
     unresolved_main_rvas.reserve(keys.size());
+    std::vector<FrameKey> unresolved_keys;
+    unresolved_keys.reserve(keys.size());
 
-    for (const FrameKey &key : keys) {
-        ResolvedFrame rf;
-        rf.class_name = basename(modules.path(key.module));
+    {
+        std::scoped_lock lock(dbgHelpMutex());
+        std::unordered_map<ModuleId, SYM_TYPE> module_symbol_types;
+        module_symbol_types.reserve(modules.size());
+        for (const FrameKey &key : keys) {
+            ResolvedFrame rf;
+            rf.class_name = basename(modules.path(key.module));
 
-        if (session.initialized() && key.raw_address != 0) {
-            SymbolBuffer symbol{};
-            symbol.info.SizeOfStruct = sizeof(SYMBOL_INFO);
-            symbol.info.MaxNameLen = MAX_SYM_NAME;
+            if (session.initialized() && key.raw_address != 0) {
+                SymbolBuffer symbol{};
+                symbol.info.SizeOfStruct = sizeof(SYMBOL_INFO);
+                symbol.info.MaxNameLen = MAX_SYM_NAME;
 
-            SYM_TYPE module_symbol_type = SymNone;
-            if (const auto it = module_symbol_types.find(key.module); it != module_symbol_types.end()) {
-                module_symbol_type = it->second;
-            }
-            else {
-                IMAGEHLP_MODULE64 module_info{};
-                module_info.SizeOfStruct = sizeof(module_info);
-                if (SymGetModuleInfo64(process, key.raw_address, &module_info) != FALSE) {
-                    module_symbol_type = module_info.SymType;
+                SYM_TYPE module_symbol_type = SymNone;
+                if (const auto it = module_symbol_types.find(key.module); it != module_symbol_types.end()) {
+                    module_symbol_type = it->second;
                 }
-                module_symbol_types.emplace(key.module, module_symbol_type);
-            }
+                else {
+                    IMAGEHLP_MODULE64 module_info{};
+                    module_info.SizeOfStruct = sizeof(module_info);
+                    if (SymGetModuleInfo64(process, key.raw_address, &module_info) != FALSE) {
+                        module_symbol_type = module_info.SymType;
+                    }
+                    module_symbol_types.emplace(key.module, module_symbol_type);
+                }
 
-            DWORD64 displacement = 0;
-            if (SymFromAddr(process, key.raw_address, &displacement, &symbol.info) &&
-                trustworthyWindowsSymbol(rf.class_name, symbol.info, displacement, module_symbol_type)) {
-                rf.method_name.assign(symbol.info.Name, symbol.info.NameLen);
+                DWORD64 displacement = 0;
+                if (SymFromAddr(process, key.raw_address, &displacement, &symbol.info) &&
+                    trustworthyWindowsSymbol(rf.class_name, symbol.info, displacement, module_symbol_type)) {
+                    rf.method_name.assign(symbol.info.Name, symbol.info.NameLen);
 
-                IMAGEHLP_LINE64 line{};
-                line.SizeOfStruct = sizeof(line);
-                DWORD line_displacement = 0;
-                if (SymGetLineFromAddr64(process, key.raw_address, &line_displacement, &line)) {
-                    rf.line = static_cast<std::int32_t>(line.LineNumber);
+                    IMAGEHLP_LINE64 line{};
+                    line.SizeOfStruct = sizeof(line);
+                    DWORD line_displacement = 0;
+                    if (SymGetLineFromAddr64(process, key.raw_address, &line_displacement, &line)) {
+                        rf.line = static_cast<std::int32_t>(line.LineNumber);
+                    }
                 }
             }
+
+            if (rf.method_name.empty()) {
+                unresolved_keys.push_back(key);
+                const bool main_module =
+                    have_executable_range &&
+                    frameMatchesMainModule(key.raw_address, key.rva, executable_base, executable_info.SizeOfImage);
+                if (main_module) {
+                    unresolved_main_rvas.push_back(key.rva);
+                }
+            }
+            out.emplace(key, std::move(rf));
         }
+    }
 
-        if (rf.method_name.empty()) {
+    for (const FrameKey &key : unresolved_keys) {
+        auto frame = out.find(key);
+        if (frame != out.end()) {
             const bool main_module =
                 have_executable_range &&
                 frameMatchesMainModule(key.raw_address, key.rva, executable_base, executable_info.SizeOfImage);
-            applySymbolGuessFallback(rf, key.rva, main_module, std::string_view{});
-            if (main_module) {
-                unresolved_main_rvas.push_back(key.rva);
-            }
+            applySymbolGuessFallback(frame->second, key.rva, main_module, std::string_view{});
         }
-        out.emplace(key, std::move(rf));
     }
 
     const auto guesses = analyzeMainModuleSymbols(unresolved_main_rvas);

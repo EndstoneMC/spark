@@ -79,6 +79,47 @@ class PeEvaluatorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "0x1000\t\n")
         self.assertIn("ranges=1", result.stderr)
+        diagnostics = dict(
+            line.split("=", 1)
+            for line in result.stderr.splitlines()
+            if "=" in line and line.split("=", 1)[0].startswith(("string_", "rtti_", "vtable_", "thunk_"))
+        )
+        for key in (
+            "string_reference_candidates",
+            "string_reference_potential_hits",
+            "string_reference_exact_hits",
+            "string_reference_interior_rejections",
+            "string_reference_ambiguities",
+            "string_reference_shared",
+            "string_reference_terminal_hits_skipped",
+            "string_reference_unindexed",
+            "string_reference_unreachable",
+            "string_reference_overlaps",
+            "string_validation_functions",
+            "string_function_byte_budget_exhausted",
+            "string_function_instruction_budget_exhausted",
+            "string_validation_budget_exhausted",
+            "string_instruction_budget_exhausted",
+            "string_scan_byte_budget_exhausted",
+            "rtti_name_cache_entries",
+            "rtti_name_cache_hits",
+            "rtti_name_attempts",
+            "rtti_name_api_calls",
+            "rtti_name_plain",
+            "rtti_name_complex",
+            "rtti_name_length_rejections",
+            "rtti_name_raw_length_rejections",
+            "rtti_name_output_length_rejections",
+            "rtti_name_collisions",
+            "rtti_name_collision_roots",
+            "rtti_name_failures",
+            "rtti_name_budget_exhausted",
+            "vtable_interior_target_rejections",
+            "thunk_candidates",
+            "thunk_interior_destination_rejections",
+        ):
+            self.assertIn(key, diagnostics)
+            int(diagnostics[key])
 
 
 if __name__ == "__main__":

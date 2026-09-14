@@ -100,6 +100,38 @@ int evaluateMappedPe(int argc, char **argv)
                  stats.sampled_functions, stats.decoded_instructions, stats.string_labels,
                  static_cast<unsigned long long>(stats.build_microseconds),
                  static_cast<unsigned long long>(stats.batch_microseconds), stats.approximate_bytes);
+    std::fprintf(stderr,
+                 "string_reference_candidates=%zu\nstring_reference_potential_hits=%zu\n"
+                 "string_reference_exact_hits=%zu\nstring_reference_interior_rejections=%zu\n"
+                 "string_reference_ambiguities=%zu\nstring_reference_shared=%zu\n"
+                 "string_reference_terminal_hits_skipped=%zu\nstring_reference_unindexed=%zu\n"
+                 "string_reference_unreachable=%zu\nstring_reference_overlaps=%zu\n"
+                 "string_validation_functions=%zu\nstring_function_byte_budget_exhausted=%zu\n"
+                 "string_function_instruction_budget_exhausted=%zu\nstring_validation_budget_exhausted=%zu\n"
+                 "string_instruction_budget_exhausted=%zu\nstring_scan_byte_budget_exhausted=%zu\n"
+                 "rtti_name_cache_entries=%zu\nrtti_name_cache_hits=%zu\n"
+                 "rtti_name_attempts=%zu\nrtti_name_api_calls=%zu\n"
+                 "rtti_name_plain=%zu\nrtti_name_complex=%zu\n"
+                 "rtti_name_length_rejections=%zu\nrtti_name_failures=%zu\n"
+                 "rtti_name_raw_length_rejections=%zu\n"
+                 "rtti_name_output_length_rejections=%zu\n"
+                 "rtti_name_collisions=%zu\nrtti_name_collision_roots=%zu\n"
+                 "rtti_name_budget_exhausted=%zu\n"
+                 "vtable_interior_target_rejections=%zu\nthunk_candidates=%zu\n"
+                 "thunk_interior_destination_rejections=%zu\n",
+                 stats.string_reference_candidates, stats.string_reference_potential_hits,
+                 stats.string_reference_exact_hits, stats.string_reference_interior_rejections,
+                 stats.string_reference_ambiguities, stats.string_reference_shared,
+                 stats.string_reference_terminal_hits_skipped, stats.string_reference_unindexed,
+                 stats.string_reference_unreachable, stats.string_reference_overlaps, stats.string_validation_functions,
+                 stats.string_function_byte_budget_exhausted, stats.string_function_instruction_budget_exhausted,
+                 stats.string_validation_budget_exhausted, stats.string_instruction_budget_exhausted,
+                 stats.string_scan_byte_budget_exhausted, stats.rtti_name_cache_entries, stats.rtti_name_cache_hits,
+                 stats.rtti_name_attempts, stats.rtti_name_api_calls, stats.rtti_name_plain, stats.rtti_name_complex,
+                 stats.rtti_name_length_rejections, stats.rtti_name_raw_length_rejections,
+                 stats.rtti_name_output_length_rejections, stats.rtti_name_collisions, stats.rtti_name_collision_roots,
+                 stats.rtti_name_failures, stats.rtti_name_budget_exhausted, stats.vtable_interior_target_rejections,
+                 stats.thunk_candidates, stats.thunk_interior_destination_rejections);
     return 0;
 }
 

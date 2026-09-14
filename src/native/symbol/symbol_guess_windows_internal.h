@@ -11,6 +11,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <limits>
@@ -56,6 +57,13 @@ struct StringCandidate {
     int score = 0;
 };
 
+struct ReferenceInstruction {
+    std::uint32_t begin = 0;
+    std::uint32_t end = 0;
+    std::uint32_t rip_target = 0;
+    bool eligible = false;
+};
+
 bool checkedAdd(std::uint32_t a, std::uint32_t b, std::uint32_t &out);
 std::string classNameFromTypeDescriptor(std::string_view mangled);
 
@@ -66,6 +74,39 @@ struct Engine::Impl {
     using CompleteObjectLocator = detail::CompleteObjectLocator;
     using ClassHierarchyDescriptor = detail::ClassHierarchyDescriptor;
     using StringCandidate = detail::StringCandidate;
+    using ReferenceInstruction = detail::ReferenceInstruction;
+
+    struct TypeNameCacheEntry {
+        std::optional<std::string> name;
+        std::string raw;
+    };
+
+    struct TypeNameCache {
+        std::map<std::uint32_t, TypeNameCacheEntry> entries;
+        std::map<std::string, std::string> first_raw;
+        std::set<std::string> ambiguous_names;
+    };
+
+    struct ValidatedCol {
+        CompleteObjectLocator locator{};
+        std::optional<std::string> class_name;
+        bool name_ambiguous = false;
+    };
+
+    struct RootValidation {
+        bool complete = false;
+        bool witness_valid = false;
+        bool budget_exhausted = false;
+        std::vector<ReferenceInstruction> instructions;
+        std::vector<std::uint32_t> eligible_targets;
+    };
+
+    struct ValidationBudget {
+        std::size_t roots = 0;
+        std::size_t instructions = 0;
+        bool root_budget_reported = false;
+        bool instruction_budget_reported = false;
+    };
 
     const std::uint8_t *image = nullptr;
     std::size_t mapped_size = 0;
@@ -126,13 +167,19 @@ struct Engine::Impl {
     std::optional<std::uint32_t> chainRoot(const RUNTIME_FUNCTION &start) const;
     void collectFunctions();
     const FunctionRange *containing(std::uint64_t rva) const;
-    std::optional<std::pair<std::string, CompleteObjectLocator>> validateCol(std::uint32_t rva) const;
-    std::optional<std::uint32_t> directThunkTarget(std::uint32_t rva);
+    std::optional<ValidatedCol> validateCol(std::uint32_t rva, TypeNameCache &names);
+    std::optional<std::string> decodeTypeDescriptorName(std::uint32_t rva, TypeNameCache &names);
+    std::optional<std::uint32_t> directThunkTarget(std::uint32_t rva, bool *recognized = nullptr);
     void collectVtables();
     const FunctionRange *fragmentContaining(std::uint32_t root, std::uint32_t rva) const;
-    std::vector<StringCandidate> decodeStrings(std::uint32_t root, BuildStats &batch) const;
+    RootValidation validateRoot(std::uint32_t root, ValidationBudget &budget, BuildStats &batch) const;
+    std::vector<StringCandidate> decodeStrings(std::uint32_t root, BuildStats &batch,
+                                               std::map<std::uint32_t, RootValidation> &validations,
+                                               ValidationBudget &budget) const;
     void scanCandidateReferences(const std::unordered_set<std::uint32_t> &targets,
-                                 std::unordered_map<std::uint32_t, std::set<std::uint32_t>> &references) const;
+                                 std::map<std::uint32_t, std::set<std::uint32_t>> &references,
+                                 std::map<std::uint32_t, RootValidation> &validations, ValidationBudget &budget,
+                                 BuildStats &batch) const;
     void updateApproximateBytes();
     void initialize();
     std::unordered_map<std::uint64_t, TypedLabel> guess(std::span<const std::uint64_t> rvas);

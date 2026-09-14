@@ -47,6 +47,22 @@ std::unordered_map<std::uint64_t, TypedLabel> Engine::Impl::guess(std::span<cons
     batch.string_candidates = 0;
     batch.shared_strings = 0;
     batch.string_labels = 0;
+    batch.string_reference_candidates = 0;
+    batch.string_reference_potential_hits = 0;
+    batch.string_reference_exact_hits = 0;
+    batch.string_reference_interior_rejections = 0;
+    batch.string_reference_ambiguities = 0;
+    batch.string_reference_shared = 0;
+    batch.string_reference_terminal_hits_skipped = 0;
+    batch.string_reference_unindexed = 0;
+    batch.string_reference_unreachable = 0;
+    batch.string_reference_overlaps = 0;
+    batch.string_validation_functions = 0;
+    batch.string_function_byte_budget_exhausted = 0;
+    batch.string_function_instruction_budget_exhausted = 0;
+    batch.string_validation_budget_exhausted = 0;
+    batch.string_instruction_budget_exhausted = 0;
+    batch.string_scan_byte_budget_exhausted = 0;
 
     std::unordered_map<std::uint64_t, TypedLabel> out;
     out.reserve(rvas.size());
@@ -60,6 +76,8 @@ std::unordered_map<std::uint64_t, TypedLabel> Engine::Impl::guess(std::span<cons
 
     std::map<std::uint32_t, std::vector<StringCandidate>> string_candidates;
     std::unordered_set<std::uint32_t> candidate_targets;
+    std::map<std::uint32_t, RootValidation> validations;
+    ValidationBudget validation_budget;
     for (const auto &[root, inputs] : root_inputs) {
         if (const auto label = vtable_labels.find(root); label != vtable_labels.end()) {
             for (std::uint64_t rva : inputs) {
@@ -67,23 +85,32 @@ std::unordered_map<std::uint64_t, TypedLabel> Engine::Impl::guess(std::span<cons
             }
             continue;
         }
-        std::vector<StringCandidate> candidates = decodeStrings(root, batch);
+        std::vector<StringCandidate> candidates = decodeStrings(root, batch, validations, validation_budget);
         for (const StringCandidate &candidate : candidates) {
             candidate_targets.insert(candidate.target);
         }
         string_candidates.emplace(root, std::move(candidates));
     }
 
-    std::unordered_map<std::uint32_t, std::set<std::uint32_t>> references;
+    std::map<std::uint32_t, std::set<std::uint32_t>> references;
+    for (const auto &[root, candidates] : string_candidates) {
+        for (const StringCandidate &candidate : candidates) {
+            if (references[candidate.target].insert(root).second) {
+                if (batch.string_reference_exact_hits < 1000000U) {
+                    ++batch.string_reference_exact_hits;
+                }
+            }
+        }
+    }
     if (!candidate_targets.empty()) {
-        scanCandidateReferences(candidate_targets, references);
+        scanCandidateReferences(candidate_targets, references, validations, validation_budget, batch);
     }
     for (const auto &[root, candidates] : string_candidates) {
         TypedLabel label;
         for (const StringCandidate &candidate : candidates) {
             const auto refs = references.find(candidate.target);
             if (refs != references.end() && refs->second.size() == 1 && *refs->second.begin() == root) {
-                label = ::spark::symbol_guess::formatStringHint(candidate.value, candidate.score);
+                label = ::spark::symbol_guess::windows::formatStringHint(candidate.value);
                 break;
             }
             ++batch.shared_strings;
