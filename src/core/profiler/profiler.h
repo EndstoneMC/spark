@@ -12,6 +12,7 @@
 #include <system_error>
 #include <vector>
 
+#include "core/metadata/platform_metadata.h"
 #include "core/profiler/profile_mode.h"
 #include "core/recovery/recovery_writer.h"
 #include "core/stats/ping_statistics.h"
@@ -28,12 +29,6 @@ struct ProfilerTestAccess;
 #if defined(SPARK_ALLOCATION_LIFECYCLE_TESTING)
 struct ProfilerLifecycleTestAccess;
 #endif
-
-struct NativePluginSource {
-    std::uintptr_t module_base = 0;
-    std::string module_path;
-    std::string source_id;
-};
 
 enum class RecoveryDiscardStatus {
     Completed,

@@ -11,6 +11,7 @@
 
 #include "application/command/command_sender.h"
 #include "application/platform_capabilities.h"
+#include "core/stats/ping_statistics.h"
 #include "platform/endstone/world_gauge_event_adapter.h"
 
 namespace spark::endstone_adapter {
@@ -107,8 +108,8 @@ public:
     {
     }
 
-    void gatherServerMetadata(ExportContext &ctx, std::int64_t now_ms) override;
-    void gatherWorldMetadata(ExportContext &ctx) override;
+    void gatherServerMetadata(ServerMetadata &metadata, std::int64_t now_ms) override;
+    void gatherWorldMetadata(WorldInfo &world, std::string_view minecraft_version) override;
     std::vector<NativePluginSource> nativePluginSources() override;
     std::int64_t serverUptimeSeconds() override;
     std::int64_t playerCount() override;

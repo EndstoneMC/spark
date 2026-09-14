@@ -1,4 +1,5 @@
 #include "application/profiler/profiler_service.h"
+#include "application/profiler/platform_metadata_capture.h"
 
 #include <algorithm>
 #include <chrono>
@@ -254,14 +255,14 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
     ExportContext context;
     try {
         context.bds_executable_sha256 = bds_executable_sha256_;
-        metadata_provider_.gatherServerMetadata(context, nowMs());
+        gatherPlatformServerMetadata(metadata_provider_, context, nowMs());
         context.native_plugin_sources = session_native_plugin_sources_;
         context.comment = comment;
         context.statistics = statistics_.snapshot();
         context.metrics = statistics_.metricsSnapshot();
         context.window_stats = statistics_.profileWindows(profiler_.startTimeMs(), profiler_.endTimeMs());
         context.system_stats = spark::gatherSystemStats(".");
-        metadata_provider_.gatherWorldMetadata(context);
+        metadata_provider_.gatherWorldMetadata(context.world, context.minecraft_version);
         if (ping_samples_provider_) {
             context.ping_samples = ping_samples_provider_();
         }

@@ -1,4 +1,5 @@
 #include "application/profiler/profiler_open_orchestrator.h"
+#include "application/profiler/platform_metadata_capture.h"
 
 #include <string>
 #include <utility>
@@ -342,7 +343,7 @@ ExportContext ProfilerOpenOrchestrator::captureLiveContext(std::int64_t now_ms, 
 {
     ExportContext context;
     context.bds_executable_sha256 = bds_executable_sha256_;
-    metadata_provider_.gatherServerMetadata(context, now_ms);
+    gatherPlatformServerMetadata(metadata_provider_, context, now_ms);
     if (native_plugin_sources_provider_) {
         context.native_plugin_sources = native_plugin_sources_provider_();
     }
@@ -351,7 +352,7 @@ ExportContext ProfilerOpenOrchestrator::captureLiveContext(std::int64_t now_ms, 
     context.metrics = statistics_.metricsSnapshot();
     context.window_stats = statistics_.profileWindows(profiler_.startTimeMs(), now_ms);
     context.system_stats = spark::gatherSystemStats(".");
-    metadata_provider_.gatherWorldMetadata(context);
+    metadata_provider_.gatherWorldMetadata(context.world, context.minecraft_version);
     if (ping_samples_provider_) {
         context.ping_samples = ping_samples_provider_();
     }
@@ -365,7 +366,7 @@ ExportContext ProfilerOpenOrchestrator::captureLiveStatisticsContext(std::int64_
 {
     ExportContext context;
     context.bds_executable_sha256 = bds_executable_sha256_;
-    metadata_provider_.gatherServerMetadata(context, now_ms);
+    gatherPlatformServerMetadata(metadata_provider_, context, now_ms);
     context.statistics = statistics_.snapshot();
     context.metrics = statistics_.metricsSnapshot();
     context.system_stats = spark::gatherSystemStats(".");

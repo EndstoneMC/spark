@@ -26,8 +26,8 @@ public:
 
 class TestMetadataProvider final : public spark::ProfileMetadataProvider {
 public:
-    void gatherServerMetadata(spark::ExportContext & /*ctx*/, std::int64_t /*now_ms*/) override {}
-    void gatherWorldMetadata(spark::ExportContext & /*ctx*/) override {}
+    void gatherServerMetadata(spark::ServerMetadata & /*metadata*/, std::int64_t /*now_ms*/) override {}
+    void gatherWorldMetadata(spark::WorldInfo & /*world*/, std::string_view /*minecraft_version*/) override {}
     std::int64_t serverUptimeSeconds() override { return 0; }
     std::int64_t playerCount() override { return 0; }
     spark::PlayerPingProvider *playerPingProvider() override { return nullptr; }

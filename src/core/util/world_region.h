@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/stats/system_stats.h"
+#include "core/metadata/platform_metadata.h"
 
 namespace spark {
 

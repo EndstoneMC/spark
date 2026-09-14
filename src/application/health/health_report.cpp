@@ -1,4 +1,5 @@
 #include "application/health/health_report.h"
+#include "application/profiler/platform_metadata_capture.h"
 
 #include <algorithm>
 #include <utility>
@@ -128,8 +129,8 @@ HealthData captureHealthData(StatisticsService &statistics, ProfileMetadataProvi
                              std::string sender_unique_id)
 {
     ExportContext context;
-    metadata_provider.gatherServerMetadata(context, now_ms);
-    metadata_provider.gatherWorldMetadata(context);
+    gatherPlatformServerMetadata(metadata_provider, context, now_ms);
+    metadata_provider.gatherWorldMetadata(context.world, context.minecraft_version);
     context.statistics = statistics.snapshot();
     context.metrics = statistics.metricsSnapshot();
     context.system_stats = gatherSystemStats(".");

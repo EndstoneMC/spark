@@ -6,14 +6,9 @@
 #include <string_view>
 #include <vector>
 
-namespace spark {
+#include "core/metadata/platform_metadata.h"
 
-struct DataPackInfo {
-    std::string name;
-    std::string description;
-    std::string source;
-    bool builtin = false;
-};
+namespace spark {
 
 // Discovers the behavior packs selected by the active Bedrock world.
 //

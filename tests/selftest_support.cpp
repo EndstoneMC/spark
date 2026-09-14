@@ -114,13 +114,13 @@ void TestDispatcher::setReject(bool reject)
     reject_.store(reject);
 }
 
-void TestMetadataProvider::gatherServerMetadata(spark::ExportContext &ctx, std::int64_t /*now_ms*/)
+void TestMetadataProvider::gatherServerMetadata(spark::ServerMetadata &metadata, std::int64_t /*now_ms*/)
 {
     checkThread();
-    ctx.server_configurations["server.properties"] = R"({"max-players":"20"})";
+    metadata.server_configurations["server.properties"] = R"({"max-players":"20"})";
 }
 
-void TestMetadataProvider::gatherWorldMetadata(spark::ExportContext & /*ctx*/)
+void TestMetadataProvider::gatherWorldMetadata(spark::WorldInfo & /*world*/, std::string_view /*minecraft_version*/)
 {
     checkThread();
 }

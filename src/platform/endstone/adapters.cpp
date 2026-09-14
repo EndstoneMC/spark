@@ -15,7 +15,6 @@
 #include "core/metadata/behavior_packs.h"
 #include "core/metadata/gamerule_semantics.h"
 #include "core/metadata/server_properties.h"
-#include "core/profiler/profiler.h"
 #include "core/stats/ping_statistics.h"
 #include "core/stats/system_stats.h"
 #include "core/util/format.h"
@@ -171,37 +170,37 @@ void appendGameRules(WorldInfo &world, endstone::Level &level, const std::string
 
 }  // namespace
 
-void EndstoneMetadataProvider::gatherServerMetadata(ExportContext &ctx, std::int64_t now_ms)
+void EndstoneMetadataProvider::gatherServerMetadata(ServerMetadata &metadata, std::int64_t now_ms)
 {
-    ctx.endstone_version = server_.getVersion();
-    ctx.minecraft_version = server_.getMinecraftVersion();
-    ctx.bds_executable_sha256 = bds_executable_sha256_;
-    ctx.player_count = static_cast<std::int64_t>(server_.getOnlinePlayers().size());
-    ctx.online_mode = server_.getOnlineMode() ? 2 : 1;
+    metadata.endstone_version = server_.getVersion();
+    metadata.minecraft_version = server_.getMinecraftVersion();
+    metadata.bds_executable_sha256 = bds_executable_sha256_;
+    metadata.player_count = static_cast<std::int64_t>(server_.getOnlinePlayers().size());
+    metadata.online_mode = server_.getOnlineMode() ? 2 : 1;
     {
         std::int64_t start_ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(server_.getStartTime().time_since_epoch()).count();
-        ctx.uptime_ms = now_ms - start_ms;
+        metadata.uptime_ms = now_ms - start_ms;
     }
 
-    ctx.plugins.clear();
+    metadata.plugins.clear();
     for (endstone::Plugin *plugin : server_.getPluginManager().getPlugins()) {
         const endstone::PluginDescription &desc = plugin->getDescription();
         std::string author;
         for (const std::string &a : desc.getAuthors()) {
             author += (author.empty() ? "" : ", ") + a;
         }
-        ctx.plugins.push_back({.name = desc.getName(),
-                               .version = desc.getVersion(),
-                               .author = author,
-                               .description = desc.getDescription()});
+        metadata.plugins.push_back({.name = desc.getName(),
+                                    .version = desc.getVersion(),
+                                    .author = author,
+                                    .description = desc.getDescription()});
     }
 
     // Strict allowlist parse; serialized as a JSON object string for server_configurations.
     auto properties = spark::parseServerProperties(std::filesystem::current_path() / "server.properties");
     if (!properties.empty()) {
-        ctx.server_configurations.clear();
-        ctx.server_configurations["server.properties"] = spark::serverPropertiesToJsonString(properties);
+        metadata.server_configurations.clear();
+        metadata.server_configurations["server.properties"] = spark::serverPropertiesToJsonString(properties);
     }
 }
 
@@ -222,9 +221,9 @@ std::vector<NativePluginSource> EndstoneMetadataProvider::nativePluginSources()
     return sources;
 }
 
-void EndstoneMetadataProvider::gatherWorldMetadata(ExportContext &ctx)
+void EndstoneMetadataProvider::gatherWorldMetadata(WorldInfo &world, std::string_view minecraft_version)
 {
-    ctx.world = WorldInfo{};
+    world = WorldInfo{};
     endstone::Level &level = server_.getLevel();
     for (const auto &dimension : level.getDimensions()) {
         std::map<std::pair<int, int>, WorldChunk> chunks;
@@ -249,28 +248,28 @@ void EndstoneMetadataProvider::gatherWorldMetadata(ExportContext &ctx)
             it->second.entity_counts[std::string(actor->getType().getId())]++;
         }
 
-        WorldEntry world;
-        world.name = std::string(dimension->getId());
+        WorldEntry entry;
+        entry.name = std::string(dimension->getId());
         auto regions = groupChunksIntoRegions(chunks);
         for (const auto &region : regions) {
-            world.total_entities += region.total_entities;
+            entry.total_entities += region.total_entities;
             for (const auto &chunk : region.chunks) {
                 for (const auto &[type, count] : chunk.entity_counts) {
-                    ctx.world.entity_counts[type] += count;
+                    world.entity_counts[type] += count;
                 }
             }
-            world.regions.push_back(region);
+            entry.regions.push_back(region);
         }
-        ctx.world.total_entities += world.total_entities;
-        ctx.world.worlds.push_back(std::move(world));
+        world.total_entities += entry.total_entities;
+        world.worlds.push_back(std::move(entry));
     }
 
     const std::string world_name = level.getName();
-    appendGameRules(ctx.world, level, world_name, ctx.minecraft_version, KBooleanGameRules);
-    appendGameRules(ctx.world, level, world_name, ctx.minecraft_version, KIntegerGameRules);
+    appendGameRules(world, level, world_name, minecraft_version, KBooleanGameRules);
+    appendGameRules(world, level, world_name, minecraft_version, KIntegerGameRules);
 
-    ctx.world.data_packs = discoverActiveBehaviorPacks(std::filesystem::current_path(), world_name);
-    ctx.world.present = !ctx.world.worlds.empty() || !ctx.world.game_rules.empty() || !ctx.world.data_packs.empty();
+    world.data_packs = discoverActiveBehaviorPacks(std::filesystem::current_path(), world_name);
+    world.present = !world.worlds.empty() || !world.game_rules.empty() || !world.data_packs.empty();
 }
 
 std::int64_t EndstoneMetadataProvider::serverUptimeSeconds()

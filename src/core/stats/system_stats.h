@@ -7,51 +7,10 @@
 #include <string>
 #include <vector>
 
-#include "core/metadata/behavior_packs.h"
+#include "core/metadata/platform_metadata.h"
 #include "core/stats/network_monitor.h"
 
 namespace spark {
-
-// A loaded plugin, for the viewer's Plugins/Mods list (SamplerMetadata.sources).
-struct PluginInfo {
-    std::string name;
-    std::string version;
-    std::string author;
-    std::string description;
-};
-
-struct WorldChunk {
-    int x = 0;
-    int z = 0;
-    int total_entities = 0;
-    std::map<std::string, int> entity_counts;
-};
-
-struct WorldRegion {
-    int total_entities = 0;
-    std::vector<WorldChunk> chunks;
-};
-
-struct WorldEntry {
-    std::string name;
-    int total_entities = 0;
-    std::vector<WorldRegion> regions;
-};
-
-struct GameRuleInfo {
-    std::string name;
-    std::optional<std::string> default_value;
-    std::map<std::string, std::string> world_values;
-};
-
-struct WorldInfo {
-    bool present = false;
-    int total_entities = 0;
-    std::map<std::string, int> entity_counts;  // entity type -> count
-    std::vector<WorldEntry> worlds;
-    std::vector<GameRuleInfo> game_rules;
-    std::vector<DataPackInfo> data_packs;
-};
 
 // Server-side statistics sourced from the Endstone API (on the main thread).
 struct PlatformStats {

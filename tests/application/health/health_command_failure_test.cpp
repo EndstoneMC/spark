@@ -72,8 +72,8 @@ namespace {
 
 class Metadata final : public spark::ProfileMetadataProvider {
 public:
-    void gatherServerMetadata(spark::ExportContext &, std::int64_t) override {}
-    void gatherWorldMetadata(spark::ExportContext &) override {}
+    void gatherServerMetadata(spark::ServerMetadata &, std::int64_t) override {}
+    void gatherWorldMetadata(spark::WorldInfo &, std::string_view) override {}
     std::int64_t serverUptimeSeconds() override { return 0; }
     std::int64_t playerCount() override { return 0; }
     spark::PlayerPingProvider *playerPingProvider() override { return nullptr; }

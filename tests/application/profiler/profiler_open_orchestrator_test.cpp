@@ -53,6 +53,11 @@ struct ProfilerOpenTestAccess {
         return open.captureLiveContext(now_ms, comment);
     }
 
+    static ExportContext captureStatistics(ProfilerOpenOrchestrator &open, std::int64_t now_ms)
+    {
+        return open.captureLiveStatisticsContext(now_ms);
+    }
+
     static std::string build(ProfilerOpenOrchestrator &open, const ExportContext &context)
     {
         return open.buildLiveSamplerData(context);
@@ -82,11 +87,14 @@ public:
 
 class TestMetadataProvider final : public spark::ProfileMetadataProvider {
 public:
-    void gatherServerMetadata(spark::ExportContext &, std::int64_t) override {}
-    void gatherWorldMetadata(spark::ExportContext &) override {}
+    void gatherServerMetadata(spark::ServerMetadata &, std::int64_t) override { ++server_metadata_calls; }
+    void gatherWorldMetadata(spark::WorldInfo &, std::string_view) override { ++world_metadata_calls; }
     std::int64_t serverUptimeSeconds() override { return 0; }
     std::int64_t playerCount() override { return 0; }
     spark::PlayerPingProvider *playerPingProvider() override { return nullptr; }
+
+    int server_metadata_calls = 0;
+    int world_metadata_calls = 0;
 };
 
 class TestNotifier final : public spark::ResultNotifier {
@@ -170,10 +178,19 @@ void testOpenCommentReachesLiveMetadata()
     const auto now_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
             .count();
+    const int server_calls_before_capture = metadata_provider.server_metadata_calls;
+    const int world_calls_before_capture = metadata_provider.world_metadata_calls;
     const spark::ExportContext context =
         spark::ProfilerOpenTestAccess::capture(open, now_ms, spark::ProfilerOpenTestAccess::openComment(open));
     const std::string data = spark::ProfilerOpenTestAccess::build(open, context);
     assert(data.find("open comment") != std::string::npos);
+    assert(metadata_provider.server_metadata_calls == server_calls_before_capture + 1);
+    assert(metadata_provider.world_metadata_calls == world_calls_before_capture + 1);
+    const int server_calls_before_statistics = metadata_provider.server_metadata_calls;
+    const int world_calls_before_statistics = metadata_provider.world_metadata_calls;
+    static_cast<void>(spark::ProfilerOpenTestAccess::captureStatistics(open, now_ms));
+    assert(metadata_provider.server_metadata_calls == server_calls_before_statistics + 1);
+    assert(metadata_provider.world_metadata_calls == world_calls_before_statistics);
 
     open.close();
     {

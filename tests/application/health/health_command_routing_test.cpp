@@ -71,15 +71,15 @@ public:
 
 class Metadata final : public ProfileMetadataProvider {
 public:
-    void gatherServerMetadata(ExportContext &context, std::int64_t) override
+    void gatherServerMetadata(ServerMetadata &metadata, std::int64_t) override
     {
-        context.endstone_version = "test-endstone";
-        context.minecraft_version = "test-minecraft";
-        context.player_count = 3;
-        context.uptime_ms = 12000;
-        context.server_configurations["server.properties"] = "{}";
+        metadata.endstone_version = "test-endstone";
+        metadata.minecraft_version = "test-minecraft";
+        metadata.player_count = 3;
+        metadata.uptime_ms = 12000;
+        metadata.server_configurations["server.properties"] = "{}";
     }
-    void gatherWorldMetadata(ExportContext &) override {}
+    void gatherWorldMetadata(WorldInfo &, std::string_view) override {}
     std::int64_t serverUptimeSeconds() override { return 12; }
     std::int64_t playerCount() override { return 3; }
     PlayerPingProvider *playerPingProvider() override { return nullptr; }

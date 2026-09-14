@@ -48,13 +48,13 @@ public:
 
 class Metadata final : public spark::ProfileMetadataProvider {
 public:
-    void gatherServerMetadata(spark::ExportContext &, std::int64_t) override
+    void gatherServerMetadata(spark::ServerMetadata &, std::int64_t) override
     {
         if (throw_server) {
             throw std::runtime_error("server metadata failed");
         }
     }
-    void gatherWorldMetadata(spark::ExportContext &) override {}
+    void gatherWorldMetadata(spark::WorldInfo &, std::string_view) override {}
     std::vector<spark::NativePluginSource> nativePluginSources() override
     {
         if (throw_native) {

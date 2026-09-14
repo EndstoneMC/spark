@@ -193,8 +193,8 @@ public:
 
 class TestMetadata final : public spark::ProfileMetadataProvider {
 public:
-    void gatherServerMetadata(spark::ExportContext &, std::int64_t) override {}
-    void gatherWorldMetadata(spark::ExportContext &) override {}
+    void gatherServerMetadata(spark::ServerMetadata &, std::int64_t) override {}
+    void gatherWorldMetadata(spark::WorldInfo &, std::string_view) override {}
     std::vector<spark::NativePluginSource> nativePluginSources() override
     {
         ++native_calls;

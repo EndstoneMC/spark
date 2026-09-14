@@ -6,13 +6,15 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "core/profiler/profiler.h"
-#include "core/stats/ping_statistics.h"
+#include "core/metadata/platform_metadata.h"
 
 namespace spark {
+
+class PlayerPingProvider;
 
 // Run a task on the server main thread (used for announcing export results
 // after a background export completes).
@@ -35,8 +37,8 @@ struct WorldGaugeValues {
 class ProfileMetadataProvider {
 public:
     virtual ~ProfileMetadataProvider() = default;
-    virtual void gatherServerMetadata(ExportContext &ctx, std::int64_t now_ms) = 0;
-    virtual void gatherWorldMetadata(ExportContext &ctx) = 0;
+    virtual void gatherServerMetadata(ServerMetadata &metadata, std::int64_t now_ms) = 0;
+    virtual void gatherWorldMetadata(WorldInfo &world, std::string_view minecraft_version) = 0;
     virtual std::vector<NativePluginSource> nativePluginSources() { return {}; }
     // Runtime queries used by /spark health (not export-specific).
     virtual std::int64_t serverUptimeSeconds() = 0;
