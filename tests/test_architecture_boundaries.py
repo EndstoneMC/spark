@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Verify that source layers respect architectural boundaries.
 
-Dependency model: platform/endstone -> application -> core -> native
+Dependency model: platform/endstone -> application -> core/proto/net -> native
 
 - src/native/      may only include from src/native/
-- src/core/        may include from src/core/ and src/native/
-- src/application/ may include from src/application/, src/core/, src/native/
+- src/core/,       src/proto/, and src/net/ may include from the shared core
+                   layer and src/native/
+- src/application/ may include from src/application/, the shared core layer,
+                   and src/native/
 - src/platform/    may include from anywhere
 - src/plugin.cpp   may include from anywhere
 
@@ -24,12 +26,14 @@ INCLUDE_RE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.MULTILINE)
 # Layers and what they may include (prefixes allowed).
 LAYER_RULES = {
     "native": {"native/"},
-    "core": {"core/", "native/"},
-    "application": {"application/", "core/", "native/"},
+    "core": {"core/", "proto/", "net/", "native/"},
+    "application": {"application/", "core/", "proto/", "net/", "native/"},
 }
 
 FORBIDDEN_PATTERNS = [
-    re.compile(r"^endstone/"),
+    re.compile(r"^endstone(?:/|$)"),
+    re.compile(r"^endstone_papi(?:/|$)"),
+    re.compile(r"^papi(?:/|$)"),
     re.compile(r"^platform/endstone/"),
     re.compile(r"^platform/"),
 ]
@@ -40,7 +44,7 @@ def layer_of(path: Path) -> str | None:
     parts = rel.parts
     if parts[0] == "native":
         return "native"
-    if parts[0] == "core":
+    if parts[0] in {"core", "proto", "net"}:
         return "core"
     if parts[0] == "application":
         return "application"
@@ -56,21 +60,21 @@ def check_file(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8", errors="replace")
     for m in INCLUDE_RE.finditer(text):
         inc = m.group(1)
-        # System/library includes (no slash or known external libs) are always fine.
-        if "/" not in inc and not inc.startswith("endstone"):
-            continue
         # Check forbidden patterns first.
         for pat in FORBIDDEN_PATTERNS:
             if pat.match(inc):
                 violations.append(f"{path.relative_to(ROOT)}: includes <{inc}> (forbidden in {layer} layer)")
                 break
         else:
+            # System/library includes (no slash or known external libs) are always fine.
+            if "/" not in inc and not inc.startswith("endstone"):
+                continue
             # Check if the include is allowed by the layer's rules.
             # spark-internal includes use paths like "core/...", "native/...", etc.
             if not any(inc.startswith(prefix) for prefix in allowed):
                 # External library includes (cpptrace, etc.) don't match any
                 # internal prefix and are fine.
-                internal_prefixes = ("core/", "native/", "application/", "platform/")
+                internal_prefixes = ("core/", "proto/", "net/", "native/", "application/", "platform/")
                 if not any(inc.startswith(p) for p in internal_prefixes):
                     continue
                 violations.append(

@@ -377,11 +377,13 @@ set_target_properties(spark_placeholder_resolver_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_test(NAME spark_placeholder_resolver_test COMMAND spark_placeholder_resolver_test)
 
-add_executable(spark_papi_integration_test platform/endstone/papi_integration_test.cpp)
-target_link_libraries(spark_papi_integration_test PRIVATE spark_papi_integration)
-set_target_properties(spark_papi_integration_test PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-add_test(NAME spark_papi_integration_test COMMAND spark_papi_integration_test)
+if (ENDSTONE_SPARK_BUILD_PLUGIN)
+    add_executable(spark_papi_integration_test platform/endstone/papi_integration_test.cpp)
+    target_link_libraries(spark_papi_integration_test PRIVATE spark_papi_integration)
+    set_target_properties(spark_papi_integration_test PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_test(NAME spark_papi_integration_test COMMAND spark_papi_integration_test)
+endif ()
 
 add_executable(spark_platform_capabilities_compile_test application/platform_capabilities_compile_test.cpp)
 target_include_directories(spark_platform_capabilities_compile_test PRIVATE "${CMAKE_SOURCE_DIR}/src")

@@ -431,6 +431,10 @@ cmake -S . -B build -G Ninja "-DCMAKE_TOOLCHAIN_FILE=build/RelWithDebInfo/genera
 cmake --build build
 ```
 
+To build the common profiler, application, native, protobuf, and network layers
+without fetching Endstone or PAPI, add `-DENDSTONE_SPARK_BUILD_PLUGIN=OFF` to
+the configure command. The default is `ON` and retains the plugin build.
+
 For full Linux CTest coverage, including production-sampler, unload, and legacy
 tests, also pass `-DENDSTONE_SPARK_GATEWAY_SAMPLER_TESTS=ON` to the CMake configure
 command above. This option defaults to `OFF`.
