@@ -84,6 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Harden Windows Permanent-IAT gateway unwind admission and real `HeapAlloc`/
+  `HeapReAlloc` exception cleanup, rolling back allocation records and releasing
+  admission, tracking, and reentrancy state on failure. CRT throwing-new paths
+  preserve C++ exception and `new_handler` propagation with rollback; this does
+  not claim blanket SEH safety for every CRT entry point.
 - Keep Linux allocation gateways in permanent anonymous memory without adding a
   permanent allocation-profiler pin on Spark. Incompatible resident code or
   exhaustion of 256 lifetime groups requires a server restart. Retired published

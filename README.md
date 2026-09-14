@@ -245,7 +245,10 @@ TPS marker, and Minecraft color codes. These placeholders are player-independent
   RTTI names, vtables, thunks, and bounded string references. String evidence is
   emitted as tentative `str?:` labels; rejected, shared, and
   budget-limited references are reported in export metadata. A failed caller
-  unwind therefore shortens the sample instead of discarding it.
+  unwind therefore shortens the sample instead of discarding it. The sampler
+  retries `ResumeThread` up to 32 times after each suspension; if every retry
+  fails and the target has not exited, it terminates the process rather than
+  leaving BDS suspended.
 * Samples aggregate into per-thread call trees and serialize to spark's protobuf.
   Bytebin uploads are gzip-compressed; local `.sparkprofile` files under
   `plugins/spark/profiles/` contain raw protobuf.
@@ -315,9 +318,9 @@ admission. These restrictions do not disable execution profiling.
 
 The gateway arena has a limit of 256 groups over the server process lifetime,
 not 256 simultaneous profiling sessions. Published groups are never reused after
-retirement. Exhausting this capacity, encountering incompatible resident gateway
-code, or upgrading from the old helper-based runtime requires a server process
-restart. Reloading the plugin does not replace permanent gateway code.
+retirement. Exhausting this capacity or encountering incompatible resident
+gateway code requires a server process restart. Reloading the plugin does not
+replace permanent gateway code.
 
 On Windows x64, Spark redirects supported UCRT and heap allocation imports through
 Spark-owned Permanent-IAT gateways. Shutdown first closes gateway admission, drains
@@ -469,8 +472,10 @@ plugins/
 ```
 
 No helper library is required.
-Restart the server process when upgrading from a helper-based build or changing
-the permanent gateway's code identity.
+Restart the full BDS process when replacing an older development Permanent-IAT
+gateway with gateway ABI 3 or changing the gateway's code identity. ABI 3
+preserves its published state offsets for compatible rediscovery; incompatible
+resident registry code is not reused.
 
 > **Toolchain / ABI note.** A C++ Endstone plugin must use the runtime ABI expected
 > by the Endstone build it is loaded into. Match its compiler, compiler ABI, C++

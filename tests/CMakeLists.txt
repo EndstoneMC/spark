@@ -642,7 +642,8 @@ if (WIN32)
 
     foreach (fixture windows_iat_native_test windows_permanent_iat_backend_reload_test
             windows_permanent_iat_gateway_registry_test windows_permanent_iat_gateway_test
-            windows_permanent_iat_gateway_unload_test windows_permanent_iat_gateway_unwind_test)
+            windows_permanent_iat_gateway_unload_test windows_permanent_iat_gateway_unwind_test
+            windows_permanent_iat_gateway_seh_test)
         add_executable(spark_${fixture} native/alloc/${fixture}.cpp)
         target_link_libraries(spark_${fixture} PRIVATE spark_core Threads::Threads)
         set_target_properties(spark_${fixture} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
@@ -699,6 +700,22 @@ if (WIN32)
     set_target_properties(spark_windows_allocation_backend_test PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     add_test(NAME spark_windows_allocation_backend_test COMMAND spark_windows_allocation_backend_test)
+
+    add_executable(spark_windows_allocation_heap_test native/alloc/windows_allocation_heap_test.cpp)
+    add_dependencies(spark_windows_allocation_heap_test spark_windows_allocation_fixture)
+    target_link_libraries(spark_windows_allocation_heap_test PRIVATE spark_core)
+    set_target_properties(spark_windows_allocation_heap_test PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_test(NAME spark_windows_allocation_heap_test COMMAND spark_windows_allocation_heap_test)
+    set_tests_properties(spark_windows_allocation_heap_test PROPERTIES TIMEOUT 20)
+
+    add_executable(spark_windows_allocation_new_handler_test native/alloc/windows_allocation_new_handler_test.cpp)
+    add_dependencies(spark_windows_allocation_new_handler_test spark_windows_allocation_fixture)
+    target_link_libraries(spark_windows_allocation_new_handler_test PRIVATE spark_core)
+    set_target_properties(spark_windows_allocation_new_handler_test PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_test(NAME spark_windows_allocation_new_handler_test COMMAND spark_windows_allocation_new_handler_test)
+    set_tests_properties(spark_windows_allocation_new_handler_test PROPERTIES TIMEOUT 10)
 
     add_executable(spark_windows_allocation_stop_test native/alloc/windows_allocation_stop_test.cpp)
     target_link_libraries(spark_windows_allocation_stop_test PRIVATE spark_core)

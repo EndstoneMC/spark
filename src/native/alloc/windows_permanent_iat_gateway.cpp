@@ -26,11 +26,11 @@ namespace spark::permanent_iat_gateway {
 namespace {
 
 constexpr std::uint64_t KGatewayMagic = 0x3154414947504B53ULL;  // "SKPGIAT1" marker.
-constexpr std::uint32_t KGatewayAbiVersion = 2;
-constexpr std::size_t KGatewayCodeCapacity = 128;
-constexpr std::size_t KGatewayImageCapacity = 256;
+constexpr std::uint32_t KGatewayAbiVersion = 3;
+constexpr std::size_t KGatewayCodeCapacity = 256;
+constexpr std::size_t KGatewayImageCapacity = 512;
 constexpr std::size_t KGatewayAllocationSize = 4096;
-constexpr std::size_t KGatewayUnwindInfoSize = 8;
+constexpr std::size_t KGatewayUnwindInfoSize = 12;
 constexpr std::uint64_t KGateClosed = 0;
 constexpr std::uint64_t KGateOpen = 1;
 constexpr std::uint32_t KMaxStackArguments = 1;
@@ -56,6 +56,7 @@ struct GatewayState {
 struct GatewayImageLayout {
     std::size_t code_size = 0;
     std::size_t call_stub_offset = 0;
+    std::size_t cleanup_handler_offset = 0;
     std::size_t unwind_info_offset = 0;
     std::size_t image_size = 0;
     RUNTIME_FUNCTION runtime_function{};
@@ -217,28 +218,63 @@ static_assert(std::atomic<void *>::is_always_lock_free);
         return false;
     }
 
+    // The cleanup handler is a true leaf and lives outside the registered
+    // function range. The admission jump lands after it at the call stub.
+    const std::size_t cleanup_handler = code_size;
+    if (!emit(image, code_size, {0x8B, 0x41, 0x04}, error) ||                    // mov eax,[rcx+4]
+        !emit(image, code_size, {0xF7, 0xC0, 0x06, 0x00, 0x00, 0x00}, error)) {  // test eax,UNWINDING|EXIT_UNWIND
+        return false;
+    }
+    const std::size_t handler_not_unwinding = code_size;
+    if (!emit(image, code_size, {0x74, 0x00}, error) ||                          // je return
+        !emit(image, code_size, {0xF7, 0xC0, 0x20, 0x00, 0x00, 0x00}, error)) {  // test eax,TARGET_UNWIND
+        return false;
+    }
+    const std::size_t handler_target_unwind = code_size;
+    if (!emit(image, code_size, {0x75, 0x00}, error) ||              // jne return
+        !emit(image, code_size, {0x31, 0xC0}, error) ||              // xor eax,eax
+        !emit(image, code_size, {0x48, 0x87, 0x42, 0x28}, error) ||  // xchg [rdx+40],rax
+        !emit(image, code_size, {0x48, 0x85, 0xC0}, error)) {        // test rax,rax
+        return false;
+    }
+    const std::size_t handler_token_consumed = code_size;
+    if (!emit(image, code_size, {0x74, 0x00}, error) ||                    // je return
+        !emit(image, code_size, {0x4C, 0x8B, 0x5A, 0x30}, error) ||        // mov r11,[rdx+48]
+        !emit(image, code_size, {0xF0, 0x49, 0xFF, 0x4B, 0x20}, error)) {  // lock dec [r11+active]
+        return false;
+    }
+    const std::size_t handler_return = code_size;
+    if (!emit(image, code_size, {0xB8, 0x01, 0x00, 0x00, 0x00}, error) ||  // return ExceptionContinueSearch
+        !emit(image, code_size, {0xC3}, error)) {
+        return false;
+    }
+    if (!patchRel8(image, handler_not_unwinding, handler_return, error) ||
+        !patchRel8(image, handler_target_unwind, handler_return, error) ||
+        !patchRel8(image, handler_token_consumed, handler_return, error)) {
+        return false;
+    }
+
     // This is the only non-leaf range. Its four-byte stack-allocation prologue
     // is described by the dynamic UNWIND_INFO emitted after the machine code.
     const std::size_t call_stub = code_size;
-    if (!emit(image, code_size, {0x48, 0x83, 0xEC, 0x28}, error)) {  // sub rsp,40
+    if (!emit(image, code_size, {0x48, 0x83, 0xEC, 0x38}, error)) {  // sub rsp,56
         return false;
     }
     if (state->stack_argument_count == 1 &&
         !emit(image, code_size, {0x48, 0x89, 0x44, 0x24, 0x20}, error)) {  // mov [rsp+32],rax
         return false;
     }
+    if (!emit(image, code_size, {0x48, 0xC7, 0x44, 0x24, 0x28, 0x01, 0x00, 0x00, 0x00}, error) ||
+        !emit(image, code_size, {0x4C, 0x89, 0x5C, 0x24, 0x30}, error)) {  // token=1, state=[rsp+48]
+        return false;
+    }
     if (!emit(image, code_size, {0x41, 0xFF, 0xD2}, error) ||  // call r10
-        !emit(image, code_size, {0x49, 0xBB}, error)) {        // mov r11,state
+        !emit(image, code_size, {0x48, 0xC7, 0x44, 0x24, 0x28, 0x00, 0x00, 0x00, 0x00}, error) ||
+        !emit(image, code_size, {0x4C, 0x8B, 0x5C, 0x24, 0x30}, error)) {  // clear token, reload state
         return false;
     }
-    if (code_size + sizeof(state_address) > KGatewayCodeCapacity) {
-        error = "permanent IAT gateway post-call state immediate exceeds code buffer";
-        return false;
-    }
-    std::memcpy(image.data() + code_size, &state_address, sizeof(state_address));
-    code_size += sizeof(state_address);
     if (!emit(image, code_size, {0xF0, 0x49, 0xFF, 0x4B, 0x20}, error) ||  // lock dec [r11+active]
-        !emit(image, code_size, {0x48, 0x83, 0xC4, 0x28}, error) ||        // add rsp,40
+        !emit(image, code_size, {0x48, 0x83, 0xC4, 0x38}, error) ||        // add rsp,56
         !emit(image, code_size, {0xC3}, error)) {                          // ret original caller
         return false;
     }
@@ -255,12 +291,12 @@ static_assert(std::atomic<void *>::is_always_lock_free);
         return false;
     }
 
-    // UNWIND_INFO version=1, flags=0, prologue=4, one unwind code,
-    // no frame register. UWOP_ALLOC_SMALL with OpInfo=4 represents 40 bytes:
-    // size = OpInfo * 8 + 8 = 40. The final two zero bytes keep the structure
-    // four-byte aligned as required by the x64 unwind format.
-    const std::array<std::uint8_t, KGatewayUnwindInfoSize> unwind_bytes{0x01, 0x04, 0x01, 0x00, 0x04, 0x42, 0x00, 0x00};
-    std::memcpy(image.data() + unwind_info, unwind_bytes.data(), unwind_bytes.size());
+    // UNWIND_INFO version=1, UHANDLER, prologue=4, one unwind code,
+    // no frame register. UWOP_ALLOC_SMALL with OpInfo=6 represents 56 bytes.
+    const std::array<std::uint8_t, 8> unwind_header{0x11, 0x04, 0x01, 0x00, 0x04, 0x62, 0x00, 0x00};
+    std::memcpy(image.data() + unwind_info, unwind_header.data(), unwind_header.size());
+    const auto cleanup_handler_rva = static_cast<DWORD>(cleanup_handler);
+    std::memcpy(image.data() + unwind_info + unwind_header.size(), &cleanup_handler_rva, sizeof(cleanup_handler_rva));
 
     if (call_stub > std::numeric_limits<DWORD>::max() || code_size > std::numeric_limits<DWORD>::max() ||
         unwind_info > std::numeric_limits<DWORD>::max()) {
@@ -270,8 +306,9 @@ static_assert(std::atomic<void *>::is_always_lock_free);
 
     layout.code_size = code_size;
     layout.call_stub_offset = call_stub;
+    layout.cleanup_handler_offset = cleanup_handler;
     layout.unwind_info_offset = unwind_info;
-    layout.image_size = unwind_info + unwind_bytes.size();
+    layout.image_size = unwind_info + KGatewayUnwindInfoSize;
     layout.runtime_function.BeginAddress = static_cast<DWORD>(call_stub);
     layout.runtime_function.EndAddress = static_cast<DWORD>(code_size);
     layout.runtime_function.UnwindData = static_cast<DWORD>(unwind_info);
@@ -419,7 +456,7 @@ bool createPermanentIatGateway(void *original, std::uint32_t stack_argument_coun
     state->call_stub_offset = static_cast<std::uint32_t>(layout.call_stub_offset);
     state->unwind_info_offset = static_cast<std::uint32_t>(layout.unwind_info_offset);
     state->runtime_function = layout.runtime_function;
-    std::memcpy(code_memory_raw, image.data(), layout.image_size);
+    std::memcpy(code_memory_raw, image.data(), KGatewayImageCapacity);
 
     DWORD old_code_protection = 0;
     if (::VirtualProtect(code_memory_raw, KGatewayAllocationSize, PAGE_EXECUTE_READ, &old_code_protection) == FALSE) {
@@ -436,7 +473,7 @@ bool createPermanentIatGateway(void *original, std::uint32_t stack_argument_coun
         error = "FlushInstructionCache permanent IAT gateway failed: " + std::to_string(failure);
         return false;
     }
-    state->code_hash = hashBytes(code_memory_raw, layout.image_size);
+    state->code_hash = hashBytes(code_memory_raw, KGatewayImageCapacity);
 
     MEMORY_BASIC_INFORMATION code_memory{};
     MEMORY_BASIC_INFORMATION state_memory{};
@@ -460,9 +497,9 @@ bool createPermanentIatGateway(void *original, std::uint32_t stack_argument_coun
         return false;
     }
     if (!validateUnwindRegistration(state, error)) {
-        (void)::RtlDeleteFunctionTable(&state->runtime_function);
-        ::VirtualFree(code_memory_raw, 0, MEM_RELEASE);
-        ::VirtualFree(state_memory_raw, 0, MEM_RELEASE);
+        // A registered function table and the generated image are process
+        // lifetime. Never remove a successful registration while code can
+        // still be reachable through a published IAT slot.
         return false;
     }
 
@@ -514,8 +551,8 @@ bool discoverPermanentIatGateway(void *gateway, PermanentIatGatewayHandle &handl
         expected_layout.code_size != state->code_size || expected_layout.call_stub_offset != state->call_stub_offset ||
         expected_layout.unwind_info_offset != state->unwind_info_offset ||
         !sameRuntimeFunction(expected_layout.runtime_function, state->runtime_function) ||
-        std::memcmp(gateway, expected_image.data(), expected_layout.image_size) != 0 ||
-        state->code_hash != hashBytes(gateway, expected_layout.image_size)) {
+        std::memcmp(gateway, expected_image.data(), KGatewayImageCapacity) != 0 ||
+        state->code_hash != hashBytes(gateway, KGatewayImageCapacity)) {
         if (error.empty()) {
             error = "permanent IAT gateway code/unwind signature validation failed";
         }

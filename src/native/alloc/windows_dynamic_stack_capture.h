@@ -22,8 +22,8 @@ namespace spark {
 namespace dynamic_stack_capture_detail {
 
 constexpr std::uint64_t kPermanentIatGatewayMagic = 0x3154414947504B53ULL;  // "SKPGIAT1".
-constexpr std::uint32_t kPermanentIatGatewayAbiVersion = 2;
-constexpr std::size_t kPermanentIatGatewayCodeCapacity = 128;
+constexpr std::uint32_t kPermanentIatGatewayAbiVersion = 3;
+constexpr std::size_t kPermanentIatGatewayCodeCapacity = 256;
 constexpr std::size_t kGatewayStateAbiOffset = 8;
 constexpr std::size_t kGatewayStateGatewayOffset = 56;
 constexpr std::size_t kGatewayStateBytesNeeded = kGatewayStateGatewayOffset + sizeof(void *);

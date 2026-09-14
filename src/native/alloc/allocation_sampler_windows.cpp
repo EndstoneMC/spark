@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -310,6 +311,22 @@ struct AllocationSampler::Impl {
         bool identity_announced = false;
     };
 
+    struct HeapCallCleanupState {
+        HookCounter *hook_counter = nullptr;
+        HotCounters *tracking_counters = nullptr;
+        ThreadSamplingState *recursion_state = nullptr;
+        LiveAllocation *pending_detached = nullptr;
+        DWORD entry_last_error = 0;
+        DWORD original_last_error = 0;
+        void *result = nullptr;
+        bool hook_owned = false;
+        bool tracking_owned = false;
+        bool recursion_owned = false;
+        bool count_only_recursion_owned = false;
+        bool original_completed = false;
+    };
+    static_assert(std::is_trivially_destructible_v<HeapCallCleanupState>);
+
     inline static thread_local bool mCountOnlyInsideHook = false;
 
     static std::size_t currentHotCounterShard() noexcept
@@ -380,12 +397,14 @@ struct AllocationSampler::Impl {
         ~AllocatorLastErrorGuard() { ::SetLastError(error_); }
 
         template <typename Function, typename... Args>
-        auto call(Function function, Args... args) noexcept -> decltype(function(args...))
+        auto call(Function function, Args... args) -> decltype(function(args...))
         {
             ::SetLastError(error_);
-            auto result = function(args...);
-            error_ = ::GetLastError();
-            return result;
+            struct LastErrorCapture {
+                DWORD &error;
+                ~LastErrorCapture() noexcept { error = ::GetLastError(); }
+            } capture{error_};
+            return function(args...);
         }
 
         void call(FreeFn function, void *pointer) noexcept
@@ -463,6 +482,31 @@ struct AllocationSampler::Impl {
     private:
         ThreadSamplingState *state_ = nullptr;
         bool previous_ = false;
+    };
+
+    class DetachedAllocationRollback {
+    public:
+        DetachedAllocationRollback(Impl &impl, LiveAllocation *allocation) noexcept
+            : impl_(impl), allocation_(allocation)
+        {
+        }
+
+        ~DetachedAllocationRollback() noexcept
+        {
+            if (armed_) {
+                impl_.restoreDetachedAllocation(allocation_);
+            }
+        }
+
+        DetachedAllocationRollback(const DetachedAllocationRollback &) = delete;
+        DetachedAllocationRollback &operator=(const DetachedAllocationRollback &) = delete;
+
+        void disarm() noexcept { armed_ = false; }
+
+    private:
+        Impl &impl_;
+        LiveAllocation *allocation_ = nullptr;
+        bool armed_ = true;
     };
 
     std::unique_ptr<WindowsAllocationIatHooks> hooks;
@@ -631,28 +675,202 @@ struct AllocationSampler::Impl {
         return self;
     }
 
-    static void *__cdecl hookMalloc(std::size_t size) noexcept
+    static void acquireHeapHookCall(HeapCallCleanupState &cleanup) noexcept
+    {
+        const std::uintptr_t thread_key = reinterpret_cast<std::uintptr_t>(::NtCurrentTeb()) >> 12;
+        cleanup.hook_counter = &mActiveHookCalls[static_cast<std::size_t>(thread_key) % mActiveHookCalls.size()];
+        cleanup.hook_counter->value.fetch_add(1, std::memory_order_acq_rel);
+        cleanup.hook_owned = true;
+    }
+
+    static void releaseHeapHookCall(HeapCallCleanupState &cleanup) noexcept
+    {
+        if (cleanup.hook_owned) {
+            cleanup.hook_counter->value.fetch_sub(1, std::memory_order_release);
+            cleanup.hook_owned = false;
+        }
+    }
+
+    void acquireHeapTracking(HeapCallCleanupState &cleanup) noexcept
+    {
+        if (!tracking.load(std::memory_order_acquire)) {
+            return;
+        }
+        cleanup.tracking_counters = &hotCountersForCurrentThread();
+        cleanup.tracking_counters->tracking_hook_calls.fetch_add(1, std::memory_order_acq_rel);
+        if (tracking.load(std::memory_order_acquire)) {
+            cleanup.tracking_owned = true;
+        }
+        else {
+            cleanup.tracking_counters->tracking_hook_calls.fetch_sub(1, std::memory_order_release);
+            cleanup.tracking_counters = nullptr;
+        }
+    }
+
+    void acquireHeapRecursion(HeapCallCleanupState &cleanup) noexcept
+    {
+        if (config.count_only) {
+            if (!mCountOnlyInsideHook) {
+                mCountOnlyInsideHook = true;
+                cleanup.count_only_recursion_owned = true;
+                cleanup.recursion_owned = true;
+            }
+            return;
+        }
+
+        ThreadSamplingState *state = currentThreadState();
+        if (state != nullptr && !state->inside_hook) {
+            state->inside_hook = true;
+            cleanup.recursion_state = state;
+            cleanup.recursion_owned = true;
+        }
+    }
+
+    static void releaseHeapRecursion(HeapCallCleanupState &cleanup) noexcept
+    {
+        if (!cleanup.recursion_owned) {
+            return;
+        }
+        if (cleanup.count_only_recursion_owned) {
+            mCountOnlyInsideHook = false;
+        }
+        else if (cleanup.recursion_state != nullptr) {
+            cleanup.recursion_state->inside_hook = false;
+        }
+        cleanup.recursion_owned = false;
+    }
+
+    static void releaseHeapTracking(HeapCallCleanupState &cleanup) noexcept
+    {
+        if (cleanup.tracking_owned) {
+            cleanup.tracking_counters->tracking_hook_calls.fetch_sub(1, std::memory_order_release);
+            cleanup.tracking_owned = false;
+        }
+    }
+
+    static void *executeHeapAlloc(Impl *initial, HeapAllocFn function, HANDLE heap, DWORD flags, SIZE_T requested_size,
+                                  bool from_hook)
+    {
+        HeapCallCleanupState cleanup{};
+        cleanup.entry_last_error = ::GetLastError();
+        cleanup.original_last_error = cleanup.entry_last_error;
+        Impl *self = initial;
+        __try {
+            if (from_hook) {
+                acquireHeapHookCall(cleanup);
+                self = activeOrAbort();
+                function = self->real_heap_alloc;
+            }
+
+            if (self->shouldTrackCurrentThread()) {
+                self->acquireHeapTracking(cleanup);
+                if (cleanup.tracking_owned) {
+                    self->acquireHeapRecursion(cleanup);
+                }
+            }
+
+            __try {
+                ::SetLastError(cleanup.entry_last_error);
+                cleanup.result = function(heap, flags, requested_size);
+            }
+            __finally {
+                cleanup.original_last_error = ::GetLastError();
+            }
+
+            if (cleanup.tracking_owned && cleanup.recursion_owned && cleanup.result != nullptr) {
+                self->recordAllocation(cleanup.result, static_cast<std::uint64_t>(requested_size));
+            }
+        }
+        __finally {
+            releaseHeapRecursion(cleanup);
+            releaseHeapTracking(cleanup);
+            releaseHeapHookCall(cleanup);
+            ::SetLastError(cleanup.original_last_error);
+        }
+        return cleanup.result;
+    }
+
+    static void *executeHeapReAlloc(Impl *initial, HeapReAllocFn function, HANDLE heap, DWORD flags, void *pointer,
+                                    SIZE_T requested_size, bool from_hook)
+    {
+        HeapCallCleanupState cleanup{};
+        cleanup.entry_last_error = ::GetLastError();
+        cleanup.original_last_error = cleanup.entry_last_error;
+        Impl *self = initial;
+        __try {
+            if (from_hook) {
+                acquireHeapHookCall(cleanup);
+                self = activeOrAbort();
+                function = self->real_heap_realloc;
+            }
+
+            if (self->shouldTrackCurrentThread()) {
+                self->acquireHeapTracking(cleanup);
+                if (cleanup.tracking_owned) {
+                    self->acquireHeapRecursion(cleanup);
+                    if (cleanup.recursion_owned) {
+                        cleanup.pending_detached = self->detachAllocation(pointer);
+                    }
+                }
+            }
+
+            __try {
+                ::SetLastError(cleanup.entry_last_error);
+                cleanup.result = function(heap, flags, pointer, requested_size);
+            }
+            __finally {
+                cleanup.original_last_error = ::GetLastError();
+            }
+            cleanup.original_completed = true;
+
+            if (cleanup.pending_detached != nullptr) {
+                if (cleanup.result != nullptr) {
+                    self->retireAllocation(cleanup.pending_detached, monotonicMs());
+                }
+                else {
+                    self->restoreDetachedAllocation(cleanup.pending_detached);
+                }
+                cleanup.pending_detached = nullptr;
+            }
+            if (cleanup.tracking_owned && cleanup.recursion_owned && cleanup.result != nullptr && requested_size != 0) {
+                self->recordAllocation(cleanup.result, static_cast<std::uint64_t>(requested_size));
+            }
+        }
+        __finally {
+            if (!cleanup.original_completed && cleanup.pending_detached != nullptr) {
+                self->restoreDetachedAllocation(cleanup.pending_detached);
+                cleanup.pending_detached = nullptr;
+            }
+            releaseHeapRecursion(cleanup);
+            releaseHeapTracking(cleanup);
+            releaseHeapHookCall(cleanup);
+            ::SetLastError(cleanup.original_last_error);
+        }
+        return cleanup.result;
+    }
+
+    static void *__cdecl hookMalloc(std::size_t size)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
         return self->handleMalloc(self->real_malloc, size);
     }
 
-    static void *__cdecl hookCalloc(std::size_t count, std::size_t size) noexcept
+    static void *__cdecl hookCalloc(std::size_t count, std::size_t size)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
         return self->handleCalloc(self->real_calloc, count, size);
     }
 
-    static void *__cdecl hookRealloc(void *pointer, std::size_t size) noexcept
+    static void *__cdecl hookRealloc(void *pointer, std::size_t size)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
         return self->handleRealloc(self->real_realloc, pointer, size);
     }
 
-    static void *__cdecl hookRecalloc(void *pointer, std::size_t count, std::size_t size) noexcept
+    static void *__cdecl hookRecalloc(void *pointer, std::size_t count, std::size_t size)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
@@ -666,29 +884,28 @@ struct AllocationSampler::Impl {
         self->handleFree(self->real_free, pointer);
     }
 
-    static void *__cdecl hookAlignedMalloc(std::size_t size, std::size_t alignment) noexcept
+    static void *__cdecl hookAlignedMalloc(std::size_t size, std::size_t alignment)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
         return self->handleAlignedMalloc(self->real_aligned_malloc, size, alignment);
     }
 
-    static void *__cdecl hookAlignedRealloc(void *pointer, std::size_t size, std::size_t alignment) noexcept
+    static void *__cdecl hookAlignedRealloc(void *pointer, std::size_t size, std::size_t alignment)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
         return self->handleAlignedRealloc(self->real_aligned_realloc, pointer, size, alignment);
     }
 
-    static void *__cdecl hookAlignedRecalloc(void *pointer, std::size_t count, std::size_t size,
-                                             std::size_t alignment) noexcept
+    static void *__cdecl hookAlignedRecalloc(void *pointer, std::size_t count, std::size_t size, std::size_t alignment)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
         return self->handleAlignedRecalloc(self->real_aligned_recalloc, pointer, count, size, alignment);
     }
 
-    static void *__cdecl hookAlignedOffsetMalloc(std::size_t size, std::size_t alignment, std::size_t offset) noexcept
+    static void *__cdecl hookAlignedOffsetMalloc(std::size_t size, std::size_t alignment, std::size_t offset)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
@@ -696,7 +913,7 @@ struct AllocationSampler::Impl {
     }
 
     static void *__cdecl hookAlignedOffsetRealloc(void *pointer, std::size_t size, std::size_t alignment,
-                                                  std::size_t offset) noexcept
+                                                  std::size_t offset)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
@@ -704,7 +921,7 @@ struct AllocationSampler::Impl {
     }
 
     static void *__cdecl hookAlignedOffsetRecalloc(void *pointer, std::size_t count, std::size_t size,
-                                                   std::size_t alignment, std::size_t offset) noexcept
+                                                   std::size_t alignment, std::size_t offset)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
@@ -719,21 +936,21 @@ struct AllocationSampler::Impl {
         self->handleFree(self->real_aligned_free, pointer);
     }
 
-    static void *__cdecl hookMallocBase(std::size_t size) noexcept
+    static void *__cdecl hookMallocBase(std::size_t size)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
         return self->handleMalloc(self->real_malloc_base, size);
     }
 
-    static void *__cdecl hookCallocBase(std::size_t count, std::size_t size) noexcept
+    static void *__cdecl hookCallocBase(std::size_t count, std::size_t size)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
         return self->handleCalloc(self->real_calloc_base, count, size);
     }
 
-    static void *__cdecl hookReallocBase(void *pointer, std::size_t size) noexcept
+    static void *__cdecl hookReallocBase(void *pointer, std::size_t size)
     {
         HookCallGuard activity;
         Impl *self = activeOrAbort();
@@ -747,18 +964,14 @@ struct AllocationSampler::Impl {
         self->handleFree(self->real_free_base, pointer);
     }
 
-    static void *WINAPI hookHeapAlloc(HANDLE heap, DWORD flags, SIZE_T size) noexcept
+    static void *WINAPI hookHeapAlloc(HANDLE heap, DWORD flags, SIZE_T size)
     {
-        HookCallGuard activity;
-        Impl *self = activeOrAbort();
-        return self->handleHeapAlloc(self->real_heap_alloc, heap, flags, size);
+        return executeHeapAlloc(nullptr, nullptr, heap, flags, size, true);
     }
 
-    static void *WINAPI hookHeapReAlloc(HANDLE heap, DWORD flags, void *pointer, SIZE_T size) noexcept
+    static void *WINAPI hookHeapReAlloc(HANDLE heap, DWORD flags, void *pointer, SIZE_T size)
     {
-        HookCallGuard activity;
-        Impl *self = activeOrAbort();
-        return self->handleHeapReAlloc(self->real_heap_realloc, heap, flags, pointer, size);
+        return executeHeapReAlloc(nullptr, nullptr, heap, flags, pointer, size, true);
     }
 
     static BOOL WINAPI hookHeapFree(HANDLE heap, DWORD flags, void *pointer) noexcept
@@ -1050,7 +1263,7 @@ struct AllocationSampler::Impl {
         return result;
     }
 
-    void *handleMalloc(MallocFn function, std::size_t requested_size) noexcept
+    void *handleMalloc(MallocFn function, std::size_t requested_size)
     {
         AllocatorLastErrorGuard last_error;
         if (!shouldTrackCurrentThread()) {
@@ -1071,7 +1284,7 @@ struct AllocationSampler::Impl {
         return pointer;
     }
 
-    void *handleCalloc(CallocFn function, std::size_t count, std::size_t requested_size) noexcept
+    void *handleCalloc(CallocFn function, std::size_t count, std::size_t requested_size)
     {
         AllocatorLastErrorGuard last_error;
         if (!shouldTrackCurrentThread()) {
@@ -1095,7 +1308,7 @@ struct AllocationSampler::Impl {
         return pointer;
     }
 
-    void *handleRealloc(ReallocFn function, void *pointer, std::size_t requested_size) noexcept
+    void *handleRealloc(ReallocFn function, void *pointer, std::size_t requested_size)
     {
         AllocatorLastErrorGuard last_error;
         if (!shouldTrackCurrentThread()) {
@@ -1110,7 +1323,9 @@ struct AllocationSampler::Impl {
             return last_error.call(function, pointer, requested_size);
         }
         LiveAllocation *previous = detachAllocation(pointer);
+        DetachedAllocationRollback rollback(*this, previous);
         void *new_pointer = last_error.call(function, pointer, requested_size);
+        rollback.disarm();
         const bool replaced = new_pointer != nullptr || (pointer != nullptr && requested_size == 0);
         if (replaced) {
             if (previous != nullptr) {
@@ -1127,7 +1342,7 @@ struct AllocationSampler::Impl {
         return new_pointer;
     }
 
-    void *handleRecalloc(RecallocFn function, void *pointer, std::size_t count, std::size_t requested_size) noexcept
+    void *handleRecalloc(RecallocFn function, void *pointer, std::size_t count, std::size_t requested_size)
     {
         AllocatorLastErrorGuard last_error;
         if (!shouldTrackCurrentThread()) {
@@ -1144,7 +1359,9 @@ struct AllocationSampler::Impl {
         std::uint64_t bytes = 0;
         const bool valid_size = checkedMultiply(count, requested_size, bytes);
         LiveAllocation *previous = detachAllocation(pointer);
+        DetachedAllocationRollback rollback(*this, previous);
         void *new_pointer = last_error.call(function, pointer, count, requested_size);
+        rollback.disarm();
         const bool replaced = new_pointer != nullptr || (pointer != nullptr && valid_size && bytes == 0);
         if (replaced) {
             if (previous != nullptr) {
@@ -1160,7 +1377,7 @@ struct AllocationSampler::Impl {
         return new_pointer;
     }
 
-    void *handleAlignedMalloc(AlignedMallocFn function, std::size_t size, std::size_t alignment) noexcept
+    void *handleAlignedMalloc(AlignedMallocFn function, std::size_t size, std::size_t alignment)
     {
         AllocatorLastErrorGuard last_error;
         if (!shouldTrackCurrentThread()) {
@@ -1181,8 +1398,7 @@ struct AllocationSampler::Impl {
         return pointer;
     }
 
-    void *handleAlignedRealloc(AlignedReallocFn function, void *pointer, std::size_t size,
-                               std::size_t alignment) noexcept
+    void *handleAlignedRealloc(AlignedReallocFn function, void *pointer, std::size_t size, std::size_t alignment)
     {
         AllocatorLastErrorGuard last_error;
         if (!shouldTrackCurrentThread()) {
@@ -1197,7 +1413,9 @@ struct AllocationSampler::Impl {
             return last_error.call(function, pointer, size, alignment);
         }
         LiveAllocation *previous = detachAllocation(pointer);
+        DetachedAllocationRollback rollback(*this, previous);
         void *new_pointer = last_error.call(function, pointer, size, alignment);
+        rollback.disarm();
         const bool replaced = new_pointer != nullptr || (pointer != nullptr && size == 0);
         if (replaced) {
             if (previous != nullptr) {
@@ -1214,7 +1432,7 @@ struct AllocationSampler::Impl {
     }
 
     void *handleAlignedRecalloc(AlignedRecallocFn function, void *pointer, std::size_t count, std::size_t size,
-                                std::size_t alignment) noexcept
+                                std::size_t alignment)
     {
         AllocatorLastErrorGuard last_error;
         if (!shouldTrackCurrentThread()) {
@@ -1231,7 +1449,9 @@ struct AllocationSampler::Impl {
         std::uint64_t bytes = 0;
         const bool valid_size = checkedMultiply(count, size, bytes);
         LiveAllocation *previous = detachAllocation(pointer);
+        DetachedAllocationRollback rollback(*this, previous);
         void *new_pointer = last_error.call(function, pointer, count, size, alignment);
+        rollback.disarm();
         const bool replaced = new_pointer != nullptr || (pointer != nullptr && valid_size && bytes == 0);
         if (replaced) {
             if (previous != nullptr) {
@@ -1248,7 +1468,7 @@ struct AllocationSampler::Impl {
     }
 
     void *handleAlignedOffsetMalloc(AlignedOffsetMallocFn function, std::size_t size, std::size_t alignment,
-                                    std::size_t offset) noexcept
+                                    std::size_t offset)
     {
         AllocatorLastErrorGuard last_error;
         if (!shouldTrackCurrentThread()) {
@@ -1270,7 +1490,7 @@ struct AllocationSampler::Impl {
     }
 
     void *handleAlignedOffsetRealloc(AlignedOffsetReallocFn function, void *pointer, std::size_t size,
-                                     std::size_t alignment, std::size_t offset) noexcept
+                                     std::size_t alignment, std::size_t offset)
     {
         AllocatorLastErrorGuard last_error;
         if (!shouldTrackCurrentThread()) {
@@ -1285,7 +1505,9 @@ struct AllocationSampler::Impl {
             return last_error.call(function, pointer, size, alignment, offset);
         }
         LiveAllocation *previous = detachAllocation(pointer);
+        DetachedAllocationRollback rollback(*this, previous);
         void *new_pointer = last_error.call(function, pointer, size, alignment, offset);
+        rollback.disarm();
         const bool replaced = new_pointer != nullptr || (pointer != nullptr && size == 0);
         if (replaced) {
             if (previous != nullptr) {
@@ -1302,7 +1524,7 @@ struct AllocationSampler::Impl {
     }
 
     void *handleAlignedOffsetRecalloc(AlignedOffsetRecallocFn function, void *pointer, std::size_t count,
-                                      std::size_t size, std::size_t alignment, std::size_t offset) noexcept
+                                      std::size_t size, std::size_t alignment, std::size_t offset)
     {
         AllocatorLastErrorGuard last_error;
         if (!shouldTrackCurrentThread()) {
@@ -1319,7 +1541,9 @@ struct AllocationSampler::Impl {
         std::uint64_t bytes = 0;
         const bool valid_size = checkedMultiply(count, size, bytes);
         LiveAllocation *previous = detachAllocation(pointer);
+        DetachedAllocationRollback rollback(*this, previous);
         void *new_pointer = last_error.call(function, pointer, count, size, alignment, offset);
+        rollback.disarm();
         const bool replaced = new_pointer != nullptr || (pointer != nullptr && valid_size && bytes == 0);
         if (replaced) {
             if (previous != nullptr) {
@@ -1335,56 +1559,14 @@ struct AllocationSampler::Impl {
         return new_pointer;
     }
 
-    void *handleHeapAlloc(HeapAllocFn function, HANDLE heap, DWORD flags, SIZE_T requested_size) noexcept
+    void *handleHeapAlloc(HeapAllocFn function, HANDLE heap, DWORD flags, SIZE_T requested_size)
     {
-        AllocatorLastErrorGuard last_error;
-        if (!shouldTrackCurrentThread()) {
-            return last_error.call(function, heap, flags, requested_size);
-        }
-        TrackingCallGuard tracking_call(*this);
-        if (!tracking_call) {
-            return last_error.call(function, heap, flags, requested_size);
-        }
-        RecursionGuard recursion(*this);
-        if (!recursion.owner()) {
-            return last_error.call(function, heap, flags, requested_size);
-        }
-        void *pointer = last_error.call(function, heap, flags, requested_size);
-        if (pointer != nullptr) {
-            recordAllocation(pointer, static_cast<std::uint64_t>(requested_size));
-        }
-        return pointer;
+        return executeHeapAlloc(this, function, heap, flags, requested_size, false);
     }
 
-    void *handleHeapReAlloc(HeapReAllocFn function, HANDLE heap, DWORD flags, void *pointer,
-                            SIZE_T requested_size) noexcept
+    void *handleHeapReAlloc(HeapReAllocFn function, HANDLE heap, DWORD flags, void *pointer, SIZE_T requested_size)
     {
-        AllocatorLastErrorGuard last_error;
-        if (!shouldTrackCurrentThread()) {
-            return last_error.call(function, heap, flags, pointer, requested_size);
-        }
-        TrackingCallGuard tracking_call(*this);
-        if (!tracking_call) {
-            return last_error.call(function, heap, flags, pointer, requested_size);
-        }
-        RecursionGuard recursion(*this);
-        if (!recursion.owner()) {
-            return last_error.call(function, heap, flags, pointer, requested_size);
-        }
-        LiveAllocation *previous = detachAllocation(pointer);
-        void *new_pointer = last_error.call(function, heap, flags, pointer, requested_size);
-        if (new_pointer != nullptr) {
-            if (previous != nullptr) {
-                retireAllocation(previous, monotonicMs());
-            }
-        }
-        else {
-            restoreDetachedAllocation(previous);
-        }
-        if (new_pointer != nullptr && requested_size != 0) {
-            recordAllocation(new_pointer, static_cast<std::uint64_t>(requested_size));
-        }
-        return new_pointer;
+        return executeHeapReAlloc(this, function, heap, flags, pointer, requested_size, false);
     }
 
     void accountLiveAllocation(std::uint64_t weight) noexcept
