@@ -189,8 +189,7 @@ void HealthCommand::cmdPing(CommandSender &sender, const Arguments &args)
         for (const std::string &player_name : players) {
             PlayerPing ping = ping_statistics_->query(player_name);
             if (!ping.found()) {
-                sender.sendMessage("{}Ping data is not available for '{}'.{}", kColorGold, kColorGray, kColorReset);
-                sender.sendMessage("  {}", player_name);
+                sender.sendMessage("{}Ping data is not available for '{}'.{}", kColorGold, player_name, kColorReset);
             }
             else {
                 sender.sendMessage("{}Player {}{} {}has {}{} ms ping.{}", kColorGold, kColorReset, ping.name,

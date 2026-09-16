@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -12,6 +13,7 @@
 #include "application/health/health_command.h"
 #include "core/config/trusted_viewers.h"
 #include "core/util/base64.h"
+#include "core/util/format.h"
 
 namespace spark {
 
@@ -41,6 +43,13 @@ private:
 class Dispatcher final : public MainThreadDispatcher {
 public:
     void runOnMainThread(std::function<void()> task) override { task(); }
+};
+
+class PingProvider final : public PlayerPingProvider {
+public:
+    std::map<std::string, int> poll() override { return players; }
+
+    std::map<std::string, int> players;
 };
 
 class Notifier final : public ResultNotifier {
@@ -82,7 +91,9 @@ public:
     void gatherWorldMetadata(WorldInfo &, std::string_view) override {}
     std::int64_t serverUptimeSeconds() override { return 12; }
     std::int64_t playerCount() override { return 3; }
-    PlayerPingProvider *playerPingProvider() override { return nullptr; }
+    PlayerPingProvider *playerPingProvider() override { return ping_provider; }
+
+    PlayerPingProvider *ping_provider = nullptr;
 };
 
 struct ConnectionProbe {
@@ -210,6 +221,39 @@ HealthCommand makeCommand(Fixture &fixture, HealthDashboard::ConnectionFactory f
             fixture.trusted_viewers, fixture.dispatcher, fixture.notifier,   std::move(factory), std::move(upload)};
 }
 
+std::string stripColors(const std::string &message)
+{
+    std::string stripped;
+    stripped.reserve(message.size());
+    for (std::size_t i = 0; i < message.size();) {
+        if (i + 2 < message.size() && static_cast<unsigned char>(message[i]) == 0xc2 &&
+            static_cast<unsigned char>(message[i + 1]) == 0xa7) {
+            i += 3;
+        }
+        else {
+            stripped.push_back(message[i++]);
+        }
+    }
+    return stripped;
+}
+
+void testMissingPingMessage()
+{
+    Fixture fixture;
+    PingProvider ping_provider;
+    fixture.metadata.ping_provider = &ping_provider;
+    auto health = makeCommand(fixture);
+    Sender sender;
+    health.cmdPing(sender, Arguments({"--player", "MissingSparkProbe"}, false));
+
+    const std::string expected = "Ping data is not available for 'MissingSparkProbe'.";
+    assert(sender.messages.size() == 1);
+    assert(stripColors(sender.messages.front()) == expected);
+    assert(sender.messages.front().starts_with(kColorGold));
+    assert(sender.messages.front().ends_with(kColorReset));
+    assert(sender.messages.front() == kColorGold + expected + kColorReset);
+}
+
 }  // namespace
 }  // namespace spark
 
@@ -225,6 +269,7 @@ int main()
     using spark::HealthDashboardConnection;
     using spark::Sender;
     using spark::UploadResult;
+    spark::testMissingPingMessage();
     Fixture fixture;
 
     int uploads = 0;
