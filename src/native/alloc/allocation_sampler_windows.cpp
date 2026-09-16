@@ -3608,6 +3608,46 @@ bool AllocationDiagnosticsTestAccess::drainFixtureAggregatorContext(AllocationSa
     return true;
 }
 
+bool AllocationDiagnosticsTestAccess::liveRecordState(AllocationSampler &sampler, void *pointer,
+                                                      AllocationLiveRecordState &result) noexcept
+{
+    result = {};
+    if (pointer == nullptr || !sampler.impl_->running.load(std::memory_order_acquire) ||
+        sampler.impl_->accounting_state.load(std::memory_order_acquire) != AllocationAccountingState::Active ||
+        sampler.impl_->live_index == nullptr) {
+        return false;
+    }
+    const std::uint64_t hash = AllocationSampler::Impl::liveIndexHash(pointer);
+    const std::size_t shard = AllocationSampler::Impl::liveIndexShard(hash);
+    if (!::TryAcquireSRWLockShared(&sampler.impl_->live_index_locks[shard])) {
+        return false;
+    }
+    bool valid = true;
+    for (std::size_t offset = 0; offset < KLiveIndexShardCapacity; ++offset) {
+        const auto &entry = sampler.impl_->live_index[AllocationSampler::Impl::liveIndexSlot(hash, shard, offset)];
+        const void *entry_pointer = AllocationSampler::Impl::entryPointer(entry);
+        if (entry_pointer == nullptr) {
+            break;
+        }
+        if (entry_pointer == tombstonePointer() || entry_pointer != pointer) {
+            continue;
+        }
+        AllocationSampler::Impl::LiveAllocation *record = AllocationSampler::Impl::entryAllocation(entry);
+        if (record == nullptr || AllocationSampler::Impl::entryAllocationId(entry) != record->allocation_id ||
+            record->pointer != pointer) {
+            valid = false;
+            break;
+        }
+        result.allocation_id = record->allocation_id;
+        result.requested_bytes = record->requested_bytes;
+        result.weight_bytes = record->weight_bytes;
+        result.found = true;
+        break;
+    }
+    ::ReleaseSRWLockShared(&sampler.impl_->live_index_locks[shard]);
+    return valid;
+}
+
 bool AllocationDiagnosticsTestAccess::seedFixtureLiveAllocations(AllocationSampler &sampler, void *const *pointers,
                                                                  std::size_t count) noexcept
 {

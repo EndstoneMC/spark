@@ -1,3 +1,4 @@
+#include "native/alloc/allocation_diagnostics_test_access.h"
 #include "native/alloc/allocation_sampler.h"
 
 #ifndef _WIN32
@@ -353,14 +354,22 @@ bool runReallocCase(spark::AllocationSampler &sampler, NewHandlerState &state, c
     }
 
     void *fixture_pointer = nullptr;
+    spark::test::AllocationLiveRecordState live_before;
     for (int attempt = 0; attempt < 64 && fixture_pointer == nullptr; ++attempt) {
-        const std::uint64_t live_before_candidate = sampler.liveSamples();
         void *candidate = fixture_alloc();
         if (candidate == nullptr) {
             return fail("fixture realloc setup allocation failed");
         }
-        if (sampler.liveSamples() > live_before_candidate) {
+        spark::test::AllocationLiveRecordState candidate_state;
+        const bool candidate_lookup =
+            spark::test::AllocationDiagnosticsTestAccess::liveRecordState(sampler, candidate, candidate_state);
+        if (!candidate_lookup) {
+            fixture_free(candidate);
+            return fail("fixture realloc record inspection failed");
+        }
+        if (candidate_state.found) {
             fixture_pointer = candidate;
+            live_before = candidate_state;
         }
         else {
             fixture_free(candidate);
@@ -369,12 +378,23 @@ bool runReallocCase(spark::AllocationSampler &sampler, NewHandlerState &state, c
     if (fixture_pointer == nullptr) {
         return fail("fixture realloc record was not observed before exception");
     }
+    if (live_before.allocation_id == 0 || live_before.requested_bytes != KSmallSize || live_before.weight_bytes == 0) {
+        fixture_free(fixture_pointer);
+        return fail("fixture realloc record state invalid before exception");
+    }
     std::memset(fixture_pointer, 0x5A, KSmallSize);
     const std::uint64_t live_before_exception = sampler.liveSamples();
     DWORD fixture_error = 0;
     const bool fixture_ok = runThrowingCall(
         state, name, [&] { return fixture_realloc(fixture_pointer, KImpossibleSize); }, fixture_error, true, true);
-    const bool record_survived = sampler.liveSamples() == live_before_exception;
+    spark::test::AllocationLiveRecordState live_after;
+    const bool live_after_lookup =
+        spark::test::AllocationDiagnosticsTestAccess::liveRecordState(sampler, fixture_pointer, live_after);
+    const bool record_survived = live_after_lookup && live_after.found &&
+                                 live_after.allocation_id == live_before.allocation_id &&
+                                 live_after.requested_bytes == live_before.requested_bytes &&
+                                 live_after.weight_bytes == live_before.weight_bytes;
+    const std::uint64_t live_after_exception = sampler.liveSamples();
     const bool fixture_preserved = fixture_ok && fixture_pointer != nullptr;
     if (fixture_preserved) {
         const auto *bytes = static_cast<const unsigned char *>(fixture_pointer);
@@ -385,15 +405,22 @@ bool runReallocCase(spark::AllocationSampler &sampler, NewHandlerState &state, c
         }
     }
     fixture_free(fixture_pointer);
-    if (!fixture_preserved || !record_survived || direct_error != fixture_error) {
+    spark::test::AllocationLiveRecordState live_after_free;
+    const bool live_after_free_lookup =
+        spark::test::AllocationDiagnosticsTestAccess::liveRecordState(sampler, fixture_pointer, live_after_free);
+    const bool removed_after_free = live_after_free_lookup && !live_after_free.found;
+    const std::uint64_t live_after_free_count = sampler.liveSamples();
+    if (!fixture_preserved || !record_survived || !removed_after_free || direct_error != fixture_error) {
         std::fprintf(stderr,
                      "stage=windows-allocation-new-handler detail=%s direct-error=%lu fixture-error=%lu record=%d "
-                     "live=%llu before=%llu\n",
+                     "removed=%d live-before=%llu live-after=%llu live-after-free=%llu\n",
                      name, static_cast<unsigned long>(direct_error), static_cast<unsigned long>(fixture_error),
-                     record_survived ? 1 : 0, static_cast<unsigned long long>(sampler.liveSamples()),
-                     static_cast<unsigned long long>(live_before_exception));
+                     record_survived ? 1 : 0, removed_after_free ? 1 : 0,
+                     static_cast<unsigned long long>(live_before_exception),
+                     static_cast<unsigned long long>(live_after_exception),
+                     static_cast<unsigned long long>(live_after_free_count));
     }
-    return fixture_preserved && record_survived && direct_error == fixture_error ||
+    return fixture_preserved && record_survived && removed_after_free && direct_error == fixture_error ||
            fail("real-vs-direct realloc record/LastError mismatch");
 }
 

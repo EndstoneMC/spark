@@ -712,7 +712,8 @@ if (WIN32)
 
     add_executable(spark_windows_allocation_new_handler_test native/alloc/windows_allocation_new_handler_test.cpp)
     add_dependencies(spark_windows_allocation_new_handler_test spark_windows_allocation_fixture)
-    target_link_libraries(spark_windows_allocation_new_handler_test PRIVATE spark_core)
+    target_include_directories(spark_windows_allocation_new_handler_test PRIVATE "${CMAKE_SOURCE_DIR}/tests")
+    target_link_libraries(spark_windows_allocation_new_handler_test PRIVATE spark_core_lifecycle_test)
     set_target_properties(spark_windows_allocation_new_handler_test PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     add_test(NAME spark_windows_allocation_new_handler_test COMMAND spark_windows_allocation_new_handler_test)

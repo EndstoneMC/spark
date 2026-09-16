@@ -27,6 +27,13 @@ struct AllocationResolvedFrame {
 
     bool operator==(const AllocationResolvedFrame &) const = default;
 };
+
+struct AllocationLiveRecordState {
+    bool found = false;
+    std::uint64_t allocation_id = 0;
+    std::uint64_t requested_bytes = 0;
+    std::uint64_t weight_bytes = 0;
+};
 #endif
 
 struct AllocationEventProcessingGate {
@@ -80,6 +87,7 @@ struct AllocationDiagnosticsTestAccess {
     static bool forceMainImageDiscoveryFailure(AllocationSampler &, bool) noexcept;
     static bool resolveFrame(AllocationSampler &, std::uintptr_t address, bool force_fallback,
                              AllocationResolvedFrame &) noexcept;
+    static bool liveRecordState(AllocationSampler &, void *, AllocationLiveRecordState &) noexcept;
 #endif
     static bool configureFixture(AllocationSampler &, bool no_hooks, bool no_worker,
                                  AllocationFixtureWorkerGate *) noexcept;
