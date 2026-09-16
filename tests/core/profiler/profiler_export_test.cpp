@@ -41,7 +41,13 @@ struct ProfilerTestAccess {
             auto &thread = threads[tid];
             thread.thread_name = "Worker";
             if (grouping == ThreadGrouperMode::ByPool) {
-                thread.thread_name = tid == 10 ? "Worker-1" : "Worker-2";
+                if (mode == ProfileMode::Allocation) {
+                    thread.thread_name = tid == 10 ? "Worker-1 (#254551, session #10)"
+                                                   : "Worker-2 (#254551, session #20)";
+                }
+                else {
+                    thread.thread_name = tid == 10 ? "Worker-1 (#10)" : "Worker-2 (#20)";
+                }
             }
             const FrameKey frame{.module = 0, .rva = tid == 10 ? 0x1110ULL : 0x2220ULL};
             thread.tree.log({frame}, 0, tid == 10 ? 2000 : 5000);

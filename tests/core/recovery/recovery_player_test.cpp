@@ -36,7 +36,13 @@ void testRecoveryGrouping()
                      (reverse ? std::vector<std::uint64_t>{20, 10} : std::vector<std::uint64_t>{10, 20})) {
                     std::string name = "Worker";
                     if (grouping == ThreadGrouperMode::ByPool) {
-                        name = tid == 10 ? "Worker-1" : "Worker-2";
+                        if (allocation) {
+                            name = tid == 10 ? "Worker-1 (#254551, session #10)"
+                                             : "Worker-2 (#254551, session #20)";
+                        }
+                        else {
+                            name = tid == 10 ? "Worker-1 (#10)" : "Worker-2 (#20)";
+                        }
                     }
                     records.push_back({.type = RecordType::ThreadDef,
                                        .sequence = static_cast<std::uint32_t>(records.size()),

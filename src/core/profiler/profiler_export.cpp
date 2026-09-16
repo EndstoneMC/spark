@@ -106,13 +106,13 @@ struct GroupedThreads {
 };
 
 GroupedThreads groupThreads(std::vector<std::pair<std::uint64_t, std::pair<std::string, const CallTree *>>> &&input,
-                            ThreadGrouperMode mode)
+                            ThreadGrouperMode mode, NativeThreadLabelKind label_kind)
 {
     ThreadGrouper grouper(mode);
     // std::map for deterministic group ordering.
     std::map<ThreadGrouper::GroupKey, std::vector<const CallTree *>> groups;
     for (const auto &[tid, p] : input) {
-        auto g = grouper.groupKey(tid, p.first);
+        auto g = grouper.groupKeyForNativeLabel(tid, p.first, label_kind);
         groups[g].push_back(p.second);
     }
 
@@ -758,7 +758,8 @@ std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnaps
         if (input.empty()) {
             input.emplace_back(0, std::make_pair(meta.thread_name, &tree));
         }
-        auto [threads, owned_trees, owned_labels] = groupThreads(std::move(input), options_.thread_grouper);
+        auto [threads, owned_trees, owned_labels] =
+            groupThreads(std::move(input), options_.thread_grouper, NativeThreadLabelKind::Allocation);
         std::vector<FrameKey> keys = collectFrameKeys(threads);
         auto resolved = resolveFrames(modules, keys);
         addNativePluginSources(meta, ctx, keys, resolved);
@@ -776,7 +777,8 @@ std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnaps
     if (input.empty()) {
         input.emplace_back(0, std::make_pair(meta.thread_name, &sampler_.tree()));
     }
-    auto [threads, owned_trees, owned_labels] = groupThreads(std::move(input), options_.thread_grouper);
+    auto [threads, owned_trees, owned_labels] =
+        groupThreads(std::move(input), options_.thread_grouper, NativeThreadLabelKind::Execution);
     std::vector<FrameKey> keys = collectFrameKeys(threads);
     auto resolved = resolveFrames(sampler_.modules(), keys);
     filterExecutionTrees(threads, owned_trees, resolved);

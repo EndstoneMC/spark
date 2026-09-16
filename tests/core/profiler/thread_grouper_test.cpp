@@ -88,6 +88,61 @@ static void test_by_pool_no_match()  // NOLINT(misc-use-anonymous-namespace)
     std::printf("  by_pool_no_match: OK\n");
 }
 
+static void test_native_labels()  // NOLINT(misc-use-anonymous-namespace)
+{
+    ThreadGrouper execution(ThreadGrouperMode::ByPool);
+    assert(execution.groupKeyForNativeLabel(101, "Worker-1 (#101)", NativeThreadLabelKind::Execution).first ==
+           "Worker");
+    assert(execution.groupKeyForNativeLabel(202, "Worker-2 (#202)", NativeThreadLabelKind::Execution).first ==
+           "Worker");
+    assert(execution.label("Worker") == "Worker (x2)");
+
+    ThreadGrouper allocation(ThreadGrouperMode::ByPool);
+    assert(allocation.groupKeyForNativeLabel(10, "Worker-1 (#254551, session #10)", NativeThreadLabelKind::Allocation)
+               .first == "Worker");
+    assert(allocation.groupKeyForNativeLabel(20, "Worker-2 (#254551, session #20)", NativeThreadLabelKind::Allocation)
+               .first == "Worker");
+    assert(allocation.label("Worker") == "Worker (x2)");
+
+    ThreadGrouper reused_os_id(ThreadGrouperMode::ByPool);
+    assert(reused_os_id.groupKeyForNativeLabel(30, "Worker-1 (#254551, session #30)",
+                                                NativeThreadLabelKind::Allocation)
+               .first == "Worker");
+    assert(reused_os_id.groupKeyForNativeLabel(31, "Worker-2 (#254551, session #31)",
+                                                NativeThreadLabelKind::Allocation)
+               .first == "Worker");
+    assert(reused_os_id.label("Worker") == "Worker (x2)");
+
+    ThreadGrouper by_name(ThreadGrouperMode::ByName);
+    const auto first = by_name.groupKeyForNativeLabel(1, "Worker-1 (#1)", NativeThreadLabelKind::Execution);
+    const auto second = by_name.groupKeyForNativeLabel(2, "Worker-2 (#2)", NativeThreadLabelKind::Execution);
+    assert(first.first == "Worker-1 (#1)");
+    assert(second.first == "Worker-2 (#2)");
+    assert(first != second);
+
+    ThreadGrouper as_one(ThreadGrouperMode::AsOne);
+    const auto one = as_one.groupKeyForNativeLabel(1, "Worker-1 (#1)", NativeThreadLabelKind::Execution);
+    const auto two = as_one.groupKeyForNativeLabel(2, "Worker-2 (#2)", NativeThreadLabelKind::Execution);
+    assert(one == two);
+    assert(as_one.label("root") == "All (x2)");
+
+    ThreadGrouper opaque(ThreadGrouperMode::ByPool);
+    assert(opaque.groupKeyForNativeLabel(1, "Worker-1 (#99)", NativeThreadLabelKind::Execution).first ==
+           "Worker-1 (#99)");
+    assert(opaque.groupKeyForNativeLabel(1, "Worker-1 (#bad)", NativeThreadLabelKind::Execution).first ==
+           "Worker-1 (#bad)");
+    assert(opaque.groupKeyForNativeLabel(1, "Worker-1 (#99", NativeThreadLabelKind::Execution).first ==
+           "Worker-1 (#99");
+    assert(opaque.groupKeyForNativeLabel(1, "Worker-1 (#254551 session #1)", NativeThreadLabelKind::Allocation)
+               .first == "Worker-1 (#254551 session #1)");
+    assert(opaque.groupKeyForNativeLabel(1, "Worker-1 (#254551, session #99)", NativeThreadLabelKind::Allocation)
+               .first == "Worker-1 (#254551, session #99)");
+    assert(opaque.groupKeyForNativeLabel(123, "Worker-1(#77) (#123)", NativeThreadLabelKind::Execution).first ==
+           "Worker-1(#77) (#123)");
+
+    std::printf("  native_labels: OK\n");
+}
+
 int main()
 {
     std::printf("thread_grouper_test:\n");
@@ -96,6 +151,7 @@ int main()
     test_by_pool_separators();
     test_as_one();
     test_by_pool_no_match();
+    test_native_labels();
     std::printf("All thread_grouper tests passed.\n");
     return 0;
 }
