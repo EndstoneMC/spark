@@ -278,6 +278,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Format unavailable-player ping output as one correctly formatted message in
+  `/spark ping`.
+- Group native and recovered profiler thread labels by pool for execution and
+  allocation profiles.
+- Preserve pending Windows allocation events during normal profiler stop for
+  later draining, while still reporting callback drops caused by contention.
+- Report lost allocation lifecycle records accurately when refusing retained
+  allocation profiles instead of always blaming exhausted capacity.
 - Keep live viewer updates ordered across interrupted WebSocket sends and report unexpected transport closures.
 - Remove expired call-tree nodes and thread roots from continuous background
   profiles instead of retaining dead topology beyond the one-hour history window.
