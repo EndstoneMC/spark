@@ -11,6 +11,62 @@
 namespace spark::selftest {
 
 #if defined(_WIN32) || defined(__linux__)
+bool verifyAllocationLiveOnlyContentionRefusal()
+{
+    spark::AllocationSamplerConfig config;
+    config.interval_bytes = 1;
+    config.session_seed = spark::currentNativeThreadId();
+    config.live_only = true;
+    config.force_live_lock_contention_for_testing = true;
+
+    spark::AllocationSampler sampler;
+    std::string error;
+    if (!sampler.start(config, error)) {
+        std::fprintf(stderr, "allocation live contention: start failed: %s\n", error.c_str());
+        return false;
+    }
+
+    std::atomic<bool> start{false};
+    std::vector<std::thread> workers;
+    workers.reserve(8);
+    for (int thread = 0; thread < 8; ++thread) {
+        workers.emplace_back([&start, thread]() {
+            while (!start.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            for (int i = 0; i < 1000; ++i) {
+                void *pointer = std::malloc(128U + static_cast<std::size_t>(thread) + static_cast<std::size_t>(i & 63));
+                if (pointer == nullptr) {
+                    continue;
+                }
+                void *replacement = std::realloc(pointer, 256U + static_cast<std::size_t>(i & 127));
+                std::free(replacement != nullptr ? replacement : pointer);
+            }
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto &worker : workers) {
+        worker.join();
+    }
+    sampler.onTick(50.0);
+    const bool stopped = sampler.stop(error);
+    const bool refusal =
+        !stopped && error == "allocation lifecycle tracking lost records; retained profile discarded" &&
+        sampler.contentionDropped() != 0 && sampler.lifecycleDropped() != 0 && sampler.dataIncomplete();
+    std::string shutdown_error;
+    const bool shutdown = sampler.shutdown(shutdown_error);
+    if (!refusal || !shutdown) {
+        std::fprintf(stderr,
+                     "allocation live contention: refusal failed "
+                     "(stopped=%d contention=%llu lifecycle=%llu incomplete=%d error=%s shutdown=%s)\n",
+                     static_cast<int>(stopped), static_cast<unsigned long long>(sampler.contentionDropped()),
+                     static_cast<unsigned long long>(sampler.lifecycleDropped()),
+                     static_cast<int>(sampler.dataIncomplete()), error.c_str(), shutdown_error.c_str());
+        return false;
+    }
+    return true;
+}
+
 bool verifyAllocationContentionPolicy()
 {
     spark::AllocationSamplerConfig config;
@@ -60,7 +116,10 @@ bool verifyAllocationContentionPolicy()
     }
 
     config.force_live_lock_contention_for_testing = false;
-    return runAllocationSession(sampler, config, error) && sampler.shutdown(error);
+    if (!runAllocationSession(sampler, config, error) || !sampler.shutdown(error)) {
+        return false;
+    }
+    return verifyAllocationLiveOnlyContentionRefusal();
 }
 
 bool verifyAllocationResourcePressure()
@@ -176,7 +235,9 @@ bool verifyAllocationResourcePressure()
         }
     }
     const bool stopped = live_sampler.stop(error);
-    const bool bounded = !stopped && live_sampler.lifecycleDropped() != 0 &&
+    const bool bounded = !stopped &&
+                         error == "allocation lifecycle tracking lost records; retained profile discarded" &&
+                         live_sampler.lifecycleDropped() != 0 &&
                          live_sampler.peakLiveSamples() <= spark::AllocationSampler::liveIndexCapacity() &&
                          live_sampler.dataIncomplete();
     for (void *pointer : retained) {
