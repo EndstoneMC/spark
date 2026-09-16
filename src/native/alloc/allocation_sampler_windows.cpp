@@ -2586,6 +2586,21 @@ struct AllocationSampler::Impl {
             list = next;
             ++processed;
         }
+        if (mode == DrainMode::SteadyState && !drain_abort.load(std::memory_order_acquire) && list != nullptr) {
+            PSLIST_ENTRY reversed = nullptr;
+            while (list != nullptr) {
+                PSLIST_ENTRY next = list->Next;
+                list->Next = reversed;
+                reversed = list;
+                list = next;
+            }
+            while (reversed != nullptr) {
+                PSLIST_ENTRY next = reversed->Next;
+                ::InterlockedPushEntrySList(&ready_events, reversed);
+                reversed = next;
+            }
+            return;
+        }
         recycleReadyEvents(list, context);
     }
 

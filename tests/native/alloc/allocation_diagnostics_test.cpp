@@ -1079,63 +1079,93 @@ bool verifyPositiveAccounting()
     return true;
 }
 
-bool verifyStopDetachedList()
+bool verifyStopSteadyStateTransition()
 {
 #if !defined(_WIN32) || !defined(_M_X64)
     return true;
 #else
-    DiagnosticsFixture fixture;
-    std::string error;
-    const bool configured = fixture.configure(true, false, &fixture.worker_gate);
-    const bool armed = configured;
-    if (armed) {
-        spark::test::AllocationDiagnosticsTestAccess::armEventProcessingGate(fixture.sampler, fixture.event_gate);
-    }
-    const bool started = armed && fixture.sampler.start(makeFixtureConfig(0x1003), error);
-    const bool entered = started && waitFor([&] { return fixture.worker_gate.entered.load(std::memory_order_acquire); },
-                                            std::chrono::seconds(2));
-    spark::test::AllocationFixtureSeedCounts seeded;
-    const bool seeded_ok =
-        entered && spark::test::AllocationDiagnosticsTestAccess::seedFixtureQueues(
-                       fixture.sampler, seeded,
-                       spark::test::AllocationFixtureSeedCounts{
-                           .allocation_events = 3, .thread_observation_events = 2, .tick_events = 0});
-    fixture.worker_gate.release.store(true, std::memory_order_release);
-    const bool event_gate_entered =
-        seeded_ok &&
-        waitFor([&] { return fixture.event_gate.entered.load(std::memory_order_acquire); }, std::chrono::seconds(2));
-    const bool aggregator_running =
-        event_gate_entered &&
-        waitFor([&] { return spark::test::AllocationDiagnosticsTestAccess::fixtureAggregatorRunning(fixture.sampler); },
+    const auto run_case = [](bool force_deadline, std::uint64_t seed, bool expect_processing) {
+        DiagnosticsFixture fixture;
+        std::string error;
+        const bool configured = fixture.configure(true, false, &fixture.worker_gate);
+        if (configured) {
+            spark::test::AllocationDiagnosticsTestAccess::armEventProcessingGate(fixture.sampler, fixture.event_gate);
+            if (force_deadline) {
+                spark::test::AllocationDiagnosticsTestAccess::forceDrainDeadline(fixture.sampler, true);
+            }
+        }
+        const bool started = configured && fixture.sampler.start(makeFixtureConfig(seed), error);
+        const bool startup_entered =
+            started && waitFor([&] { return fixture.worker_gate.entered.load(std::memory_order_acquire); },
+                               std::chrono::seconds(2));
+        spark::test::AllocationFixtureSeedCounts seeded;
+        const std::uint64_t enqueued_before = fixture.sampler.enqueuedSamples();
+        const bool seeded_ok =
+            startup_entered && spark::test::AllocationDiagnosticsTestAccess::seedFixtureQueues(
+                                   fixture.sampler, seeded,
+                                   spark::test::AllocationFixtureSeedCounts{
+                                       .allocation_events = 3, .thread_observation_events = 2, .tick_events = 0});
+        const bool seed_valid = seeded_ok && seeded.allocation_events == 3 && seeded.thread_observation_events == 2 &&
+                                seeded.tick_events == 0 && fixture.sampler.enqueuedSamples() == enqueued_before;
+        fixture.worker_gate.release.store(true, std::memory_order_release);
+        const bool event_gate_entered =
+            seed_valid && waitFor([&] { return fixture.event_gate.entered.load(std::memory_order_acquire); },
+                                  std::chrono::seconds(2));
+        const bool aggregator_was_running =
+            event_gate_entered &&
+            waitFor(
+                [&] { return spark::test::AllocationDiagnosticsTestAccess::fixtureAggregatorRunning(fixture.sampler); },
                 std::chrono::seconds(2));
-    if (aggregator_running) {
-        fixture.launchStopHelper();
-    }
-    const bool aggregator_stopped =
-        aggregator_running &&
-        waitFor(
-            [&] { return !spark::test::AllocationDiagnosticsTestAccess::fixtureAggregatorRunning(fixture.sampler); },
-            std::chrono::seconds(2));
-    fixture.event_gate.release.store(true, std::memory_order_release);
-    fixture.joinHelpers();
-    const spark::AllocationDiagnostics terminal = fixture.sampler.diagnostics();
-    const bool valid =
-        configured && started && entered && seeded_ok && seeded.allocation_events == 3 &&
-        seeded.thread_observation_events == 2 && seeded.tick_events == 0 && event_gate_entered && aggregator_running &&
-        aggregator_stopped && fixture.stop_done.load(std::memory_order_acquire) && fixture.stop_ok &&
-        !spark::test::AllocationDiagnosticsTestAccess::fixtureWorkerPresent(fixture.sampler) &&
-        !fixture.worker_gate.timed_out.load(std::memory_order_acquire) &&
-        !fixture.event_gate.timed_out.load(std::memory_order_acquire) &&
-        terminal.accounting_state == spark::AllocationAccountingState::Complete &&
-        exactDelta(terminal.discarded_allocation_events, 0, 3) &&
-        exactDelta(terminal.discarded_thread_observation_events, 0, 2) && terminal.discarded_tick_events == 0 &&
-        terminal.drain_truncated_allocation_events == 3 && terminal.drain_truncated_thread_observation_events == 2 &&
-        terminal.drain_truncated_tick_events == 0 && terminal.drain_truncated == 5 &&
-        terminal.processed_allocation_events == 0 && terminal.processed_thread_observation_events == 0 &&
-        terminal.processed_tick_events == 0 && terminal.caller_final_drain_allocation_events == 0 &&
-        terminal.caller_final_drain_thread_observation_events == 0 && terminal.caller_final_drain_tick_events == 0;
-    const bool cleanup_ok = fixture.cleanup();
-    return cleanup_ok && valid ? true : report("detached-list STOP oracle failed");
+        if (aggregator_was_running) {
+            fixture.launchStopHelper();
+        }
+        const bool aggregator_stopped =
+            aggregator_was_running &&
+            waitFor(
+                [&] {
+                    return !spark::test::AllocationDiagnosticsTestAccess::fixtureAggregatorRunning(fixture.sampler);
+                },
+                std::chrono::seconds(2));
+        fixture.event_gate.release.store(true, std::memory_order_release);
+        fixture.joinHelpers();
+        const spark::AllocationDiagnostics terminal = fixture.sampler.diagnostics();
+        const std::uint64_t expected_processed = expect_processing ? 3 : 0;
+        const std::uint64_t expected_observations = expect_processing ? 2 : 0;
+        const std::uint64_t expected_discarded = expect_processing ? 0 : 3;
+        const std::uint64_t expected_discarded_observations = expect_processing ? 0 : 2;
+        const bool valid =
+            configured && started && startup_entered && seed_valid && event_gate_entered && aggregator_was_running &&
+            aggregator_stopped && fixture.stop_done.load(std::memory_order_acquire) && fixture.stop_ok &&
+            !spark::test::AllocationDiagnosticsTestAccess::fixtureWorkerPresent(fixture.sampler) &&
+            fixture.stop_error.empty() && !fixture.sampler.stopWaitTimedOut() &&
+            !fixture.worker_gate.timed_out.load(std::memory_order_acquire) &&
+            !fixture.event_gate.timed_out.load(std::memory_order_acquire) &&
+            terminal.accounting_state == spark::AllocationAccountingState::Complete &&
+            terminal.processed_allocation_events == expected_processed &&
+            terminal.processed_thread_observation_events == expected_observations &&
+            terminal.processed_tick_events == 0 && terminal.discarded_allocation_events == expected_discarded &&
+            terminal.discarded_thread_observation_events == expected_discarded_observations &&
+            terminal.discarded_tick_events == 0 && terminal.drain_truncated_allocation_events == expected_discarded &&
+            terminal.drain_truncated_thread_observation_events == expected_discarded_observations &&
+            terminal.drain_truncated_tick_events == 0 &&
+            terminal.drain_truncated == expected_discarded + expected_discarded_observations &&
+            terminal.caller_final_drain_allocation_events == 0 &&
+            terminal.caller_final_drain_thread_observation_events == 0 &&
+            terminal.caller_final_drain_tick_events == 0 && fixture.sampler.dataIncomplete() == !expect_processing &&
+            !fixture.helperFailed();
+        const bool cleanup_ok = fixture.cleanup();
+        const bool worker_absent = !spark::test::AllocationDiagnosticsTestAccess::fixtureWorkerPresent(fixture.sampler);
+        if (force_deadline && cleanup_ok && worker_absent) {
+            spark::test::AllocationDiagnosticsTestAccess::forceDrainDeadline(fixture.sampler, false);
+        }
+        return cleanup_ok && worker_absent && valid;
+    };
+
+    const bool healthy = run_case(false, 0x1003, true);
+    const bool healthy_after_cleanup = run_case(false, 0x1004, true);
+    const bool forced_deadline = run_case(true, 0x1005, false);
+    return healthy && healthy_after_cleanup && forced_deadline ? true
+                                                               : report("steady-state stop transition oracle failed");
 #endif
 }
 
@@ -1790,7 +1820,7 @@ int main(int argc, char **argv)
     }
 
     const bool valid = fixture_smoke && fixture_phase2 && verifyCapacities() && verifyPositiveAccounting() &&
-                       verifyStopDetachedList() && verifyFailureAndStartState() && verifyCountOnlyState() &&
+                       verifyStopSteadyStateTransition() && verifyFailureAndStartState() && verifyCountOnlyState() &&
                        verifyCpuAccounting() && verifyStateTransitions() && verifyFileTimeConversion();
     return valid ? 0 : 1;
 }
