@@ -19,6 +19,11 @@ namespace spark {
 
 struct HealthCommandTestAccess {
     static void onTickAt(HealthCommand &command, std::int64_t now_ms) { command.onTickAt(now_ms); }
+    static std::int64_t dashboardOpenTimeMs(const HealthCommand &command) { return command.dashboard_open_time_ms_; }
+    static bool dashboardUpdateDue(const HealthCommand &command, std::int64_t now_ms)
+    {
+        return command.dashboard_ != nullptr && command.dashboard_->updateDue(now_ms);
+    }
     static bool reapUploadUntil(HealthCommand &command, std::chrono::steady_clock::time_point deadline)
     {
         return command.upload_thread_.reapUntil(deadline);
@@ -308,15 +313,19 @@ int main()
         assert(fixture.notifier.messages.back().find("https://viewer/initial") != std::string::npos ||
                fixture.notifier.messages.back().find("health-key") != std::string::npos);
 
+        const std::int64_t initial_time_ms = HealthCommandTestAccess::dashboardOpenTimeMs(health);
+        HealthCommandTestAccess::onTickAt(health, initial_time_ms + 9999);
+        HealthCommandTestAccess::onTickAt(health, initial_time_ms + 10000);
         {
             std::scoped_lock lock(fixture.connection_probe.mutex);
+            assert(fixture.connection_probe.send_count == 0);
             fixture.connection_probe.client = true;
         }
-        const auto now_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
-                .count() +
-            10000;
-        HealthCommandTestAccess::onTickAt(health, now_ms);
+        assert(!HealthCommandTestAccess::dashboardUpdateDue(health, initial_time_ms + 9999));
+        assert(HealthCommandTestAccess::dashboardUpdateDue(health, initial_time_ms + 10000));
+        HealthCommandTestAccess::onTickAt(health, initial_time_ms + 10000);
+        HealthCommandTestAccess::onTickAt(health, initial_time_ms + 10000);
+        HealthCommandTestAccess::onTickAt(health, initial_time_ms + 10001);
         {
             std::unique_lock lock(fixture.connection_probe.mutex);
             assert(fixture.connection_probe.cv.wait_for(lock, std::chrono::seconds(5),
@@ -328,6 +337,10 @@ int main()
         assert(sender.messages.back().find("now trusted") != std::string::npos);
         assert(fixture.activity_log.entries().size() == 1);
         health.shutdown();
+        {
+            std::scoped_lock lock(fixture.connection_probe.mutex);
+            assert(fixture.connection_probe.send_count == 1);
+        }
     }
     assert(fixture.factory_count == 1);
     return 0;
