@@ -9,146 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Bound Windows string evidence decoding and PE reference validation, with
-  tentative labels and export diagnostics for rejected, shared, and budget-limited evidence.
-- Recognize MSVC template, lambda, and local-class RTTI names with bounded decoding
-  and reject ambiguous name collisions.
-- Match upstream live-viewer cadence with standalone statistics every 10 seconds
-  and globally aligned sampler payload rotation every minute.
-- Record upstream-compatible rolling TPS, tick-duration, CPU, world, and ping metric series in health and sampler data.
-- Use globally aligned profiling windows and stop timed profiles on a monotonic deadline even while server ticks are stalled.
-- Measure server uptime from the monotonic clock anchor so wall-clock adjustments cannot skew health reports.
-- Poll ping and network metrics on monotonic deadlines so server lag does not stretch their sampling cadence.
-- Align command argument parsing with Java spark and hide inaccessible commands from help output.
-- Align profiler action precedence, umbrella permissions, and zero-interval mode defaults with Java spark.
-- Add Java-compatible health report commands and a live health dashboard with
-  background uploads, rolling statistics updates, and trusted viewer clients.
-- Allow `/spark profiler open --comment <text>` to override live profile comments.
-- Report the number of ticks included by `--only-ticks-over` in sampler metadata.
-- Report samples discarded from the unfinished terminal tick separately from
-  genuine incomplete-data drops for execution and allocation profiles.
-- Add native memory and per-interface packet-rate details to `health show`.
-- Register an optional `spark` expansion with Endstone PlaceholderAPI, exposing
-  Java spark-compatible TPS, tick-duration, and process/system CPU placeholders
-  from Spark's live rolling statistics. Spark continues normally when PAPI is not
-  installed or active.
+- Add Java-compatible health reports and a live health dashboard with background
+  uploads, rolling TPS, tick-duration, CPU, world, and ping history, and trusted
+  viewer clients.
+- Add an optional `spark` expansion for Endstone PlaceholderAPI with TPS,
+  tick-duration, and process/system CPU placeholders. Spark continues to work
+  normally when PAPI is not installed or active.
+- Add one-hour process-memory history and 1m/5m/15m allocation-rate metrics on
+  Windows and Linux, with `health show --memory` and `--network` detail views.
+- Attribute sampled Python plugin call chains on CPython 3.12+; CPython 3.11
+  remains native-only.
+- Export active Bedrock behavior-pack metadata and a reviewed safe subset of
+  `server.properties`, with opt-in support for additional safe keys.
+- Preserve the initiating player's UUID across profiler, health, activity,
+  upload, and recovery metadata.
+- Allow `/spark profiler open --comment <text>` to override the comment shown in
+  the live viewer.
+- Report the number of ticks included by `--only-ticks-over`, and distinguish
+  samples discarded from an unfinished terminal tick from other incomplete data.
+- Improve Windows native symbol attribution for templates, lambdas, local
+  classes, and other ambiguous compiler-generated names.
 - Support Java-compatible Spark configuration environment variables.
-- Export a reviewed safe subset of `server.properties`, with sensitive-name guards
-  and administrator opt-in for additional safe keys.
-- Preserve player initiator UUID metadata across profiler, health, activity, upload,
-  and recovery paths.
-- Export active Bedrock behavior-pack metadata without depending on internal
-  `ResourcePackStack` ABI details.
-- Add a one-hour native process-memory curve, including cgroup v2 and Windows Job
-  Object limits when available.
-- Add process-wide native allocation-rate metrics and 1m/5m/15m rolling rates on
-  Linux and Windows.
-- Make allocation-rate metrics configurable through `allocationRateMetrics` and
-  expose `health show --memory` and `--network` detail switches.
-- Attribute sampled Python plugin call chains on CPython 3.12+ using a bounded PEP
-  669 shadow stack while keeping sampling native; CPython 3.11 remains native-only.
-- Expose detailed allocation capacity, loss, and accounting-validity diagnostics,
-  together with Windows consumer-CPU measurements, in profile metadata.
-- Embed project version information in Windows DLLs and verify DLL/PDB identity and
-  hashes in build and release artifacts.
-
-- Add Windows x64 native allocation profiling through Spark-owned process-lifetime
-  Permanent-IAT gateways and IAT redirection, with fail-closed callback draining
-  and ownership-safe teardown before unloadable Spark plugin code is detached.
 
 ### Changed
 
-- Reduce sampler and allocation aggregation CPU overhead by reusing call-tree
-  storage preflight results during admitted sample mutations.
-- Reduce temporary allocations during profile export by encoding packed
-  floating-point fields directly.
-- Reduce crash-recovery replay memory by releasing parsed journal records and
-  temporary window indexes before reconstructing and serializing the profile.
-- Reduce normal profile-export metadata copies by moving owned snapshots into
-  serialization while preserving the exported profile contents.
-- Keep Linux string hints tentative, validate their reference owners, and reject
-  virtual-table labels without direct evidence.
-- Distribute Linux builds as the single `endstone_spark.so` plugin file. Restart
-  the server when upgrading from the old helper-based runtime or changing
-  permanent gateway code.
-- **BREAKING**: Limit Linux allocation providers to those provably in the main
-  executable's startup `DT_NEEDED` dependency closure. Dynamically loaded custom
-  providers outside that closure are unsupported.
-- Reduce Windows allocation-consumer overhead when resolving frames in the server executable.
-- Reduce allocation-profiler hot-path contention with sharded lifecycle/statistics
-  state and bounded retries while preserving fail-closed drop reporting.
-- Cache the native Linux thread ID per PEP 669 callback thread instead of issuing a
-  `gettid` syscall for every Python execution event.
+- Align command parsing, help visibility, profiler action precedence, umbrella
+  permissions, and zero-interval defaults more closely with Java spark.
+- Align live-viewer updates and profiling windows to stable global cadences, and
+  use monotonic deadlines for timed profiles, uptime, ping, and network sampling
+  so wall-clock changes or server stalls do not skew them.
+- Distribute Linux builds as a single `endstone_spark.so`. A full server restart
+  is recommended when upgrading from the old helper-based runtime or after an
+  update that changes Spark's persistent native allocation support.
+- **BREAKING**: Linux allocation profiling now supports allocator providers that
+  are part of the server's startup dependency graph. Custom allocator providers
+  loaded later at runtime are not supported.
+- Improve Windows x64 allocation profiling so plugin unload does not leave native
+  callbacks targeting unloaded Spark code.
+- Reduce sampler/allocation aggregation overhead, profile-export allocations, and
+  peak memory use during crash-recovery replay.
+- Make Linux native symbol attribution more conservative by rejecting ambiguous
+  evidence instead of presenting uncertain labels as resolved functions.
 
 ### Fixed
 
-- Harden Windows Permanent-IAT gateway unwind admission and real `HeapAlloc`/
-  `HeapReAlloc` exception cleanup, rolling back allocation records and releasing
-  admission, tracking, and reentrancy state on failure. CRT throwing-new paths
-  preserve C++ exception and `new_handler` propagation with rollback; this does
-  not claim blanket SEH safety for every CRT entry point.
-- Keep Linux allocation gateways in permanent anonymous memory without adding a
-  permanent allocation-profiler pin on Spark. Incompatible resident code or
-  exhaustion of 256 lifetime groups requires a server restart. Retired published
-  groups are not reused, and late TLS callbacks cannot access detached payloads.
-- Export Python filename leaves and CodeIds without server-owner directory paths,
-  retaining native identities and available line data. Stop admitting new Python
-  symbols for the session after a code-registration failure.
-- Make recovery journal flushes and segment rotation durable while continuing to
-  report incomplete data and losses.
-- Preserve independent complete call trees for separate threads with the same name.
-- Correct Windows stack unwinding from function bodies and interior epilogues, and
-  safely retire Linux captures whose handlers complete after a timeout.
-- Reject ambiguous lambda ownership and use conservative instruction-based evidence
-  for native symbol guesses.
-- Preserve Windows `LastError` across allocation hooks.
-- Cancel viewer uploads and bound compression steps. Before any new profiling
-  session starts, give the previous timer thread and viewer a shared 500 ms budget
-  to finish stopping, then report a retry error if either remains active.
-- Complete health-dashboard retry requests exactly once.
-- Include players in aggregate world entity gauges while continuing to report the
-  player count separately.
-- Exclude native allocation-hook instrumentation branches from execution profiles
-  so Plugins View does not charge allocator internals to Spark.
-- Align the emitted spark profile data version with upstream `DATA_VERSION = 2`.
-- Reject ambiguous live-viewer trust approval when different verified keys reuse
-  the same client ID.
-- Keep viewer and health notification failures from escaping onto the server tick
-  path or skipping connection cleanup.
-- Avoid recalculating and sorting rolling TPS and tick-duration metrics on every server tick when the history is only
-  recorded every 10 seconds.
-- Prevent stale or concurrently closed live-viewer transports from restoring an open connection state, and run initial
-  uploads without holding the transport lock.
-- Serialize health-dashboard opening and shutdown without invoking completion callbacks under internal locks.
-- Reject invalid rolling windows and bound metadata and world-statistics edge cases.
-- Synchronize retained-allocation snapshots with lifecycle record reuse.
-- Include world metadata in the initial health report payload.
-- Require a valid signature before accepting a trusted live-viewer client,
-  reject malformed WebSocket protobuf/base64 input, and bound live-viewer
-  receive and send queues.
-- Encode sampler tick-length thresholds in the upstream protocol's microsecond unit.
-- Match Java spark's tick-duration placeholder windows and percentile ranks, and
-  avoid rebuilding unrelated rolling statistics for each placeholder value.
-- Journal newly observed module definitions before recovered execution samples can
-  reference them, preserving crash replay across multi-session hard kills.
-- Prevent the spark viewer's process-memory denominator from decoding as zero while
-  keeping native RSS/committed-memory semantics strict.
-- Skip unsafe device-metadata ping polling for unauthenticated headless BDS clients.
-- Preserve a completed allocation profile until serialization finishes before
+- Improve allocation-profiler cleanup and failure handling on Windows and Linux,
+  including Windows stack unwinding and `LastError` preservation, Linux caller
+  attribution, and bounded stop/finalize paths so slow cleanup cannot freeze the
+  server indefinitely.
+- Keep persistent Linux allocation support safe across plugin unload and late
+  callbacks. Incompatible or exhausted process-lifetime state is reported and
+  requires a full server restart.
+- Make recovery-journal flushing, rotation, and module-definition ordering more
+  durable, and retain recovery data when shutdown cleanup is incomplete.
+- Preserve independent complete call trees for different threads that share the
+  same display name.
+- Export Python filename leaves and code identifiers without server-owner
+  directory paths while retaining available line information.
+- Harden live-viewer and health-dashboard connection lifecycle, reconnects,
+  trusted-client validation, malformed input handling, and bounded send/receive
+  queues.
+- Keep viewer and health notification failures off the server tick path and ensure
+  failed connections are cleaned up.
+- Include players correctly in aggregate world entity gauges and include world
+  metadata in the initial health report.
+- Match upstream spark protocol details for profile data version, tick-threshold
+  units, and tick-duration placeholder windows and percentile ranks.
+- Prevent Spark's native allocation-hook internals from being charged to Spark in
+  execution-profile Plugins View.
+- Prevent the viewer's process-memory denominator from decoding as zero while
+  preserving native RSS/committed-memory semantics.
+- Skip unsafe device-metadata ping polling for unauthenticated headless BDS
+  clients.
+- Keep a completed allocation profile stable until serialization finishes before
   persistent allocation-rate counting resumes.
-- Canonicalize Python plugin identities and filter only Spark's observer bridge
-  frames without hiding unrelated user ctypes/libffi/native paths.
-- Preserve the real Linux allocation caller frame by correcting the cpptrace stack
-  skip count used by allocation hooks.
-- Ensure Windows execution sampling snapshots and resumes the target thread before unwind, preventing a blocked stack walk from leaving BDS suspended.
-- Bound how long a Windows allocation profile may stop or finalize, so a slow allocation
-  aggregator can no longer freeze the server main thread. Aggregation that does not fit inside
-  the stop budget is truncated and reported as incomplete profile data; if the aggregator
-  still cannot finish, the profile fails with an explicit error instead of hanging BDS.
-- Bound allocation-hook quiescence waits by elapsed time and preserve pending cleanup
-  across retries.
-- Retain recovery journals when export shutdown cleanup remains incomplete, and report cleanup
-  warnings only when cleanup did not actually finish.
+- Prevent Windows execution sampling failures from leaving the target BDS thread
+  suspended.
+- Preserve recovery journals when export shutdown cleanup does not complete, and
+  report cleanup warnings only when cleanup actually remains incomplete.
 
 ## [0.5.3][0.5.3] - 2026-08-14
 
