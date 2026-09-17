@@ -128,14 +128,14 @@ class WorkflowTest(unittest.TestCase):
             "ENDSTONE_SPARK_ENDSTONE_GIT_REPOSITORY": "https://github.com/EndstoneMC/endstone.git",
             "ENDSTONE_SPARK_ENDSTONE_GIT_TAG": "v0.11.11",
             "ENDSTONE_SPARK_PAPI_GIT_REPOSITORY": "https://github.com/EndstoneMC/papi.git",
-            "ENDSTONE_SPARK_PAPI_GIT_TAG": "3bc3dbf99010e7af09b967d913b5b6a7e182e989",
+            "ENDSTONE_SPARK_PAPI_GIT_TAG": "v0.1.0",
         }
         for name, value in expected.items():
             self.assertRegex(
                 cmake,
                 rf'set\({name} "{re.escape(value)}" CACHE STRING',
             )
-        self.assertRegex(cmake, r'set\(ENDSTONE_SPARK_PAPI_GIT_TAG "[0-9a-f]{40}" CACHE STRING')
+        self.assertRegex(cmake, r'set\(ENDSTONE_SPARK_PAPI_GIT_TAG "v0\.1\.0" CACHE STRING')
         papi_declaration = cmake.split("FetchContent_Declare(endstone_papi_headers", 1)[1].split(")", 1)[0]
         self.assertNotIn("GIT_SHALLOW", papi_declaration)
 

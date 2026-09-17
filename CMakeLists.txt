@@ -131,7 +131,7 @@ if (ENDSTONE_SPARK_BUILD_PLUGIN)
     # PAPI is optional at runtime; only its public headers are fetched.
     set(ENDSTONE_SPARK_PAPI_GIT_REPOSITORY "https://github.com/EndstoneMC/papi.git" CACHE STRING
             "Repository providing the public Endstone PAPI headers")
-    set(ENDSTONE_SPARK_PAPI_GIT_TAG "3bc3dbf99010e7af09b967d913b5b6a7e182e989" CACHE STRING
+    set(ENDSTONE_SPARK_PAPI_GIT_TAG "v0.1.0" CACHE STRING
             "Git ref providing the public Endstone PAPI headers")
     FetchContent_Declare(endstone_papi_headers
             GIT_REPOSITORY ${ENDSTONE_SPARK_PAPI_GIT_REPOSITORY}
