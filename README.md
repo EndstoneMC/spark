@@ -16,11 +16,6 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 > are spark's — all credit for those goes to
 > [lucko/spark](https://github.com/lucko/spark).
 
-> **Development branch:** This README documents the current `main`/`develop` code.
-> For a stable build, use the [latest GitHub Release](https://github.com/EndstoneMC/spark/releases/latest)
-> and its release notes. Features listed under [Unreleased](CHANGELOG.md) are not part
-> of the latest tagged release yet.
-
 ## Installation
 
 Download `endstone_spark.dll` on Windows or `endstone_spark.so` on Linux from the
