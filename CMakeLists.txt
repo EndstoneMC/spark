@@ -121,8 +121,8 @@ if (ENDSTONE_SPARK_BUILD_PLUGIN)
     # pass -DFETCHCONTENT_SOURCE_DIR_ENDSTONE=<path> to reuse an existing checkout.
     set(ENDSTONE_SPARK_ENDSTONE_GIT_REPOSITORY "https://github.com/EndstoneMC/endstone.git" CACHE STRING
             "Repository providing the Endstone public plugin API")
-    set(ENDSTONE_SPARK_ENDSTONE_GIT_TAG "e7eab9222abb92103714837ebe26672ee213f688" CACHE STRING
-            "Git ref providing the Endstone public plugin API")
+    set(ENDSTONE_SPARK_ENDSTONE_GIT_TAG "37b395378d91d6d20f1c52bf9d79dbd20e152458" CACHE STRING
+            "Git ref providing the Endstone v0.11.11 public plugin API")
     FetchContent_Declare(endstone
             GIT_REPOSITORY ${ENDSTONE_SPARK_ENDSTONE_GIT_REPOSITORY}
             GIT_TAG ${ENDSTONE_SPARK_ENDSTONE_GIT_TAG})
@@ -334,6 +334,7 @@ if (ENDSTONE_SPARK_BUILD_PLUGIN)
         src/plugin.cpp)
     target_include_directories(spark PRIVATE src)
     target_link_libraries(spark PRIVATE spark_application spark_papi_integration)
+    target_compile_definitions(spark PRIVATE ENDSTONE_SPARK_ENDSTONE_API_0_11=1)
     if (TARGET spark_linux_permanent_gateway)
         install(TARGETS spark LIBRARY DESTINATION . COMPONENT spark_linux_runtime)
         add_custom_target(spark_linux_archive

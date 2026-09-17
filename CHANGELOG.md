@@ -28,15 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report samples discarded from the unfinished terminal tick separately from
   genuine incomplete-data drops for execution and allocation profiles.
 - Add native memory and per-interface packet-rate details to `health show`.
-- Export current Bedrock game-rule values with canonical names, runtime/API-first
-  defaults plus safe fallbacks, and locatorBar-to-playerWaypoints migration metadata.
-- Register Spark's native backend with bStats using service ID 33350.
 - Register an optional `spark` expansion with Endstone PlaceholderAPI, exposing
   Java spark-compatible TPS, tick-duration, and process/system CPU placeholders
   from Spark's live rolling statistics. Spark continues normally when PAPI is not
   installed or active.
 - Support Java-compatible Spark configuration environment variables.
-- Add cached BlockActor/tile-entity world statistics with availability semantics.
 - Export a reviewed safe subset of `server.properties`, with sensitive-name guards
   and administrator opt-in for additional safe keys.
 - Preserve player initiator UUID metadata across profiler, health, activity, upload,

@@ -19,10 +19,10 @@ namespace spark::endstone_adapter {
 // Adapts endstone::CommandSender to spark::CommandSender.
 class EndstoneCommandSender : public CommandSender {
 public:
-    explicit EndstoneCommandSender(const ::endstone::NotNull<::endstone::CommandSender> &sender) : sender_(*sender) {}
+    explicit EndstoneCommandSender(const ::endstone::CommandSender &sender) : sender_(sender) {}
 
     std::string getName() const override { return sender_.getName(); }
-    bool isPlayer() const override { return sender_.is<::endstone::Player>(); }
+    bool isPlayer() const override { return sender_.asPlayer() != nullptr; }
     std::string getUniqueId() const override
     {
         const auto *player = dynamic_cast<const ::endstone::Player *>(&sender_);
@@ -77,8 +77,7 @@ private:
 };
 
 // Maintains rolling entity and loaded-chunk counts via Endstone events with
-// periodic reconciliation. Block actors are intentionally scanned less often
-// because Chunk::getBlockActors() captures a BlockState for every entry.
+// periodic reconciliation.
 class EndstoneWorldGaugeProvider {
 public:
     EndstoneWorldGaugeProvider(::endstone::Plugin &plugin, ::endstone::Server &server)

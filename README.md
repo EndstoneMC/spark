@@ -485,6 +485,8 @@ cmake --build build
 To build the common profiler, application, native, protobuf, and network layers
 without fetching Endstone or PAPI, add `-DENDSTONE_SPARK_BUILD_PLUGIN=OFF` to
 the configure command. The default is `ON` and retains the plugin build.
+The plugin build pins the official Endstone v0.11.11 public API and the pinned
+public PlaceholderAPI headers.
 
 For full Linux CTest coverage, including production-sampler, unload, and legacy
 tests, leave `-DENDSTONE_SPARK_GATEWAY_SAMPLER_TESTS=ON` enabled (it is the

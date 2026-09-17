@@ -1,19 +1,24 @@
 #include "platform/endstone/adapters.h"
 
-#include <array>
 #include <atomic>
-#include <charconv>
 #include <chrono>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
+#if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
+#include <array>
+#include <charconv>
+#include <variant>
+#endif
+
 #include "core/metadata/behavior_packs.h"
+#if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
 #include "core/metadata/gamerule_semantics.h"
+#endif
 #include "core/metadata/server_properties.h"
 #include "core/stats/ping_statistics.h"
 #include "core/stats/system_stats.h"
@@ -83,6 +88,7 @@ int floorDiv(int value, int divisor)
     return remainder < 0 ? quotient - 1 : quotient;
 }
 
+#if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
 std::string formatGameRuleValue(const endstone::GameRuleValue &value)
 {
     if (const auto *bool_value = std::get_if<bool>(&value)) {
@@ -103,7 +109,9 @@ std::string formatGameRuleValue(const endstone::GameRuleValue &value)
     }
     return {buffer, result.ptr};
 }
+#endif
 
+#if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
 constexpr std::array KBooleanGameRules{
     endstone::GameRule::CommandBlockOutput,
     endstone::GameRule::CommandBlocksEnabled,
@@ -167,6 +175,7 @@ void appendGameRules(WorldInfo &world, endstone::Level &level, const std::string
         world.game_rules.push_back(std::move(info));
     }
 }
+#endif
 
 }  // namespace
 
@@ -224,8 +233,11 @@ std::vector<NativePluginSource> EndstoneMetadataProvider::nativePluginSources()
 void EndstoneMetadataProvider::gatherWorldMetadata(WorldInfo &world, std::string_view minecraft_version)
 {
     world = WorldInfo{};
-    endstone::Level &level = server_.getLevel();
-    for (const auto &dimension : level.getDimensions()) {
+    endstone::Level *level = server_.getLevel();
+    if (level == nullptr) {
+        return;
+    }
+    for (const auto &dimension : level->getDimensions()) {
         std::map<std::pair<int, int>, WorldChunk> chunks;
         for (const auto &chunk : dimension->getLoadedChunks()) {
             int x = chunk->getX();
@@ -245,11 +257,11 @@ void EndstoneMetadataProvider::gatherWorldMetadata(WorldInfo &world, std::string
                 continue;
             }
             it->second.total_entities++;
-            it->second.entity_counts[std::string(actor->getType().getId())]++;
+            it->second.entity_counts[actor->getType()]++;
         }
 
         WorldEntry entry;
-        entry.name = std::string(dimension->getId());
+        entry.name = dimension->getName();
         auto regions = groupChunksIntoRegions(chunks);
         for (const auto &region : regions) {
             entry.total_entities += region.total_entities;
@@ -264,9 +276,13 @@ void EndstoneMetadataProvider::gatherWorldMetadata(WorldInfo &world, std::string
         world.worlds.push_back(std::move(entry));
     }
 
-    const std::string world_name = level.getName();
-    appendGameRules(world, level, world_name, minecraft_version, KBooleanGameRules);
-    appendGameRules(world, level, world_name, minecraft_version, KIntegerGameRules);
+    const std::string world_name = level->getName();
+#if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
+    appendGameRules(world, *level, world_name, minecraft_version, KBooleanGameRules);
+    appendGameRules(world, *level, world_name, minecraft_version, KIntegerGameRules);
+#else
+    (void)minecraft_version;
+#endif
 
     world.data_packs = discoverActiveBehaviorPacks(std::filesystem::current_path(), world_name);
     world.present = !world.worlds.empty() || !world.game_rules.empty() || !world.data_packs.empty();

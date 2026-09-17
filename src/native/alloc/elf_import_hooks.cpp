@@ -170,8 +170,10 @@ bool isSparkImage(const Image &image, std::uintptr_t replacement_base)
 
 bool isLoaderImage(std::string_view path)
 {
-    return path.find("linux-vdso") != std::string_view::npos || path.find("ld-linux") != std::string_view::npos ||
-           path.find("/ld-") != std::string_view::npos;
+    const std::size_t separator = path.find_last_of('/');
+    const std::string_view basename = path.substr(separator == std::string_view::npos ? 0 : separator + 1);
+    return basename.find("linux-vdso") != std::string_view::npos ||
+           basename.find("ld-linux") != std::string_view::npos || basename.starts_with("ld-");
 }
 
 struct MapRange {
@@ -349,7 +351,7 @@ bool ElfImportHooks::scan(std::string &error)
                    target.main_executable == image.main_executable;
         });
         if (isSparkImage(image, replacement_base) || std::ranges::binary_search(allocator_bases, image.base) ||
-            isLoaderImage(image.name)) {
+            (!image.main_executable && isLoaderImage(image.name))) {
             ++skipped_modules;
             continue;
         }

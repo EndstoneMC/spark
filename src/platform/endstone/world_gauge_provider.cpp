@@ -1,5 +1,7 @@
 #include <chrono>
+#if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
 #include <limits>
+#endif
 #include <string>
 
 #include "platform/endstone/adapters.h"
@@ -19,14 +21,16 @@ std::int64_t steadyNowMs()
 
 WorldGaugeChunkKey chunkKey(const ::endstone::Chunk &chunk)
 {
-    return {.dimension = std::string(chunk.getDimension()->getId()), .x = chunk.getX(), .z = chunk.getZ()};
+    return {.dimension = chunk.getDimension().getName(), .x = chunk.getX(), .z = chunk.getZ()};
 }
 
+#if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
 int boundedSize(std::size_t size)
 {
     const auto maximum = static_cast<std::size_t>(std::numeric_limits<int>::max());
     return static_cast<int>((std::min)(size, maximum));
 }
+#endif
 
 }  // namespace
 
@@ -38,19 +42,19 @@ void EndstoneWorldGaugeProvider::init()
     initialized_ = true;
 
     plugin_.registerEvent<::endstone::ActorSpawnEvent>(
-        [this](::endstone::ActorSpawnEvent &event) { event_adapter_.actorSpawned(event.getActor()->getId()); },
+        [this](::endstone::ActorSpawnEvent &event) { event_adapter_.actorSpawned(event.getActor().getId()); },
         ::endstone::EventPriority::Monitor, true);
 
     plugin_.registerEvent<::endstone::ActorRemoveEvent>(
-        [this](::endstone::ActorRemoveEvent &event) { event_adapter_.actorRemoved(event.getActor()->getId()); },
+        [this](::endstone::ActorRemoveEvent &event) { event_adapter_.actorRemoved(event.getActor().getId()); },
         ::endstone::EventPriority::Monitor);
 
     plugin_.registerEvent<::endstone::PlayerJoinEvent>(
-        [this](::endstone::PlayerJoinEvent &event) { event_adapter_.playerSpawned(event.getPlayer()->getId()); },
+        [this](::endstone::PlayerJoinEvent &event) { event_adapter_.playerSpawned(event.getPlayer().getId()); },
         ::endstone::EventPriority::Monitor);
 
     plugin_.registerEvent<::endstone::PlayerQuitEvent>(
-        [this](::endstone::PlayerQuitEvent &event) { event_adapter_.playerRemoved(event.getPlayer()->getId()); },
+        [this](::endstone::PlayerQuitEvent &event) { event_adapter_.playerRemoved(event.getPlayer().getId()); },
         ::endstone::EventPriority::Monitor);
 
     plugin_.registerEvent<::endstone::ChunkLoadEvent>(
@@ -88,15 +92,24 @@ void EndstoneWorldGaugeProvider::reconcile(bool include_tile_entities)
     last_reconcile_steady_ms_ = steadyNowMs();
 
     WorldGaugeSnapshot snapshot;
+#if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
     bool tile_scan_ok = include_tile_entities;
-    ::endstone::Level &level = server_.getLevel();
-    for (const auto &dimension : level.getDimensions()) {
+#else
+    bool tile_scan_ok = false;
+#endif
+    ::endstone::Level *level = server_.getLevel();
+    if (level == nullptr) {
+        event_adapter_.reconcile(snapshot);
+        return;
+    }
+    for (const auto &dimension : level->getDimensions()) {
         for (const auto &actor : dimension->getActors()) {
             snapshot.actor_ids.push_back(actor->getId());
         }
         for (const auto &chunk : dimension->getLoadedChunks()) {
             const WorldGaugeChunkKey key = chunkKey(*chunk);
             snapshot.chunks.push_back(key);
+#if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
             if (!include_tile_entities) {
                 continue;
             }
@@ -106,6 +119,9 @@ void EndstoneWorldGaugeProvider::reconcile(bool include_tile_entities)
             catch (...) {
                 tile_scan_ok = false;
             }
+#else
+            (void)include_tile_entities;
+#endif
         }
     }
     for (const auto &player : server_.getOnlinePlayers()) {
