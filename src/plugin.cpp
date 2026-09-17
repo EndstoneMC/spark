@@ -320,7 +320,7 @@ private:
 #endif
 };
 
-ENDSTONE_PLUGIN("spark", "0.5.3", SparkPlugin)
+ENDSTONE_PLUGIN("spark", "0.6.0", SparkPlugin)
 {
     description = "spark profiler for Endstone - find what's slowing your server down.";
     authors = {"ReallocAll <ReallocAll@outlook.com>"};
