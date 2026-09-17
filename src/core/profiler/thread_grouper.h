@@ -121,7 +121,7 @@ private:
     }
 
     static std::optional<std::string> nativeName(std::uint64_t identity, std::string_view name,
-                                                  NativeThreadLabelKind kind)
+                                                 NativeThreadLabelKind kind)
     {
         const std::size_t marker = name.rfind(" (#");
         if (marker == std::string_view::npos || name.empty() || name.back() != ')') {

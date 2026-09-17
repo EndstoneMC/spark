@@ -105,11 +105,9 @@ static void test_native_labels()  // NOLINT(misc-use-anonymous-namespace)
     assert(allocation.label("Worker") == "Worker (x2)");
 
     ThreadGrouper reused_os_id(ThreadGrouperMode::ByPool);
-    assert(reused_os_id.groupKeyForNativeLabel(30, "Worker-1 (#254551, session #30)",
-                                                NativeThreadLabelKind::Allocation)
+    assert(reused_os_id.groupKeyForNativeLabel(30, "Worker-1 (#254551, session #30)", NativeThreadLabelKind::Allocation)
                .first == "Worker");
-    assert(reused_os_id.groupKeyForNativeLabel(31, "Worker-2 (#254551, session #31)",
-                                                NativeThreadLabelKind::Allocation)
+    assert(reused_os_id.groupKeyForNativeLabel(31, "Worker-2 (#254551, session #31)", NativeThreadLabelKind::Allocation)
                .first == "Worker");
     assert(reused_os_id.label("Worker") == "Worker (x2)");
 
@@ -133,10 +131,11 @@ static void test_native_labels()  // NOLINT(misc-use-anonymous-namespace)
            "Worker-1 (#bad)");
     assert(opaque.groupKeyForNativeLabel(1, "Worker-1 (#99", NativeThreadLabelKind::Execution).first ==
            "Worker-1 (#99");
-    assert(opaque.groupKeyForNativeLabel(1, "Worker-1 (#254551 session #1)", NativeThreadLabelKind::Allocation)
-               .first == "Worker-1 (#254551 session #1)");
-    assert(opaque.groupKeyForNativeLabel(1, "Worker-1 (#254551, session #99)", NativeThreadLabelKind::Allocation)
-               .first == "Worker-1 (#254551, session #99)");
+    assert(opaque.groupKeyForNativeLabel(1, "Worker-1 (#254551 session #1)", NativeThreadLabelKind::Allocation).first ==
+           "Worker-1 (#254551 session #1)");
+    assert(
+        opaque.groupKeyForNativeLabel(1, "Worker-1 (#254551, session #99)", NativeThreadLabelKind::Allocation).first ==
+        "Worker-1 (#254551, session #99)");
     assert(opaque.groupKeyForNativeLabel(123, "Worker-1(#77) (#123)", NativeThreadLabelKind::Execution).first ==
            "Worker-1(#77) (#123)");
 

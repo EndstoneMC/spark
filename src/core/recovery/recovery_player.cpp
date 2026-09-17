@@ -443,9 +443,10 @@ RecoveredProfile RecoveryPlayer::replay(const std::filesystem::path &directory)
     ThreadGrouper grouper(meta.thread_grouper);
     std::map<ThreadGrouper::GroupKey, std::vector<const CallTree *>> groups;
     for (const auto &[tid, p] : input) {
-        auto g = grouper.groupKeyForNativeLabel(
-            tid, p.first, meta.mode == ProfileMode::Allocation ? NativeThreadLabelKind::Allocation
-                                                                : NativeThreadLabelKind::Execution);
+        auto g =
+            grouper.groupKeyForNativeLabel(tid, p.first,
+                                           meta.mode == ProfileMode::Allocation ? NativeThreadLabelKind::Allocation
+                                                                                : NativeThreadLabelKind::Execution);
         groups[g].push_back(p.second);
     }
 

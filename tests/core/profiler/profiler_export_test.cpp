@@ -42,8 +42,8 @@ struct ProfilerTestAccess {
             thread.thread_name = "Worker";
             if (grouping == ThreadGrouperMode::ByPool) {
                 if (mode == ProfileMode::Allocation) {
-                    thread.thread_name = tid == 10 ? "Worker-1 (#254551, session #10)"
-                                                   : "Worker-2 (#254551, session #20)";
+                    thread.thread_name =
+                        tid == 10 ? "Worker-1 (#254551, session #10)" : "Worker-2 (#254551, session #20)";
                 }
                 else {
                     thread.thread_name = tid == 10 ? "Worker-1 (#10)" : "Worker-2 (#20)";

@@ -323,7 +323,7 @@ void EndstoneNotifier::notify(const std::string &sender_name, const std::string 
 {
     plugin_.getLogger().info("{}", text);
     if (disable_broadcast_) {
-        auto player = server_.getPlayer(sender_name);
+        auto *player = server_.getPlayer(sender_name);
         if (player) {
             player->sendMessage(formatPlayerMessage(text));
         }

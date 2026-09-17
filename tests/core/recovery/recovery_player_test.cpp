@@ -37,8 +37,7 @@ void testRecoveryGrouping()
                     std::string name = "Worker";
                     if (grouping == ThreadGrouperMode::ByPool) {
                         if (allocation) {
-                            name = tid == 10 ? "Worker-1 (#254551, session #10)"
-                                             : "Worker-2 (#254551, session #20)";
+                            name = tid == 10 ? "Worker-1 (#254551, session #10)" : "Worker-2 (#254551, session #20)";
                         }
                         else {
                             name = tid == 10 ? "Worker-1 (#10)" : "Worker-2 (#20)";

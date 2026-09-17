@@ -114,7 +114,8 @@ public:
 
         auto papi_api =
             getServer().getServiceManager().load<papi::PlaceholderAPI>(std::string(papi::PlaceholderAPI::ServiceName));
-        const auto papi_result = papi_integration_.enable(*this, std::move(papi_api), app_->statistics(), spark::kVersion);
+        const auto papi_result =
+            papi_integration_.enable(*this, std::move(papi_api), app_->statistics(), spark::kVersion);
         if (papi_result == spark::endstone_adapter::PapiRegistrationResult::Registered) {
             getLogger().info("Registered the spark PlaceholderAPI expansion.");
         }
