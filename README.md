@@ -16,6 +16,32 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 > are spark's — all credit for those goes to
 > [lucko/spark](https://github.com/lucko/spark).
 
+> **Development branch:** This README documents the current `main`/`develop` code.
+> For a stable build, use the [latest GitHub Release](https://github.com/EndstoneMC/spark/releases/latest)
+> and its release notes. Features listed under [Unreleased](CHANGELOG.md) are not part
+> of the latest tagged release yet.
+
+## Installation
+
+Download `endstone_spark.dll` on Windows or `endstone_spark.so` on Linux from the
+[latest GitHub Release](https://github.com/EndstoneMC/spark/releases/latest), then place
+the file directly in the server's `plugins/` directory.
+
+```text
+plugins/
+  endstone_spark.dll  # Windows
+```
+
+or
+
+```text
+plugins/
+  endstone_spark.so   # Linux
+```
+
+Start or restart BDS to load Spark. When upgrading Spark, fully restart the BDS
+server instead of reloading the plugin, as a reload may not fully apply the update.
+
 ## Commands
 
 | Command                           | Description                                               |
@@ -23,14 +49,17 @@ profiles, uploaded to spark's bytebin and opened as an interactive flame graph a
 | `/spark profiler start [flags]` | Start profiling selected native threads (background).     |
 | `/spark profiler start --alloc` | Profile native allocation call stacks.                    |
 | `/spark profiler stop`          | Stop profiling and finalize the profile.                  |
+| `/spark profiler upload`        | Compatibility alias for `/spark profiler stop`.           |
 | `/spark profiler info`          | Show status of the running profiler.                      |
 | `/spark profiler cancel`        | Stop profiling without generating a profile.              |
 | `/spark profiler open`         | Open a live, auto-updating spark viewer for the running profile. |
 | `/spark profiler trust-viewer --id <client id>` | Approve a pending live viewer client. |
 | `/spark tps`                    | Show rolling TPS, MSPT distributions, and CPU usage.      |
 | `/spark ping`                  | Show player ping RTT statistics (min/median/p95/max).    |
-| `/spark health`                 | Add process and host resources to the performance report.  |
-| `/spark health --upload`        | Upload a health report to the spark viewer.                |
+| `/spark health`                 | Open the live health dashboard.                           |
+| `/spark health show [--memory] [--network]` | Show the local performance and resource report. |
+| `/spark health upload`          | Upload a health report to the spark viewer.                |
+| `/spark health trust-viewer --id <client id>` | Approve a pending health dashboard client. |
 | `/spark activity`               | Show recent profiler and health report activity.           |
 | `/spark tickmonitor`            | Report ticks that exceed a duration or baseline change.   |
 
@@ -40,10 +69,10 @@ under `plugins/spark/profiles/` as a `.sparkprofile` file instead. If an upload
 fails, Spark automatically preserves the raw protobuf profile in the same directory
 and reports the local path.
 
-Permission: `endstone.command.spark` (operators by default) is the umbrella
-permission. Per-command permissions are also available: `spark.profiler`,
-`spark.tps`, `spark.ping`, `spark.health`, `spark.activity`, and
-`spark.tickmonitor`.
+Permissions: `endstone.command.spark` and the Java-compatible `spark` permission
+are umbrella permissions (operators by default). Per-command permissions are also
+available: `spark.profiler`, `spark.tps`, `spark.ping`, `spark.health`,
+`spark.activity`, and `spark.tickmonitor`.
 
 ### Viewing and reading a profile
 
@@ -101,22 +130,26 @@ profiles. It reports TPS over 5 seconds, 10 seconds, 1 minute, 5 minutes, and
 Until enough server history exists, each label uses the data actually available
 and the command explicitly reports the shorter history span.
 
-`/spark health` includes that report, then adds server uptime and players plus
+`/spark health show` includes that report, then adds server uptime and players plus
 available process RSS, physical memory, disk, CPU/OS details, and active
 per-interface network throughput (RX/TX bytes per second, 15-minute rolling
 mean). Resource-query failures are omitted instead of being displayed as zero.
-`/spark health show --memory` adds process virtual memory, process thread count,
-and swap/page-file details. `--network` includes interfaces whose current rate
-is zero as well as active interfaces. On Windows, the virtual-memory value is
-the process's reserved or committed address space; swap/page-file usage follows
-Windows commit-limit semantics. On Linux, process RSS and virtual memory come
-from `/proc/self/statm` (with process thread data from `/proc/self/status`),
-while host physical memory and swap values come from `/proc/meminfo`.
+`--memory` adds process virtual memory, process thread count, and swap/page-file
+details. `--network` includes interfaces whose current rate is zero as well as
+active interfaces. On Windows, the virtual-memory value is the process's reserved
+or committed address space; swap/page-file usage follows Windows commit-limit
+semantics. On Linux, process RSS and virtual memory come from `/proc/self/statm`
+(with process thread data from `/proc/self/status`), while host physical memory
+and swap values come from `/proc/meminfo`.
 
-`/spark health --upload` generates a spark `HealthData` protobuf containing the
-same statistics, platform metadata, system resources, 15-minute time-window
-history, and plugin list, then uploads it to the spark viewer. The viewer link
-is printed in chat.
+`/spark health` (or `/spark health dashboard`) opens the live health dashboard.
+Dashboard clients use the same trusted-viewer model as the profiler Live Viewer;
+approve a pending client with `/spark health trust-viewer --id <client id>`.
+
+`/spark health upload` (or `/spark health --upload`) generates a spark `HealthData`
+protobuf containing the same statistics, platform metadata, system resources,
+15-minute time-window history, and plugin list, then uploads it to the spark viewer.
+The viewer link is printed in chat.
 
 ### `/spark activity`
 
@@ -512,18 +545,8 @@ requires cpptrace's async-signal-safe unwinding path. Windows does not use
 libunwind; cpptrace uses its native Windows backend while spark captures stacks
 with StackWalk64.
 
-On Windows, copy `build/endstone_spark.dll` into your server's `plugins/`
-directory.
-
-On Linux, copy `build/endstone_spark.so` into the server's `plugins/` directory:
-
-```text
-plugins/
-  endstone_spark.so
-```
-
-We recommend restarting the server when upgrading Spark, as reloading the plugin
-may not fully apply the update.
+The plugin build produces `endstone_spark.dll` on Windows and `endstone_spark.so`
+on Linux. See [Installation](#installation) for deployment and upgrade guidance.
 
 > **Toolchain / ABI note.** A C++ Endstone plugin must use the runtime ABI expected
 > by the Endstone build it is loaded into. Match its compiler, compiler ABI, C++

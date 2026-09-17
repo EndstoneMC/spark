@@ -31,6 +31,7 @@ src/
     sampler/                  #   execution sampler, call tree, capture, thread selection
     symbol/                   #   symbolication, symbol guesser (DWARF + PE64)
     alloc/                    #   allocation hooks, bounded queue, thread filter
+    python/                   #   bounded Python shadow-stack attribution support
 
   platform/
     endstone/                 # Endstone adapters and optional PAPI integration
@@ -125,4 +126,4 @@ enable order when installed; no PAPI binary is linked into Spark.
 
 ## Dependencies
 
-Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, libcurl, and tomlplusplus. Linux additionally requires OpenSSL for crypto. When `ENDSTONE_SPARK_BUILD_PLUGIN=ON`, CMake fetches Endstone's public plugin API and pinned public PAPI headers; plugin-off builds do not fetch either host SDK. CMake also directly fetches the pinned distorm revision used for strict x86-64 instruction-boundary decoding. Windows allocation hooking is implemented entirely by Spark-owned `WindowsAllocationIatHooks` and Permanent-IAT gateways.
+Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, libcurl, tomlplusplus, and nlohmann_json. Linux additionally requires OpenSSL for crypto. When `ENDSTONE_SPARK_BUILD_PLUGIN=ON`, CMake fetches Endstone's public plugin API and pinned public PAPI headers; plugin-off builds do not fetch either host SDK. CMake also directly fetches the pinned distorm revision used for strict x86-64 instruction-boundary decoding. Windows allocation hooking is implemented entirely by Spark-owned `WindowsAllocationIatHooks` and Permanent-IAT gateways.

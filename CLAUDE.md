@@ -148,7 +148,7 @@ Leave successfully symbolicated frames and non-BDS modules untouched
 - `src/plugin.cpp` - Endstone plugin lifecycle and command dispatch (thin bootstrap)
 - `src/application/` - platform-independent business orchestration: command registry, profiler service, profile exporter, health, activity, and tick-monitor commands, platform capability interfaces
 - `src/core/` - platform-independent services: profiler, statistics, command parsing, config (TOML), recovery journal, activity log, WebSocket/crypto, server-properties metadata, utilities
-- `src/native/` - native backend: execution sampler, symbol guesser, allocation hooks
+- `src/native/` - native backend: execution sampler, symbol guesser, allocation hooks, and Python shadow-stack primitives
 - `src/platform/endstone/` - thin Endstone platform adapters: command sender, thread dispatcher, metadata provider (including world gauges and ping), result notifier
 - `src/proto/` - spark protobuf serialization
 - `src/net/` - gzip compression, bytebin upload, WebSocket transport, and local profile persistence
@@ -177,7 +177,7 @@ Leave successfully symbolicated frames and non-BDS modules untouched
 
 ### Dependencies
 
-Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, libcurl, and tomlplusplus. Linux additionally requires OpenSSL for crypto. CMake fetches Endstone's public plugin API and directly fetches the pinned distorm decoder used by the x86-64 symbol guessers on both supported platforms. Windows allocation hooking is implemented entirely by Spark's Permanent-IAT and `WindowsIatHooks` backend.
+Conan supplies cpptrace, concurrentqueue, zlib, expected-lite, libcurl, tomlplusplus, and nlohmann_json. Linux additionally requires OpenSSL for crypto. When the plugin build is enabled, CMake fetches Endstone's public plugin API and pinned public PAPI headers; it also directly fetches the pinned distorm decoder used by the x86-64 symbol guessers on both supported platforms. Windows allocation hooking is implemented by Spark's Permanent-IAT gateways together with the `WindowsAllocationIatHooks` and `WindowsIatHooks` layers.
 
 ## Native Symbol Guessing
 
