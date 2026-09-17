@@ -11,7 +11,7 @@
 namespace spark::selftest {
 
 #if defined(_WIN32) || defined(__linux__)
-bool verifyAllocationLiveOnlyContentionRefusal()
+static bool verifyAllocationLiveOnlyContentionRefusal()
 {
     spark::AllocationSamplerConfig config;
     config.interval_bytes = 1;
