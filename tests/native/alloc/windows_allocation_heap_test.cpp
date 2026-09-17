@@ -325,7 +325,7 @@ int main()
         }
     }
 
-    const bool freed = fixture_free(heap, 0, pointer);
+    const bool freed = fixture_free(heap, 0, pointer) != 0;
     spark::test::AllocationLiveRecordState live_after_free_state;
     const bool live_after_free_lookup =
         spark::test::AllocationDiagnosticsTestAccess::liveRecordState(sampler, pointer, live_after_free_state);
@@ -491,7 +491,7 @@ int main()
         ::HeapDestroy(heap);
         return fail("second-fixture-realloc-mode") ? 0 : 1;
     }
-    const bool second_freed = fixture_free(second_heap, 0, second_fixture_pointer);
+    const bool second_freed = fixture_free(second_heap, 0, second_fixture_pointer) != 0;
     spark::test::AllocationLiveRecordState second_live_after_free_state;
     const bool second_live_after_free_lookup = spark::test::AllocationDiagnosticsTestAccess::liveRecordState(
         sampler, second_fixture_pointer, second_live_after_free_state);
