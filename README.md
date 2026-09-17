@@ -522,11 +522,8 @@ plugins/
   endstone_spark.so
 ```
 
-No helper library is required.
-Restart the full BDS process when replacing an older development Permanent-IAT
-gateway with gateway ABI 3 or changing the gateway's code identity. ABI 3
-preserves its published state offsets for compatible rediscovery; incompatible
-resident registry code is not reused.
+We recommend restarting the server when upgrading Spark, as reloading the plugin
+may not fully apply the update.
 
 > **Toolchain / ABI note.** A C++ Endstone plugin must use the runtime ABI expected
 > by the Endstone build it is loaded into. Match its compiler, compiler ABI, C++
