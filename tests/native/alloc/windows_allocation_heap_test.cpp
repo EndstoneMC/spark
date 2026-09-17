@@ -1,3 +1,4 @@
+#include "native/alloc/allocation_diagnostics_test_access.h"
 #include "native/alloc/allocation_sampler.h"
 
 #ifndef _WIN32
@@ -76,6 +77,18 @@ bool activeCapability(const spark::AllocationSampler &sampler, const char *name)
         }
     }
     return false;
+}
+
+bool validLiveRecord(const spark::test::AllocationLiveRecordState &state, SIZE_T expected_size) noexcept
+{
+    return state.found && state.allocation_id != 0 && state.requested_bytes == expected_size && state.weight_bytes != 0;
+}
+
+bool sameLiveRecord(const spark::test::AllocationLiveRecordState &before,
+                    const spark::test::AllocationLiveRecordState &after) noexcept
+{
+    return after.found && after.allocation_id == before.allocation_id &&
+           after.requested_bytes == before.requested_bytes && after.weight_bytes == before.weight_bytes;
 }
 
 template <typename Call>
@@ -199,17 +212,24 @@ int main()
     ::SetLastError(KEntryError);
     void *pointer = fixture_alloc(heap, 0, KSmallSize);
     const DWORD allocation_error = ::GetLastError();
+    spark::test::AllocationLiveRecordState allocation_state;
+    const bool allocation_lookup = pointer != nullptr && spark::test::AllocationDiagnosticsTestAccess::liveRecordState(
+                                                             sampler, pointer, allocation_state);
+    const bool allocation_record = allocation_lookup && validLiveRecord(allocation_state, KSmallSize);
     if (pointer == nullptr || allocation_error != KEntryError || sampler.hookCalls() <= hooks_before ||
-        sampler.successfulAllocationCalls() <= successful_before || sampler.liveSamples() <= live_before) {
+        sampler.successfulAllocationCalls() <= successful_before || !allocation_record) {
         std::fprintf(
             stderr,
             "stage=windows-allocation-heap detail=small pointer=%p error=%lu hooks=%llu/%llu successful=%llu/%llu "
-            "live=%llu/%llu\n",
+            "live=%llu/%llu lookup=%d found=%d id=%llu requested=%llu weight=%llu\n",
             pointer, static_cast<unsigned long>(allocation_error), static_cast<unsigned long long>(sampler.hookCalls()),
             static_cast<unsigned long long>(hooks_before),
             static_cast<unsigned long long>(sampler.successfulAllocationCalls()),
             static_cast<unsigned long long>(successful_before), static_cast<unsigned long long>(sampler.liveSamples()),
-            static_cast<unsigned long long>(live_before));
+            static_cast<unsigned long long>(live_before), allocation_lookup ? 1 : 0, allocation_state.found ? 1 : 0,
+            static_cast<unsigned long long>(allocation_state.allocation_id),
+            static_cast<unsigned long long>(allocation_state.requested_bytes),
+            static_cast<unsigned long long>(allocation_state.weight_bytes));
         (void)sampler.shutdown(error);
         (void)::FreeLibrary(fixture);
         ::HeapDestroy(heap);
@@ -235,6 +255,23 @@ int main()
     pointer = expanded;
     std::memset(pointer, 0x5A, KExpandedSize);
 
+    spark::test::AllocationLiveRecordState live_before_failed_realloc_state;
+    const bool live_before_failed_realloc_lookup = spark::test::AllocationDiagnosticsTestAccess::liveRecordState(
+        sampler, pointer, live_before_failed_realloc_state);
+    if (!live_before_failed_realloc_lookup || !validLiveRecord(live_before_failed_realloc_state, KExpandedSize)) {
+        std::fprintf(stderr,
+                     "stage=windows-allocation-heap detail=failed-realloc-before lookup=%d found=%d id=%llu "
+                     "requested=%llu weight=%llu\n",
+                     live_before_failed_realloc_lookup ? 1 : 0, live_before_failed_realloc_state.found ? 1 : 0,
+                     static_cast<unsigned long long>(live_before_failed_realloc_state.allocation_id),
+                     static_cast<unsigned long long>(live_before_failed_realloc_state.requested_bytes),
+                     static_cast<unsigned long long>(live_before_failed_realloc_state.weight_bytes));
+        (void)fixture_free(heap, 0, pointer);
+        (void)sampler.shutdown(error);
+        (void)::FreeLibrary(fixture);
+        ::HeapDestroy(heap);
+        return fail("hooked-failed-realloc-record-before") ? 0 : 1;
+    }
     const std::uint64_t live_before_failed_realloc = sampler.liveSamples();
     ::SetLastError(KEntryError);
     void *failed = nullptr;
@@ -242,8 +279,31 @@ int main()
     const bool hooked_realloc_caught = invokeHeapException(
         [&] { failed = fixture_realloc(heap, KCallNormalFlags, pointer, KImpossibleSize); }, hooked_realloc_code);
     const DWORD failure_error = ::GetLastError();
+    spark::test::AllocationLiveRecordState live_after_failed_realloc_state;
+    const bool live_after_failed_realloc_lookup = spark::test::AllocationDiagnosticsTestAccess::liveRecordState(
+        sampler, pointer, live_after_failed_realloc_state);
+    const bool record_survived = live_after_failed_realloc_lookup &&
+                                 sameLiveRecord(live_before_failed_realloc_state, live_after_failed_realloc_state);
     if (!hooked_realloc_caught || failed != nullptr || hooked_realloc_code != direct_realloc_code ||
-        failure_error != direct_failure_error || sampler.liveSamples() != live_before_failed_realloc) {
+        failure_error != direct_failure_error || !record_survived) {
+        std::fprintf(stderr,
+                     "stage=windows-allocation-heap detail=failed-realloc direct-code=0x%08lx hooked-code=0x%08lx "
+                     "direct-error=%lu hooked-error=%lu live=%llu/%llu caught=%d/%d before-lookup=%d "
+                     "before-found=%d before-id=%llu before-requested=%llu before-weight=%llu after-lookup=%d "
+                     "after-found=%d after-id=%llu after-requested=%llu after-weight=%llu\n",
+                     static_cast<unsigned long>(direct_realloc_code), static_cast<unsigned long>(hooked_realloc_code),
+                     static_cast<unsigned long>(direct_failure_error), static_cast<unsigned long>(failure_error),
+                     static_cast<unsigned long long>(sampler.liveSamples()),
+                     static_cast<unsigned long long>(live_before_failed_realloc), hooked_realloc_caught ? 1 : 0,
+                     direct_realloc_caught ? 1 : 0, live_before_failed_realloc_lookup ? 1 : 0,
+                     live_before_failed_realloc_state.found ? 1 : 0,
+                     static_cast<unsigned long long>(live_before_failed_realloc_state.allocation_id),
+                     static_cast<unsigned long long>(live_before_failed_realloc_state.requested_bytes),
+                     static_cast<unsigned long long>(live_before_failed_realloc_state.weight_bytes),
+                     live_after_failed_realloc_lookup ? 1 : 0, live_after_failed_realloc_state.found ? 1 : 0,
+                     static_cast<unsigned long long>(live_after_failed_realloc_state.allocation_id),
+                     static_cast<unsigned long long>(live_after_failed_realloc_state.requested_bytes),
+                     static_cast<unsigned long long>(live_after_failed_realloc_state.weight_bytes));
         if (failed != nullptr) {
             (void)fixture_free(heap, 0, failed);
         }
@@ -265,7 +325,20 @@ int main()
         }
     }
 
-    if (!fixture_free(heap, 0, pointer) || sampler.liveSamples() >= live_before_failed_realloc) {
+    const bool freed = fixture_free(heap, 0, pointer);
+    spark::test::AllocationLiveRecordState live_after_free_state;
+    const bool live_after_free_lookup =
+        spark::test::AllocationDiagnosticsTestAccess::liveRecordState(sampler, pointer, live_after_free_state);
+    if (!freed || !live_after_free_lookup || live_after_free_state.found) {
+        std::fprintf(stderr,
+                     "stage=windows-allocation-heap detail=failed-realloc-free freed=%d lookup=%d found=%d id=%llu "
+                     "requested=%llu weight=%llu live=%llu/%llu\n",
+                     freed ? 1 : 0, live_after_free_lookup ? 1 : 0, live_after_free_state.found ? 1 : 0,
+                     static_cast<unsigned long long>(live_after_free_state.allocation_id),
+                     static_cast<unsigned long long>(live_after_free_state.requested_bytes),
+                     static_cast<unsigned long long>(live_after_free_state.weight_bytes),
+                     static_cast<unsigned long long>(sampler.liveSamples()),
+                     static_cast<unsigned long long>(live_before_failed_realloc));
         (void)sampler.shutdown(error);
         (void)::FreeLibrary(fixture);
         ::HeapDestroy(heap);
@@ -351,6 +424,24 @@ int main()
         return fail("second-fixture-small-allocation") ? 0 : 1;
     }
     std::memset(second_fixture_pointer, 0x5A, KSmallSize);
+    spark::test::AllocationLiveRecordState second_live_before_realloc_state;
+    const bool second_live_before_realloc_lookup = spark::test::AllocationDiagnosticsTestAccess::liveRecordState(
+        sampler, second_fixture_pointer, second_live_before_realloc_state);
+    if (!second_live_before_realloc_lookup || !validLiveRecord(second_live_before_realloc_state, KSmallSize)) {
+        std::fprintf(stderr,
+                     "stage=windows-allocation-heap detail=second-realloc-before lookup=%d found=%d id=%llu "
+                     "requested=%llu weight=%llu\n",
+                     second_live_before_realloc_lookup ? 1 : 0, second_live_before_realloc_state.found ? 1 : 0,
+                     static_cast<unsigned long long>(second_live_before_realloc_state.allocation_id),
+                     static_cast<unsigned long long>(second_live_before_realloc_state.requested_bytes),
+                     static_cast<unsigned long long>(second_live_before_realloc_state.weight_bytes));
+        (void)fixture_free(second_heap, 0, second_fixture_pointer);
+        (void)sampler.shutdown(error);
+        (void)::FreeLibrary(fixture);
+        ::HeapDestroy(second_heap);
+        ::HeapDestroy(heap);
+        return fail("second-fixture-realloc-record-before") ? 0 : 1;
+    }
     const std::uint64_t second_live_before_realloc = sampler.liveSamples();
     DWORD second_hooked_realloc_code = 0;
     void *second_hooked_failed = nullptr;
@@ -362,20 +453,36 @@ int main()
         },
         second_hooked_realloc_code);
     const DWORD second_hooked_realloc_error = ::GetLastError();
+    spark::test::AllocationLiveRecordState second_live_after_realloc_state;
+    const bool second_live_after_realloc_lookup = spark::test::AllocationDiagnosticsTestAccess::liveRecordState(
+        sampler, second_fixture_pointer, second_live_after_realloc_state);
+    const bool second_record_survived =
+        second_live_after_realloc_lookup &&
+        sameLiveRecord(second_live_before_realloc_state, second_live_after_realloc_state);
     if (!second_hooked_realloc_caught || second_hooked_failed != nullptr ||
         second_hooked_realloc_code != second_direct_realloc_code ||
-        second_hooked_realloc_error != second_direct_realloc_error ||
-        sampler.liveSamples() != second_live_before_realloc || !hasPattern(second_fixture_pointer, KSmallSize, 0x5A)) {
+        second_hooked_realloc_error != second_direct_realloc_error || !second_record_survived ||
+        !hasPattern(second_fixture_pointer, KSmallSize, 0x5A)) {
         std::fprintf(stderr,
                      "stage=windows-allocation-heap detail=second-realloc direct-code=0x%08lx hooked-code=0x%08lx "
-                     "direct-error=%lu hooked-error=%lu live=%llu/%llu caught=%d/%d\n",
+                     "direct-error=%lu hooked-error=%lu live=%llu/%llu caught=%d/%d before-lookup=%d before-found=%d "
+                     "before-id=%llu before-requested=%llu before-weight=%llu after-lookup=%d after-found=%d "
+                     "after-id=%llu after-requested=%llu after-weight=%llu\n",
                      static_cast<unsigned long>(second_direct_realloc_code),
                      static_cast<unsigned long>(second_hooked_realloc_code),
                      static_cast<unsigned long>(second_direct_realloc_error),
                      static_cast<unsigned long>(second_hooked_realloc_error),
                      static_cast<unsigned long long>(sampler.liveSamples()),
                      static_cast<unsigned long long>(second_live_before_realloc), second_direct_realloc_caught ? 1 : 0,
-                     second_hooked_realloc_caught ? 1 : 0);
+                     second_hooked_realloc_caught ? 1 : 0, second_live_before_realloc_lookup ? 1 : 0,
+                     second_live_before_realloc_state.found ? 1 : 0,
+                     static_cast<unsigned long long>(second_live_before_realloc_state.allocation_id),
+                     static_cast<unsigned long long>(second_live_before_realloc_state.requested_bytes),
+                     static_cast<unsigned long long>(second_live_before_realloc_state.weight_bytes),
+                     second_live_after_realloc_lookup ? 1 : 0, second_live_after_realloc_state.found ? 1 : 0,
+                     static_cast<unsigned long long>(second_live_after_realloc_state.allocation_id),
+                     static_cast<unsigned long long>(second_live_after_realloc_state.requested_bytes),
+                     static_cast<unsigned long long>(second_live_after_realloc_state.weight_bytes));
         (void)fixture_free(second_heap, 0,
                            second_hooked_failed != nullptr ? second_hooked_failed : second_fixture_pointer);
         (void)sampler.shutdown(error);
@@ -384,7 +491,27 @@ int main()
         ::HeapDestroy(heap);
         return fail("second-fixture-realloc-mode") ? 0 : 1;
     }
-    (void)fixture_free(second_heap, 0, second_fixture_pointer);
+    const bool second_freed = fixture_free(second_heap, 0, second_fixture_pointer);
+    spark::test::AllocationLiveRecordState second_live_after_free_state;
+    const bool second_live_after_free_lookup = spark::test::AllocationDiagnosticsTestAccess::liveRecordState(
+        sampler, second_fixture_pointer, second_live_after_free_state);
+    if (!second_freed || !second_live_after_free_lookup || second_live_after_free_state.found) {
+        std::fprintf(stderr,
+                     "stage=windows-allocation-heap detail=second-realloc-free freed=%d lookup=%d found=%d id=%llu "
+                     "requested=%llu weight=%llu live=%llu/%llu\n",
+                     second_freed ? 1 : 0, second_live_after_free_lookup ? 1 : 0,
+                     second_live_after_free_state.found ? 1 : 0,
+                     static_cast<unsigned long long>(second_live_after_free_state.allocation_id),
+                     static_cast<unsigned long long>(second_live_after_free_state.requested_bytes),
+                     static_cast<unsigned long long>(second_live_after_free_state.weight_bytes),
+                     static_cast<unsigned long long>(sampler.liveSamples()),
+                     static_cast<unsigned long long>(second_live_before_realloc));
+        (void)sampler.shutdown(error);
+        (void)::FreeLibrary(fixture);
+        ::HeapDestroy(second_heap);
+        ::HeapDestroy(heap);
+        return fail("second-fixture-realloc-free") ? 0 : 1;
+    }
     ::HeapDestroy(second_heap);
 
     if (!sampler.stop(error) || !error.empty() || !sampler.shutdown(error) || !error.empty()) {

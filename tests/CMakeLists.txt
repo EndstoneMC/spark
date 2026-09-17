@@ -704,7 +704,8 @@ if (WIN32)
 
     add_executable(spark_windows_allocation_heap_test native/alloc/windows_allocation_heap_test.cpp)
     add_dependencies(spark_windows_allocation_heap_test spark_windows_allocation_fixture)
-    target_link_libraries(spark_windows_allocation_heap_test PRIVATE spark_core)
+    target_include_directories(spark_windows_allocation_heap_test PRIVATE "${CMAKE_SOURCE_DIR}/tests")
+    target_link_libraries(spark_windows_allocation_heap_test PRIVATE spark_core_lifecycle_test)
     set_target_properties(spark_windows_allocation_heap_test PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     add_test(NAME spark_windows_allocation_heap_test COMMAND spark_windows_allocation_heap_test)
