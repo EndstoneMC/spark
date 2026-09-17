@@ -122,11 +122,11 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn('VALUE "ProductVersion", "@PROJECT_VERSION@.0\\0"', resource)
         self.assertNotIn("0.5.3", resource)
 
-    def test_cmake_uses_immutable_official_dependency_defaults(self):
+    def test_cmake_uses_pinned_official_dependency_defaults(self):
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         expected = {
             "ENDSTONE_SPARK_ENDSTONE_GIT_REPOSITORY": "https://github.com/EndstoneMC/endstone.git",
-            "ENDSTONE_SPARK_ENDSTONE_GIT_TAG": "37b395378d91d6d20f1c52bf9d79dbd20e152458",
+            "ENDSTONE_SPARK_ENDSTONE_GIT_TAG": "v0.11.11",
             "ENDSTONE_SPARK_PAPI_GIT_REPOSITORY": "https://github.com/EndstoneMC/papi.git",
             "ENDSTONE_SPARK_PAPI_GIT_TAG": "3bc3dbf99010e7af09b967d913b5b6a7e182e989",
         }
@@ -135,8 +135,7 @@ class WorkflowTest(unittest.TestCase):
                 cmake,
                 rf'set\({name} "{re.escape(value)}" CACHE STRING',
             )
-        for name in ("ENDSTONE_SPARK_ENDSTONE_GIT_TAG", "ENDSTONE_SPARK_PAPI_GIT_TAG"):
-            self.assertRegex(cmake, rf'set\({name} "[0-9a-f]{{40}}" CACHE STRING')
+        self.assertRegex(cmake, r'set\(ENDSTONE_SPARK_PAPI_GIT_TAG "[0-9a-f]{40}" CACHE STRING')
         papi_declaration = cmake.split("FetchContent_Declare(endstone_papi_headers", 1)[1].split(")", 1)[0]
         self.assertNotIn("GIT_SHALLOW", papi_declaration)
 

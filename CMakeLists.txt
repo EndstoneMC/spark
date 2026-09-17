@@ -121,7 +121,7 @@ if (ENDSTONE_SPARK_BUILD_PLUGIN)
     # pass -DFETCHCONTENT_SOURCE_DIR_ENDSTONE=<path> to reuse an existing checkout.
     set(ENDSTONE_SPARK_ENDSTONE_GIT_REPOSITORY "https://github.com/EndstoneMC/endstone.git" CACHE STRING
             "Repository providing the Endstone public plugin API")
-    set(ENDSTONE_SPARK_ENDSTONE_GIT_TAG "37b395378d91d6d20f1c52bf9d79dbd20e152458" CACHE STRING
+    set(ENDSTONE_SPARK_ENDSTONE_GIT_TAG "v0.11.11" CACHE STRING
             "Git ref providing the Endstone v0.11.11 public plugin API")
     FetchContent_Declare(endstone
             GIT_REPOSITORY ${ENDSTONE_SPARK_ENDSTONE_GIT_REPOSITORY}
