@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -711,6 +712,57 @@ struct Admission {
         for (const auto index : resident) {
             require(!sparkObject(snapshot.objects[index]), "startup dependency closure includes Spark");
         }
+    }
+    bool preloadedAllocator(std::size_t index) const
+    {
+        const auto &object = snapshot.objects[index];
+        const auto name = std::filesystem::path(object.identity.path).filename().string();
+        const auto allocator = [](const std::string &value) {
+            for (const char *prefix : {"libjemalloc.so", "libmimalloc.so"}) {
+                const std::string_view stem(prefix);
+                if (value == stem) {
+                    return true;
+                }
+                if (value.starts_with(stem) && value.size() > stem.size() + 1 && value[stem.size()] == '.' &&
+                    std::all_of(value.begin() + stem.size() + 1, value.end(), [](char character) {
+                        return (character >= '0' && character <= '9') || character == '.';
+                    })) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!allocator(name) || object.identity.inode == 0) {
+            return false;
+        }
+        const char *preload = std::getenv("LD_PRELOAD");
+        if (preload == nullptr) {
+            return false;
+        }
+        bool listed = false;
+        for (const char *first = preload; *first != '\0';) {
+            while (*first == ' ' || *first == ':') {
+                ++first;
+            }
+            const char *last = first;
+            while (*last != '\0' && *last != ' ' && *last != ':') {
+                ++last;
+            }
+            if (last != first) {
+                const std::string entry(first, last);
+                listed |= entry.find('/') == std::string::npos
+                            ? entry == object.soname || entry == std::filesystem::path(object.loader_name).filename()
+                            : sameFile(entry, object.identity.device, object.identity.inode);
+            }
+            first = last;
+        }
+        if (!listed || index >= spark) {
+            return false;
+        }
+        const auto dependencies = snapshot.closure(index);
+        return std::none_of(dependencies.begin(), dependencies.end(), [&](std::size_t dependency) {
+            return dependency == spark || sparkObject(snapshot.objects[dependency]);
+        });
     }
     void helperDependencies(const Object &helper)
     {

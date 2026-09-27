@@ -88,6 +88,22 @@ FIXTURE_API std::uint64_t sampler_samples()
 {
     return Sampler->sampleCount();
 }
+FIXTURE_API std::uint64_t sampler_live_samples()
+{
+    return Sampler->liveSamples();
+}
+FIXTURE_API std::uint64_t sampler_observed_bytes()
+{
+    return Sampler->observedBytes();
+}
+FIXTURE_API std::uint64_t sampler_sampling_points()
+{
+    return Sampler->samplingPoints();
+}
+FIXTURE_API std::uint64_t sampler_hook_calls()
+{
+    return Sampler->hookCalls();
+}
 FIXTURE_API bool sampler_current_thread_sampled()
 {
     const auto marker = "(#" + std::to_string(spark::currentNativeThreadId()) + ", session #";

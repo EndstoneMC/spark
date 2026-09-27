@@ -345,10 +345,15 @@ repeated profiles are needed to distinguish growth from legitimate long-lived
 state.
 
 Linux atomically redirects supported allocator relocations in the main executable
-and loaded ELF modules, including Endstone, native plugins, and Python. Allocator
-providers must be provably part of the main executable's startup `DT_NEEDED`
-dependency closure; dynamically loaded custom providers outside that closure are
-unsupported. Preloading a provider alone does not make it eligible.
+and loaded ELF modules, including Endstone, native plugins, and Python. The default
+glibc allocator and standard shared-library jemalloc or mimalloc loaded at process
+startup with `LD_PRELOAD` are supported. The effective allocator must resolve through
+the covered C allocation interfaces. Spark verifies the loaded provider's file
+identity and dependencies, then retains a loader reference so permanent gateways
+can forward safely after Spark unloads. Merely setting `LD_PRELOAD` does not prove
+that the provider was loaded or selected. Custom allocators and providers loaded
+later with `dlopen` are unsupported. jemalloc requires `opt.zero_realloc=free`;
+Spark rejects other values when starting allocation profiling.
 Loaded modules are rescanned at session start
 and every five seconds while profiling; unloaded modules are recognized before
 restoration so stale slots are never written.
@@ -385,7 +390,8 @@ attributing it using a possibly reused operating-system thread ID.
 Allocation coverage is limited to the listed allocator entry points/imports. Static CRT
 copies, inlined or private allocators, arenas and object pools that do not reach a
 covered entry point, direct virtual-memory APIs, and memory mappings that bypass the
-covered allocator families are not sampled. A Linux module loaded and unloaded
+covered allocator families are not sampled. C++ `operator new/delete` paths are
+covered only when they reach the listed C interfaces. A Linux module loaded and unloaded
 entirely between rescans can escape coverage.
 
 ## Crash recovery

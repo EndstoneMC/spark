@@ -28,10 +28,35 @@ target_compile_definitions(spark_linux_sampler_dso_test PRIVATE _GNU_SOURCE
         SPARK_SAMPLER_FIXTURE="$<TARGET_FILE:spark_linux_sampler_fixture>"
         SPARK_LOADER_BLOCKER="$<TARGET_FILE:spark_linux_loader_blocker>")
 add_dependencies(spark_linux_sampler_dso_test spark_linux_sampler_fixture spark_linux_loader_blocker)
-foreach (mode churn aggregator_exit start_failures loader_block event_block final_block handle_fault hook_block tls_block creation_held errno)
+foreach (mode churn aggregator_exit start_failures loader_block event_block final_block handle_fault hook_block tls_block creation_held errno preload)
     add_test(NAME spark_linux_sampler_dso_${mode} COMMAND spark_linux_sampler_dso_test ${mode})
     set_tests_properties(spark_linux_sampler_dso_${mode} PROPERTIES TIMEOUT 90)
 endforeach ()
+set(SPARK_TEST_JEMALLOC "" CACHE FILEPATH "jemalloc shared library for Linux preload tests")
+set(SPARK_TEST_MIMALLOC "" CACHE FILEPATH "mimalloc shared library for Linux preload tests")
+foreach (allocator jemalloc mimalloc)
+    string(TOUPPER "${allocator}" allocator_upper)
+    if (SPARK_TEST_${allocator_upper})
+        add_test(NAME spark_linux_sampler_${allocator}_preload
+                COMMAND ${CMAKE_COMMAND} -E env
+                        "LD_PRELOAD=${SPARK_TEST_${allocator_upper}}"
+                        "SPARK_EXPECT_ALLOCATOR=${SPARK_TEST_${allocator_upper}}"
+                        $<TARGET_FILE:spark_linux_sampler_dso_test> preload)
+        set_tests_properties(spark_linux_sampler_${allocator}_preload PROPERTIES TIMEOUT 90)
+        add_test(NAME spark_linux_sampler_${allocator}_errno
+                COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=${SPARK_TEST_${allocator_upper}}"
+                        $<TARGET_FILE:spark_linux_sampler_dso_test> errno)
+        set_tests_properties(spark_linux_sampler_${allocator}_errno PROPERTIES TIMEOUT 90)
+    endif ()
+endforeach ()
+if (SPARK_TEST_JEMALLOC)
+    add_test(NAME spark_linux_sampler_jemalloc_zero_realloc_rejected
+            COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=${SPARK_TEST_JEMALLOC}"
+                    "SPARK_EXPECT_ALLOCATOR=${SPARK_TEST_JEMALLOC}"
+                    "MALLOC_CONF=zero_realloc:alloc"
+                    $<TARGET_FILE:spark_linux_sampler_dso_test> preload_zero_realloc)
+    set_tests_properties(spark_linux_sampler_jemalloc_zero_realloc_rejected PROPERTIES TIMEOUT 90)
+endif ()
 foreach (mode snapshot_admitted_stop snapshot_admitted_shutdown snapshot_aggregate_stop snapshot_aggregate_shutdown
         snapshot_restore_stop snapshot_restore_shutdown request_stop_loader)
     add_test(NAME spark_linux_sampler_dso_${mode} COMMAND spark_linux_sampler_dso_test ${mode})

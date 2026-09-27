@@ -84,14 +84,37 @@ int reserve(void *const *originals, const void *spark_address, SparkGatewayBindi
         for (std::size_t api = 0; api < 7; ++api) {
             const auto index = admission.snapshot.owner(originals[api], PF_R | PF_X);
             const auto &provider = admission.snapshot.objects[index].identity;
-            if (!admission.resident.contains(index) || index == admission.spark ||
-                spark::gateway::elf::sparkObject(admission.snapshot.objects[index])) {
+            if ((!admission.resident.contains(index) && !admission.preloadedAllocator(index)) ||
+                index == admission.spark || spark::gateway::elf::sparkObject(admission.snapshot.objects[index])) {
                 return failure(error, size, "allocator original has an unsafe provider");
             }
             spark::gateway::LoaderHandle handle(spark::gateway::lease(provider));
             spark::gateway::loaderFault(10 + api);
             if (!handle) {
                 return failure(error, size, "cannot retain allocator provider");
+            }
+            const auto provider_name = std::filesystem::path(provider.path).filename().string();
+            if (!admission.resident.contains(index) && provider_name.starts_with("libjemalloc.so")) {
+                using Mallctl = int (*)(const char *, void *, std::size_t *, void *, std::size_t);
+                auto *mallctl = reinterpret_cast<Mallctl>(::dlsym(handle.get(), "mallctl"));
+                const char *zero_realloc = nullptr;
+                std::size_t length = sizeof(zero_realloc);
+                if (mallctl == nullptr ||
+                    admission.snapshot.owner(reinterpret_cast<const void *>(mallctl), PF_R | PF_X) != index ||
+                    mallctl("opt.zero_realloc", &zero_realloc, &length, nullptr, 0) != 0 ||
+                    length != sizeof(zero_realloc) || zero_realloc == nullptr ||
+                    std::strcmp(zero_realloc, "free") != 0) {
+                    return failure(error, size, "unsupported jemalloc zero_realloc configuration");
+                }
+            }
+            else if (!admission.resident.contains(index) && provider_name.starts_with("libmimalloc.so")) {
+                using MiVersion = int (*)();
+                auto *version = reinterpret_cast<MiVersion>(::dlsym(handle.get(), "mi_version"));
+                if (version == nullptr ||
+                    admission.snapshot.owner(reinterpret_cast<const void *>(version), PF_R | PF_X) != index ||
+                    version() <= 0) {
+                    return failure(error, size, "unsupported mimalloc provider");
+                }
             }
             const auto same = [&provider](const Provider &entry) {
                 return entry.base == provider.base && entry.device == provider.device && entry.inode == provider.inode;
