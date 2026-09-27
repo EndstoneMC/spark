@@ -101,7 +101,7 @@ int reserve(void *const *originals, const void *spark_address, SparkGatewayBindi
                 std::size_t length = sizeof(zero_realloc);
                 if (mallctl == nullptr ||
                     admission.snapshot.owner(reinterpret_cast<const void *>(mallctl), PF_R | PF_X) != index ||
-                    mallctl("opt.zero_realloc", &zero_realloc, &length, nullptr, 0) != 0 ||
+                    mallctl("opt.zero_realloc", static_cast<void *>(&zero_realloc), &length, nullptr, 0) != 0 ||
                     length != sizeof(zero_realloc) || zero_realloc == nullptr ||
                     std::strcmp(zero_realloc, "free") != 0) {
                     return failure(error, size, "unsupported jemalloc zero_realloc configuration");

@@ -193,6 +193,7 @@ ResolvedLinuxAllocator classifyResolvedLinuxAllocator(const std::array<void *, 4
         }
     }
     catch (...) {
+        return ResolvedLinuxAllocator::Unknown;
     }
     return ResolvedLinuxAllocator::Unknown;
 }
