@@ -1568,12 +1568,10 @@ struct AllocationSampler::Impl {
         if (!gateway.reserve(originals, error)) {
             return false;
         }
-        resolved_backend.store(
-            classifyResolvedLinuxAllocator({reinterpret_cast<void *>(real_malloc),
-                                            reinterpret_cast<void *>(real_calloc),
-                                            reinterpret_cast<void *>(real_realloc),
-                                            reinterpret_cast<void *>(real_free)}),
-            std::memory_order_release);
+        resolved_backend.store(classifyResolvedLinuxAllocator(
+                                   {reinterpret_cast<void *>(real_malloc), reinterpret_cast<void *>(real_calloc),
+                                    reinterpret_cast<void *>(real_realloc), reinterpret_cast<void *>(real_free)}),
+                               std::memory_order_release);
         backend_cleanup_pending.store(true, std::memory_order_release);
         if (!thread_state_key_created) {
             if (!gateway.open(gatewayCallbacks(), this, true, error)) {
