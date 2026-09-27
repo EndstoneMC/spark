@@ -675,6 +675,11 @@ int main(int argc, char **argv)
     else if (mode == "preload") {
         preloadAllocator();
     }
+    else if (mode == "preload_unsetenv") {
+        require(::unsetenv("LD_PRELOAD") == 0 && std::getenv("LD_PRELOAD") == nullptr,
+                "clear runtime preload environment");
+        preloadAllocator();
+    }
     else if (mode == "preload_zero_realloc") {
         unsupportedZeroRealloc();
     }

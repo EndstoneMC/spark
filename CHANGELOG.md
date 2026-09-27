@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support Linux allocation profiling with standard shared jemalloc and mimalloc
   loaded at startup through `LD_PRELOAD`.
 
+### Fixed
+
+- Recognize startup-preloaded Linux allocators after Endstone clears the runtime
+  `LD_PRELOAD` environment variable.
+
 ## [0.6.0][0.6.0] - 2026-09-17
 
 ### Added

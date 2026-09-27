@@ -8,8 +8,8 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <set>
@@ -698,6 +698,59 @@ inline bool sparkObject(const Object &object)
     return name == "endstone_spark.so" || (name.starts_with("endstone_spark-") && name.ends_with(".so"));
 }
 
+inline std::string initialPreload()
+{
+    constexpr std::string_view key = "LD_PRELOAD=";
+    constexpr std::size_t max_environment = 2 * 1024 * 1024;
+    constexpr std::size_t max_preload = 64 * 1024;
+    std::ifstream environment("/proc/self/environ", std::ios::binary);
+    if (!environment) {
+        return {};
+    }
+    std::string value;
+    std::size_t matched = 0;
+    bool ignored = false;
+    bool capturing = false;
+    bool found = false;
+    bool boundary = true;
+    char character = 0;
+    std::size_t bytes = 0;
+    while (environment.get(character)) {
+        if (++bytes > max_environment) {
+            return {};
+        }
+        if (character == '\0') {
+            if (capturing) {
+                found = true;
+            }
+            matched = 0;
+            ignored = false;
+            capturing = false;
+            boundary = true;
+            continue;
+        }
+        boundary = false;
+        if (capturing) {
+            if (value.size() == max_preload) {
+                return {};
+            }
+            value += character;
+        }
+        else if (!ignored) {
+            if (character != key[matched]) {
+                ignored = true;
+            }
+            else if (++matched == key.size()) {
+                if (found) {
+                    return {};
+                }
+                capturing = true;
+            }
+        }
+    }
+    return environment.eof() && boundary && found ? value : std::string{};
+}
+
 struct Admission {
     Snapshot snapshot;
     std::set<std::size_t> resident;
@@ -735,12 +788,12 @@ struct Admission {
         if (!allocator(name) || object.identity.inode == 0) {
             return false;
         }
-        const char *preload = std::getenv("LD_PRELOAD");
-        if (preload == nullptr) {
+        const auto preload = initialPreload();
+        if (preload.empty()) {
             return false;
         }
         bool listed = false;
-        for (const char *first = preload; *first != '\0';) {
+        for (const char *first = preload.c_str(); *first != '\0';) {
             while (*first == ' ' || *first == ':') {
                 ++first;
             }

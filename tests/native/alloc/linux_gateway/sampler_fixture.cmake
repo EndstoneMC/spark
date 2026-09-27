@@ -43,6 +43,12 @@ foreach (allocator jemalloc mimalloc)
                         "SPARK_EXPECT_ALLOCATOR=${SPARK_TEST_${allocator_upper}}"
                         $<TARGET_FILE:spark_linux_sampler_dso_test> preload)
         set_tests_properties(spark_linux_sampler_${allocator}_preload PROPERTIES TIMEOUT 90)
+        add_test(NAME spark_linux_sampler_${allocator}_preload_unsetenv
+                COMMAND ${CMAKE_COMMAND} -E env
+                        "LD_PRELOAD=${SPARK_TEST_${allocator_upper}}"
+                        "SPARK_EXPECT_ALLOCATOR=${SPARK_TEST_${allocator_upper}}"
+                        $<TARGET_FILE:spark_linux_sampler_dso_test> preload_unsetenv)
+        set_tests_properties(spark_linux_sampler_${allocator}_preload_unsetenv PROPERTIES TIMEOUT 90)
         add_test(NAME spark_linux_sampler_${allocator}_errno
                 COMMAND ${CMAKE_COMMAND} -E env "LD_PRELOAD=${SPARK_TEST_${allocator_upper}}"
                         $<TARGET_FILE:spark_linux_sampler_dso_test> errno)
