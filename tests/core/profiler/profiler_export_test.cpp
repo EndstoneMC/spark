@@ -381,12 +381,18 @@ bool verifyTerminalMetadataExport()
     constexpr std::string_view expected_accounting_state = "\"NotApplicable\"";
     constexpr bool expected_diagnostics_supported = false;
 #endif
+#if defined(__linux__)
+    constexpr std::string_view expected_backend = "\"Linux allocator/ELF import slots\"";
+#endif
     if (allocation_profile.empty() ||
         !metadataUnsigned(allocation_profile, "Allocation terminal in-flight tick samples discarded", 0) ||
         !metadataUnsigned(allocation_profile, "Allocation pending final drops", 0) ||
         !metadataUnsigned(allocation_profile, "Allocation samples dropped", 0) ||
         !metadataUnsigned(allocation_profile, "Allocation pending samples dropped", 0) ||
         !metadataBoolean(allocation_profile, "Allocation data incomplete", false) ||
+#if defined(__linux__)
+        !metadataString(allocation_profile, "Allocation backend", expected_backend) ||
+#endif
         !metadataBoolean(allocation_profile, "Allocation diagnostics supported", expected_diagnostics_supported) ||
         !metadataString(allocation_profile, "Allocation diagnostics accounting state", expected_accounting_state) ||
         !metadataUnsigned(allocation_profile, "Allocation diagnostics live index capacity",
@@ -911,8 +917,14 @@ bool verifyAllocationLiveExport()
 
     spark::AllocationSnapshot second;
     const std::string live_profile = profiler.liveExport({});
+#if defined(__linux__)
+    const bool backend_metadata_valid =
+        metadataString(live_profile, "Allocation backend", "\"Linux glibc/ELF import slots\"");
+#else
+    const bool backend_metadata_valid = live_profile.find("Allocation backend") != std::string::npos;
+#endif
     if (!spark::ProfilerTestAccess::allocationSnapshot(profiler, second, error) || live_profile.empty() ||
-        live_profile.find("Allocation backend") == std::string::npos || second.sample_count < first.sample_count ||
+        !backend_metadata_valid || second.sample_count < first.sample_count ||
         second.sampled_bytes < first.sampled_bytes || !spark::ProfilerTestAccess::allocationSamplerRunning(profiler) ||
         !spark::ProfilerTestAccess::allocationHooksInstalled(profiler)) {
         std::fprintf(stderr, "allocation live export: cumulative snapshot or sampler state was invalid\n");

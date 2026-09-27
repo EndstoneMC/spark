@@ -553,6 +553,11 @@ const char *AllocationSampler::backendName() noexcept
     return "Unsupported native allocation backend";
 }
 
+const char *AllocationSampler::resolvedBackendName() const noexcept
+{
+    return backendName();
+}
+
 const std::vector<AllocationHookCapability> &AllocationSampler::hookCapabilities() const
 {
     return impl_->capabilities;

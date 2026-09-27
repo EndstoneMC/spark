@@ -409,13 +409,13 @@ std::string Profiler::exportData(const ExportContext &ctx, const AllocationSnaps
         // The viewer JSON-parses every map value, so textual values must be encoded
         // as JSON string literals; numbers and booleans are already valid JSON.
 #ifdef _WIN32
-        meta.extra_platform_metadata["Allocation backend"] = jsonString(AllocationSampler::backendName());
+        meta.extra_platform_metadata["Allocation backend"] = jsonString(allocation_sampler_.resolvedBackendName());
         meta.extra_platform_metadata["Allocation coverage"] =
             jsonString("process threads reaching hooked UCRT allocation entry points plus "
                        "aligned/base "
                        "and direct process HeapAlloc/HeapReAlloc entry points when available");
 #elif defined(__linux__)
-        meta.extra_platform_metadata["Allocation backend"] = jsonString(AllocationSampler::backendName());
+        meta.extra_platform_metadata["Allocation backend"] = jsonString(allocation_sampler_.resolvedBackendName());
         meta.extra_platform_metadata["Allocation coverage"] =
             jsonString("process threads reaching patched "
                        "malloc/calloc/realloc/reallocarray/aligned_alloc/"

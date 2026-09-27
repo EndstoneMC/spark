@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Recognize startup-preloaded Linux allocators after Endstone clears the runtime
   `LD_PRELOAD` environment variable.
+- Show the resolved Linux allocator provider in allocation profile backend metadata.
 
 ## [0.6.0][0.6.0] - 2026-09-17
 

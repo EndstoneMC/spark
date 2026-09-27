@@ -35,6 +35,11 @@ FIXTURE_API int sampler_start(unsigned mode)
     return static_cast<int>(result);
 }
 
+FIXTURE_API const char *sampler_backend_name()
+{
+    return Sampler->resolvedBackendName();
+}
+
 FIXTURE_API int sampler_finish(bool shutdown)
 {
     std::string error;

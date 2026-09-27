@@ -68,6 +68,7 @@ struct Fixture {
     void *handle;
     void (*create)(spark::test::LinuxAllocationTestControl *);
     int (*start)(unsigned);
+    const char *(*backend_name)();
     int (*finish)(bool);
     unsigned (*state)();
     unsigned (*group)();
@@ -93,6 +94,7 @@ struct Fixture {
         require(handle != nullptr, "load actual sampler DSO");
         create = symbol<decltype(create)>("sampler_create");
         start = symbol<decltype(start)>("sampler_start");
+        backend_name = symbol<decltype(backend_name)>("sampler_backend_name");
         finish = symbol<decltype(finish)>("sampler_finish");
         state = symbol<decltype(state)>("sampler_state");
         group = symbol<decltype(group)>("sampler_group");
@@ -129,26 +131,54 @@ void allocation()
     release(pointer);
 }
 
-void verifyPreloadedAllocator()
+std::string_view verifyPreloadedAllocator()
 {
     const char *expected = std::getenv("SPARK_EXPECT_ALLOCATOR");
+    struct stat expected_file{};
     if (expected != nullptr) {
-        struct stat expected_file{};
         require(::stat(expected, &expected_file) == 0, "expected allocator file");
-        for (const char *name : {"malloc", "calloc", "realloc", "free"}) {
-            Dl_info info{};
-            require(::dladdr(::dlsym(RTLD_DEFAULT, name), &info) != 0, "resolved allocator owner");
-            struct stat actual_file{};
-            require(::stat(info.dli_fname, &actual_file) == 0 && actual_file.st_dev == expected_file.st_dev &&
-                        actual_file.st_ino == expected_file.st_ino,
+    }
+
+    struct stat provider_file{};
+    const char *provider_path = nullptr;
+    for (const char *name : {"malloc", "calloc", "realloc", "free"}) {
+        void *function = ::dlsym(RTLD_DEFAULT, name);
+        Dl_info info{};
+        require(function != nullptr && ::dladdr(function, &info) != 0 && info.dli_fname != nullptr,
+                "resolved allocator owner");
+        struct stat actual_file{};
+        require(::stat(info.dli_fname, &actual_file) == 0, "stat resolved allocator owner");
+        if (provider_path == nullptr) {
+            provider_path = info.dli_fname;
+            provider_file = actual_file;
+        }
+        else {
+            require(actual_file.st_dev == provider_file.st_dev && actual_file.st_ino == provider_file.st_ino,
+                    "core allocator functions share provider");
+        }
+        if (expected != nullptr) {
+            require(actual_file.st_dev == expected_file.st_dev && actual_file.st_ino == expected_file.st_ino,
                     "actual allocator is preloaded provider");
         }
     }
+
+    require(provider_path != nullptr, "core allocator provider path");
+    if (std::strstr(provider_path, "jemalloc") != nullptr) {
+        return "Linux jemalloc/ELF import slots";
+    }
+    if (std::strstr(provider_path, "mimalloc") != nullptr) {
+        return "Linux mimalloc/ELF import slots";
+    }
+    if (std::strstr(provider_path, "libc.so") != nullptr) {
+        return "Linux glibc/ELF import slots";
+    }
+    require(false, "core allocator functions resolve to a supported provider");
+    return {};
 }
 
 void preloadAllocator()
 {
-    verifyPreloadedAllocator();
+    const std::string_view expected_backend = verifyPreloadedAllocator();
     auto *original_calloc = reinterpret_cast<void *(*)(std::size_t, std::size_t)>(::dlsym(RTLD_DEFAULT, "calloc"));
     errno = EDOM;
     require(original_calloc(std::numeric_limits<std::size_t>::max(), 2) == nullptr, "provider rejects calloc overflow");
@@ -168,6 +198,9 @@ void preloadAllocator()
     void (*volatile release)(void *) = nullptr;
     for (int cycle = 0; cycle < 2; ++cycle) {
         require(fixture.start(0) != 0, "start preloaded allocation sampler");
+        const char *actual_backend = fixture.backend_name();
+        require(actual_backend != nullptr && std::string_view(actual_backend) == expected_backend,
+                "resolved allocation backend matches actual core allocator owner");
         allocate = &std::malloc;
         zero_allocate = &std::calloc;
         resize = &std::realloc;
@@ -200,6 +233,9 @@ void preloadAllocator()
         require(fixture.finish(false) != 0 && samples() != 0, "export nonzero allocation samples");
     }
     require(fixture.start(2) != 0, "start preloaded live-only sampler");
+    const char *actual_backend = fixture.backend_name();
+    require(actual_backend != nullptr && std::string_view(actual_backend) == expected_backend,
+            "live-only backend matches actual core allocator owner");
     allocate = &std::malloc;
     resize = &std::realloc;
     resize_array = &::reallocarray;

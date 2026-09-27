@@ -276,6 +276,7 @@ public:
     bool failure(std::string &error) const;
     static const char *backendId() noexcept;
     static const char *backendName() noexcept;
+    const char *resolvedBackendName() const noexcept;
     const std::vector<AllocationHookCapability> &hookCapabilities() const;
     std::size_t hookTargetCount() const;
 

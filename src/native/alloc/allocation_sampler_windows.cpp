@@ -4614,6 +4614,11 @@ const char *AllocationSampler::backendName() noexcept
     return WindowsAllocationIatHooks::backendName();
 }
 
+const char *AllocationSampler::resolvedBackendName() const noexcept
+{
+    return backendName();
+}
+
 const std::vector<AllocationHookCapability> &AllocationSampler::hookCapabilities() const
 {
     return impl_->hook_capabilities;

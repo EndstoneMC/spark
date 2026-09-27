@@ -21,6 +21,7 @@
 #include <cstring>
 #include <ctime>
 #include <exception>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <memory>
@@ -49,6 +50,7 @@
 #include "native/alloc/byte_sampler.h"
 #include "native/alloc/elf_import_hooks.h"
 #include "native/alloc/linux_allocation_gateway_client.h"
+#include "native/alloc/linux_elf_admission.h"
 #include "native/alloc/linux_owned_thread.h"
 #include "native/alloc/stable_shard_snapshot.h"
 #include "native/sampler/thread_info.h"
@@ -145,6 +147,69 @@ bool checkedMultiply(std::size_t a, std::size_t b, std::uint64_t &out) noexcept
     }
     out = static_cast<std::uint64_t>(a * b);
     return true;
+}
+
+enum class ResolvedLinuxAllocator : std::uint8_t {
+    Unknown,
+    Glibc,
+    Jemalloc,
+    Mimalloc,
+};
+
+ResolvedLinuxAllocator classifyResolvedLinuxAllocator(const std::array<void *, 4> &functions) noexcept
+{
+    try {
+        gateway::elf::Snapshot snapshot;
+        snapshot.capture();
+
+        const gateway::Identity *provider = nullptr;
+        for (const void *function : functions) {
+            if (function == nullptr) {
+                return ResolvedLinuxAllocator::Unknown;
+            }
+            const auto index = snapshot.owner(function, PF_R | PF_X);
+            const auto &identity = snapshot.objects[index].identity;
+            if (provider == nullptr) {
+                provider = &identity;
+            }
+            else if (identity.device != provider->device || identity.inode != provider->inode ||
+                     identity.base != provider->base) {
+                return ResolvedLinuxAllocator::Unknown;
+            }
+        }
+        if (provider == nullptr) {
+            return ResolvedLinuxAllocator::Unknown;
+        }
+
+        const std::string filename = std::filesystem::path(provider->path).filename().string();
+        if (filename.starts_with("libc.so.")) {
+            return ResolvedLinuxAllocator::Glibc;
+        }
+        if (filename.starts_with("libjemalloc.so")) {
+            return ResolvedLinuxAllocator::Jemalloc;
+        }
+        if (filename.starts_with("libmimalloc.so")) {
+            return ResolvedLinuxAllocator::Mimalloc;
+        }
+    }
+    catch (...) {
+    }
+    return ResolvedLinuxAllocator::Unknown;
+}
+
+const char *resolvedLinuxAllocatorName(ResolvedLinuxAllocator allocator) noexcept
+{
+    switch (allocator) {
+    case ResolvedLinuxAllocator::Glibc:
+        return "Linux glibc/ELF import slots";
+    case ResolvedLinuxAllocator::Jemalloc:
+        return "Linux jemalloc/ELF import slots";
+    case ResolvedLinuxAllocator::Mimalloc:
+        return "Linux mimalloc/ELF import slots";
+    case ResolvedLinuxAllocator::Unknown:
+        return "Linux allocator/ELF import slots";
+    }
+    return "Linux allocator/ELF import slots";
 }
 
 }  // namespace
@@ -472,6 +537,7 @@ struct AllocationSampler::Impl {
 
     ElfImportHooks hooks;
     LinuxAllocationGateway gateway;
+    std::atomic<ResolvedLinuxAllocator> resolved_backend{ResolvedLinuxAllocator::Unknown};
     MallocFn real_malloc = nullptr;
     CallocFn real_calloc = nullptr;
     ReallocFn real_realloc = nullptr;
@@ -1502,6 +1568,12 @@ struct AllocationSampler::Impl {
         if (!gateway.reserve(originals, error)) {
             return false;
         }
+        resolved_backend.store(
+            classifyResolvedLinuxAllocator({reinterpret_cast<void *>(real_malloc),
+                                            reinterpret_cast<void *>(real_calloc),
+                                            reinterpret_cast<void *>(real_realloc),
+                                            reinterpret_cast<void *>(real_free)}),
+            std::memory_order_release);
         backend_cleanup_pending.store(true, std::memory_order_release);
         if (!thread_state_key_created) {
             if (!gateway.open(gatewayCallbacks(), this, true, error)) {
@@ -2159,6 +2231,7 @@ struct AllocationSampler::Impl {
 
     void resetSession()
     {
+        resolved_backend.store(ResolvedLinuxAllocator::Unknown, std::memory_order_release);
         accounting_state.store(AllocationAccountingState::NotStarted, std::memory_order_release);
         TickEvent tick;
         while (ticks.dequeue(tick)) {
@@ -3805,6 +3878,11 @@ const char *AllocationSampler::backendId() noexcept
 const char *AllocationSampler::backendName() noexcept
 {
     return "Linux glibc/ELF import slots";
+}
+
+const char *AllocationSampler::resolvedBackendName() const noexcept
+{
+    return resolvedLinuxAllocatorName(impl_->resolved_backend.load(std::memory_order_acquire));
 }
 
 const std::vector<AllocationHookCapability> &AllocationSampler::hookCapabilities() const
