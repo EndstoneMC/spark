@@ -126,7 +126,7 @@ class WorkflowTest(unittest.TestCase):
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         expected = {
             "ENDSTONE_SPARK_ENDSTONE_GIT_REPOSITORY": "https://github.com/EndstoneMC/endstone.git",
-            "ENDSTONE_SPARK_ENDSTONE_GIT_TAG": "v0.11.11",
+            "ENDSTONE_SPARK_ENDSTONE_GIT_TAG": "v0.11",
             "ENDSTONE_SPARK_PAPI_GIT_REPOSITORY": "https://github.com/EndstoneMC/papi.git",
             "ENDSTONE_SPARK_PAPI_GIT_TAG": "v0.1.0",
         }
