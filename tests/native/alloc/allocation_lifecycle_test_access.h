@@ -2,6 +2,7 @@
 #define ENDSTONE_SPARK_ALLOCATION_LIFECYCLE_TEST_ACCESS_H
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
@@ -24,6 +25,8 @@ struct StartFailureGate {
 struct LinuxAllocationTestControl {
     std::atomic<unsigned> start_failure{0};
     std::atomic<bool> key_delete_failure{false};
+    bool (*before_admission)(void *) noexcept = nullptr;
+    void *before_admission_context = nullptr;
     void (*aggregator_entry)() noexcept = nullptr;
     void (*before_event)() noexcept = nullptr;
     void (*before_final_record)() noexcept = nullptr;
@@ -34,6 +37,13 @@ struct LinuxAllocationTestControl {
     std::atomic<void (*)() noexcept> before_hook{nullptr};
     std::atomic<void (*)() noexcept> before_tls{nullptr};
     bool (*scan_module)(std::string_view) noexcept = nullptr;
+};
+
+struct HotShardLineForTesting {
+    std::uint64_t hooks = 0;
+    std::uint64_t successful = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t owner = 0;
 };
 #endif
 
@@ -47,6 +57,11 @@ struct AllocationLifecycleTestAccess {
     static std::uint32_t linuxGroup(const AllocationSampler &) noexcept;
     static bool linuxKeyCreated(const AllocationSampler &) noexcept;
     static bool linuxRescanActive(const AllocationSampler &) noexcept;
+    static std::uint64_t shardIndexForThreadPointer(std::uint64_t thread_pointer) noexcept;
+    static std::size_t spillShardIndex() noexcept;
+    static bool occupyShardOwnerForTesting(AllocationSampler &sampler, std::size_t index, std::uint64_t owner) noexcept;
+    static HotShardLineForTesting hotShardLine(const AllocationSampler &sampler, std::size_t index) noexcept;
+    static std::size_t hotShardCount() noexcept;
 #endif
 };
 

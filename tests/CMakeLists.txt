@@ -145,6 +145,19 @@ if (WIN32 OR (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATC
     add_test(NAME spark_allocation_lifecycle_test COMMAND spark_allocation_lifecycle_test)
     set_tests_properties(spark_allocation_lifecycle_test PROPERTIES TIMEOUT 60)
 
+    # Linux-only: the oracle drives the permanent gateway with pthreads and the thread pointer.
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(spark_allocation_shard_ownership_test native/alloc/allocation_shard_ownership_test.cpp)
+        target_compile_definitions(spark_allocation_shard_ownership_test PRIVATE SPARK_ALLOCATION_LIFECYCLE_TESTING=1)
+        target_include_directories(spark_allocation_shard_ownership_test PRIVATE "${CMAKE_SOURCE_DIR}/src"
+                "${CMAKE_SOURCE_DIR}/tests")
+        target_link_libraries(spark_allocation_shard_ownership_test PRIVATE spark_native_lifecycle_test)
+        set_target_properties(spark_allocation_shard_ownership_test PROPERTIES
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+        add_test(NAME spark_allocation_shard_ownership_test COMMAND spark_allocation_shard_ownership_test)
+        target_link_options(spark_allocation_shard_ownership_test PRIVATE "LINKER:-z,now")
+    endif ()
+
     add_executable(spark_allocation_diagnostics_test native/alloc/allocation_diagnostics_test.cpp)
     target_compile_definitions(spark_allocation_diagnostics_test PRIVATE SPARK_ALLOCATION_LIFECYCLE_TESTING=1)
     target_include_directories(spark_allocation_diagnostics_test PRIVATE "${CMAKE_SOURCE_DIR}/src"

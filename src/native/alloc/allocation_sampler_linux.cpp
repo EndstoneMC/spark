@@ -66,6 +66,7 @@ constexpr std::size_t KLiveIndexShards = 64;
 constexpr std::size_t KLiveIndexShardCapacity = KLiveIndexCapacity / KLiveIndexShards;
 constexpr std::size_t KLivePresenceBuckets = KLiveIndexCapacity;
 constexpr std::size_t KHookCallShards = 1024;
+constexpr std::size_t KSpillShard = KHookCallShards - 1;
 constexpr std::size_t KLiveLockAttempts = 64;
 constexpr std::size_t KMaxSampledThreads = 256;
 constexpr std::size_t KMaxAllocationModules = 512;
@@ -211,6 +212,34 @@ const char *resolvedLinuxAllocatorName(ResolvedLinuxAllocator allocator) noexcep
         return "Linux allocator/ELF import slots";
     }
     return "Linux allocator/ELF import slots";
+}
+
+std::uint64_t hookShardHash(std::uint64_t thread_pointer) noexcept
+{
+    std::uint64_t value = thread_pointer;
+    value ^= value >> 17;
+    value *= 0x9e3779b97f4a7c15ULL;
+    value ^= value >> 29;
+    return value;
+}
+
+// Claim domain is 0..KSpillShard-1; the spill bucket maps to line 0 so no thread can own spill.
+std::size_t hookClaimIndex(std::uint64_t thread_pointer) noexcept
+{
+    const auto index = static_cast<std::size_t>(hookShardHash(thread_pointer) & (KHookCallShards - 1));
+    return index == KSpillShard ? 0 : index;
+}
+
+struct HookShard {
+    std::size_t index = 0;
+    std::uint64_t identity = 0;
+};
+
+// One %fs:0 read serves both the claim index and the owner comparison.
+HookShard currentHotShard() noexcept
+{
+    const auto identity = reinterpret_cast<std::uintptr_t>(__builtin_thread_pointer());
+    return HookShard{.index = hookClaimIndex(identity), .identity = identity};
 }
 
 }  // namespace
@@ -392,11 +421,8 @@ struct AllocationSampler::Impl {
 
     static std::size_t currentHookShard() noexcept
     {
-        auto value = reinterpret_cast<std::uintptr_t>(__builtin_thread_pointer());
-        value ^= value >> 17;
-        value *= 0x9e3779b97f4a7c15ULL;
-        value ^= value >> 29;
-        return static_cast<std::size_t>(value & (KHookCallShards - 1));
+        const auto thread_pointer = reinterpret_cast<std::uintptr_t>(__builtin_thread_pointer());
+        return static_cast<std::size_t>(hookShardHash(thread_pointer) & (KHookCallShards - 1));
     }
 
     class TrackingCallGuard {
@@ -597,6 +623,7 @@ struct AllocationSampler::Impl {
         std::atomic<std::uint64_t> hook_calls{0};
         std::atomic<std::uint64_t> successful_allocation_calls{0};
         std::atomic<std::uint64_t> observed_bytes{0};
+        std::atomic<std::uint64_t> owner{0};
     };
     static_assert(sizeof(HotCounters) <= 64);
     std::array<HotCounters, KHookCallShards> hot_counters{};
@@ -681,6 +708,7 @@ struct AllocationSampler::Impl {
 #if defined(SPARK_ALLOCATION_LIFECYCLE_TESTING)
     test::StartFailureGate *start_failure_gate_for_testing = nullptr;
     test::LinuxAllocationTestControl *linux_control_for_testing = nullptr;
+    std::atomic<bool> hot_shard_seed_open_for_testing{false};
     bool force_process_event_failure_for_testing = false;
     bool fixture_no_hooks_for_testing = false;
     bool fixture_no_worker_for_testing = false;
@@ -696,6 +724,32 @@ struct AllocationSampler::Impl {
 
     std::atomic<RecoverySink *> recovery_sink{nullptr};
 
+    static void ownedAdd(std::atomic<std::uint64_t> &counter, std::uint64_t value) noexcept
+    {
+        counter.store(counter.load(std::memory_order_relaxed) + value, std::memory_order_relaxed);
+    }
+
+    void countHot(std::atomic<std::uint64_t> HotCounters::*counter, const HookShard &shard,
+                  std::uint64_t value) noexcept
+    {
+        HotCounters &line = hot_counters[shard.index];
+        const std::uint64_t owner = line.owner.load(std::memory_order_acquire);
+        if (owner != 0 && owner == shard.identity) {
+            ownedAdd(line.*counter, value);
+            return;
+        }
+        std::uint64_t expected = 0;
+        if (shard.identity != 0 && owner == 0 &&
+            line.owner.compare_exchange_strong(expected, shard.identity,
+
+                                               std::memory_order_relaxed)) {
+            ownedAdd(line.*counter, value);
+            return;
+        }
+        // Unestablished lines route every write to the never-claimed spill line.
+        (hot_counters[KSpillShard].*counter).fetch_add(value, std::memory_order_relaxed);
+    }
+
     static Impl *activeContext(void *context) noexcept
     {
         auto *impl = static_cast<Impl *>(context);
@@ -707,7 +761,8 @@ struct AllocationSampler::Impl {
                 }
             }
 #endif
-            impl->hot_counters[currentHookShard()].hook_calls.fetch_add(1, std::memory_order_relaxed);
+            const HookShard shard = currentHotShard();
+            impl->countHot(&HotCounters::hook_calls, shard, 1);
         }
         return impl;
     }
@@ -1361,12 +1416,12 @@ struct AllocationSampler::Impl {
 
     void recordAllocation(void *pointer, std::uint64_t requested_bytes) noexcept
     {
-        HotCounters &counters = hot_counters[currentHookShard()];
-        counters.successful_allocation_calls.fetch_add(1, std::memory_order_relaxed);
+        const HookShard shard = currentHotShard();
+        countHot(&HotCounters::successful_allocation_calls, shard, 1);
         if (requested_bytes == 0) {
             return;
         }
-        counters.observed_bytes.fetch_add(requested_bytes, std::memory_order_relaxed);
+        countHot(&HotCounters::observed_bytes, shard, requested_bytes);
         if (config.count_only) {
             return;
         }
@@ -2226,6 +2281,7 @@ struct AllocationSampler::Impl {
             counters.hook_calls.store(0, std::memory_order_relaxed);
             counters.successful_allocation_calls.store(0, std::memory_order_relaxed);
             counters.observed_bytes.store(0, std::memory_order_relaxed);
+            counters.owner.store(0, std::memory_order_relaxed);
         }
         sampling_points.store(0, std::memory_order_relaxed);
         filtered_samples.store(0, std::memory_order_relaxed);
@@ -2369,6 +2425,18 @@ struct AllocationSampler::Impl {
         }
         StartAttemptScope start_attempt(*this);
         resetSession();
+#if defined(SPARK_ALLOCATION_LIFECYCLE_TESTING)
+        if (linux_control_for_testing != nullptr && linux_control_for_testing->before_admission != nullptr) {
+            hot_shard_seed_open_for_testing.store(true, std::memory_order_release);
+            const bool seeded =
+                linux_control_for_testing->before_admission(linux_control_for_testing->before_admission_context);
+            hot_shard_seed_open_for_testing.store(false, std::memory_order_release);
+            if (!seeded) {
+                error = "allocation pre-admission test setup failed";
+                return false;
+            }
+        }
+#endif
         config = new_config;
         aggregation.reset(config, recovery_sink.load(std::memory_order_acquire));
         if (!aggregation.configure(error)) {
@@ -2819,6 +2887,21 @@ std::atomic<AllocationSampler::Impl *> AllocationSampler::Impl::mActiveInstance{
 #if defined(SPARK_ALLOCATION_LIFECYCLE_TESTING)
 namespace test {
 
+// Fixture entry into recordAllocation carries the same tracking_calls obligation as holdTrackingCall.
+class FixtureTrackingSlot {
+public:
+    explicit FixtureTrackingSlot(std::atomic<std::uint64_t> &counter) noexcept : counter_(&counter)
+    {
+        counter_->fetch_add(1, std::memory_order_acq_rel);
+    }
+    FixtureTrackingSlot(const FixtureTrackingSlot &) = delete;
+    FixtureTrackingSlot &operator=(const FixtureTrackingSlot &) = delete;
+    ~FixtureTrackingSlot() { counter_->fetch_sub(1, std::memory_order_release); }
+
+private:
+    std::atomic<std::uint64_t> *counter_ = nullptr;
+};
+
 bool AllocationLifecycleTestAccess::configureLinux(AllocationSampler &sampler,
                                                    LinuxAllocationTestControl *control) noexcept
 {
@@ -2847,6 +2930,54 @@ bool AllocationLifecycleTestAccess::linuxKeyCreated(const AllocationSampler &sam
 bool AllocationLifecycleTestAccess::linuxRescanActive(const AllocationSampler &sampler) noexcept
 {
     return sampler.impl_->rescan_active.load(std::memory_order_acquire);
+}
+
+std::uint64_t AllocationLifecycleTestAccess::shardIndexForThreadPointer(std::uint64_t thread_pointer) noexcept
+{
+    return hookClaimIndex(thread_pointer);
+}
+
+std::size_t AllocationLifecycleTestAccess::spillShardIndex() noexcept
+{
+    return KSpillShard;
+}
+
+bool AllocationLifecycleTestAccess::occupyShardOwnerForTesting(AllocationSampler &sampler, std::size_t index,
+                                                               std::uint64_t owner) noexcept
+{
+    AllocationSampler::Impl *impl = sampler.impl_.get();
+    if (impl == nullptr || !impl->hot_shard_seed_open_for_testing.load(std::memory_order_acquire) ||
+        impl->running.load(std::memory_order_acquire) || impl->tracking.load(std::memory_order_acquire) ||
+        index >= KSpillShard || owner == 0) {
+        return false;
+    }
+    auto &line = impl->hot_counters[index];
+    if (line.hook_calls.load(std::memory_order_relaxed) != 0 ||
+        line.successful_allocation_calls.load(std::memory_order_relaxed) != 0 ||
+        line.observed_bytes.load(std::memory_order_relaxed) != 0 || line.owner.load(std::memory_order_relaxed) != 0) {
+        return false;
+    }
+    std::uint64_t expected = 0;
+    return line.owner.compare_exchange_strong(expected, owner, std::memory_order_relaxed, std::memory_order_relaxed);
+}
+
+HotShardLineForTesting AllocationLifecycleTestAccess::hotShardLine(const AllocationSampler &sampler,
+                                                                   std::size_t index) noexcept
+{
+    AllocationSampler::Impl *impl = sampler.impl_.get();
+    if (impl == nullptr || index >= KHookCallShards) {
+        return {};
+    }
+    const auto &line = impl->hot_counters[index];
+    return {.hooks = line.hook_calls.load(std::memory_order_relaxed),
+            .successful = line.successful_allocation_calls.load(std::memory_order_relaxed),
+            .bytes = line.observed_bytes.load(std::memory_order_relaxed),
+            .owner = line.owner.load(std::memory_order_acquire)};
+}
+
+std::size_t AllocationLifecycleTestAccess::hotShardCount() noexcept
+{
+    return KHookCallShards;
 }
 
 bool AllocationDiagnosticsTestAccess::configureFixture(AllocationSampler &sampler, bool no_hooks, bool no_worker,
@@ -3025,6 +3156,12 @@ bool AllocationDiagnosticsTestAccess::recordFixtureAllocation(AllocationSampler 
         pointer == nullptr || requested_bytes == 0 || !sampler.impl_->fixture_no_hooks_for_testing ||
         !sampler.impl_->fixture_no_worker_for_testing ||
         !sampler.impl_->tick_admission_open.load(std::memory_order_acquire) || !fixtureStorageReady(sampler)) {
+        return false;
+    }
+    const std::size_t tracking_shard = AllocationSampler::Impl::currentHookShard();
+    FixtureTrackingSlot tracking_slot(sampler.impl_->tracking_calls[tracking_shard]);
+    if (!sampler.impl_->running.load(std::memory_order_acquire) ||
+        !sampler.impl_->tracking.load(std::memory_order_acquire)) {
         return false;
     }
     sampler.impl_->recordAllocation(pointer, requested_bytes);
@@ -3348,6 +3485,12 @@ bool AllocationDiagnosticsTestAccess::exerciseRecordPoolEmpty(AllocationSampler 
         !sampler.impl_->fixture_no_hooks_for_testing || !sampler.impl_->fixture_no_worker_for_testing ||
         sampler.impl_->aggregator_thread.joinable() || sampler.impl_->events.storage == nullptr ||
         sampler.impl_->live_storage == nullptr || sampler.impl_->live_index == nullptr || pointer == nullptr) {
+        return false;
+    }
+    const std::size_t tracking_shard = AllocationSampler::Impl::currentHookShard();
+    FixtureTrackingSlot tracking_slot(sampler.impl_->tracking_calls[tracking_shard]);
+    if (!sampler.impl_->running.load(std::memory_order_acquire) ||
+        !sampler.impl_->tracking.load(std::memory_order_acquire)) {
         return false;
     }
     if (::pthread_mutex_lock(&sampler.impl_->live_pool_mutex) != 0) {
