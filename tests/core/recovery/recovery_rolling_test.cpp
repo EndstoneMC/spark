@@ -33,6 +33,7 @@ void testRollingJournalRecovery()
     cfg.max_total_bytes = 1024;
     cfg.flush_interval_ms = 20;
     cfg.sync_interval_ms = 20;
+    cfg.shutdown_timeout_ms = 15000;
 
     RecoveryWriter writer(cfg);
     if (!writer.start()) {
@@ -102,6 +103,7 @@ void testCorruptSnapshotWrongSession()
     cfg.max_total_bytes = 1024;
     cfg.flush_interval_ms = 20;
     cfg.sync_interval_ms = 20;
+    cfg.shutdown_timeout_ms = 15000;
 
     RecoveryWriter writer(cfg);
     assert(writer.start());
@@ -223,6 +225,7 @@ void testStopWithoutCleanEndRecoverable()
     cfg.session_id = 950000;
     cfg.flush_interval_ms = 50;
     cfg.sync_interval_ms = 50;
+    cfg.shutdown_timeout_ms = 15000;
 
     RecoveryWriter writer(cfg);
     assert(writer.start());

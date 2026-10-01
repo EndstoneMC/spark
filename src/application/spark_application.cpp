@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "application/command/profiler_action_resolver.h"
+#include "core/recovery/replay_guard.h"
 #include "core/util/monotonic_time.h"
 #include "native/sampler/heartbeat.h"
 #include "net/profile_file.h"
@@ -15,9 +16,15 @@ namespace spark {
 
 namespace {
 
-void logRecoveryFailure() noexcept
+void logRecoveryFailure(std::string_view disposition = {}) noexcept
 {
-    std::fputs("Spark recovery failed; continuing without recovery.\n", stderr);
+    if (disposition.empty()) {
+        std::fputs("Spark recovery failed; continuing without recovery.\n", stderr);
+        return;
+    }
+    std::fputs("Spark recovery notification failed; ", stderr);
+    std::fwrite(disposition.data(), 1, disposition.size(), stderr);
+    std::fputc('\n', stderr);
 }
 
 }  // namespace
@@ -139,6 +146,7 @@ void SparkApplication::onTick(double mspt)
     health_.onTick();
     tick_monitor_.onTick(mspt);
     profiler_.onTick(mspt);
+    surfaceJournalDegradation();
 }
 
 void SparkApplication::enable()
@@ -191,25 +199,142 @@ void SparkApplication::recoverPreviousSessionImpl()
     namespace fs = std::filesystem;
     std::error_code ec;
 
+    const auto publish_terminal_guard = [this] {
+        auto publish_error = recoveryTestFailure("guard-publish", recovery_dir_);
+        if (!publish_error && blockRecoveryReplay(recovery_dir_, publish_error)) {
+            return true;
+        }
+        profiler_.setRecoveryDirectory({});
+        std::string message =
+            "Could not persist the replay guard. The recovery journal was retained and recovery writing is disabled "
+            "for this session; replay may happen again after restart.";
+        if (publish_error) {
+            message += " ";
+            message += publish_error.message();
+        }
+        safeNotify("crash recovery", message, "replay block was not persisted; journal retained");
+        return false;
+    };
+
+    const auto retire_terminal_guard = [this](std::error_code &error) {
+        error = recoveryTestFailure("guard-clear", recovery_dir_);
+        return !error && clearRecoveryReplayBlock(recovery_dir_, error);
+    };
+
+    const auto finish_terminal_cleanup = [this, &retire_terminal_guard](const RecoveryCleanupResult &cleanup) {
+        if (!cleanup.old_generation_removed) {
+            profiler_.setRecoveryDirectory({});
+            std::string message =
+                "Old recovery artifacts remain; automatic replay is blocked and recovery writing is disabled for "
+                "this session.";
+            if (cleanup.error) {
+                message += " ";
+                message += cleanup.error.message();
+            }
+            safeNotify("crash recovery", message, "recovery artifacts remain; replay is blocked");
+            return;
+        }
+
+        std::error_code error;
+        if (!retire_terminal_guard(error)) {
+            profiler_.setRecoveryDirectory({});
+            std::string message =
+                "Recovery artifacts were removed, but the replay guard could not be retired; recovery writing is "
+                "disabled for this session.";
+            if (error) {
+                message += " ";
+                message += error.message();
+            }
+            safeNotify("crash recovery", message, "replay guard remains set; recovery writing is disabled");
+            return;
+        }
+        if (!cleanup.fresh_directory_available) {
+            profiler_.setRecoveryDirectory({});
+            std::string message =
+                "Recovery artifacts were removed, but a fresh recovery directory could not be created; recovery "
+                "writing is disabled for this session.";
+            if (cleanup.error) {
+                message += " ";
+                message += cleanup.error.message();
+            }
+            safeNotify("crash recovery", message, "recovery journal was purged; fresh recovery directory unavailable");
+        }
+    };
+
+    ec = recoveryTestFailure("guard-probe", recovery_dir_);
+    const bool guard_probe_failed = static_cast<bool>(ec);
+    const bool replay_blocked = guard_probe_failed || recoveryReplayBlocked(recovery_dir_, ec);
+    if (guard_probe_failed || ec) {
+        profiler_.setRecoveryDirectory({});
+        std::string message =
+            "The replay guard could not be inspected; automatic replay was skipped and recovery writing is disabled "
+            "for this session.";
+        if (ec) {
+            message += " ";
+            message += ec.message();
+        }
+        safeNotify("crash recovery", message, "replay guard state is unknown; replay skipped");
+        safeNotify("crash recovery",
+                   "Recovery artifacts may remain; no cleanup was attempted because guard state "
+                   "is unknown.",
+                   "recovery artifacts may remain; replay guard state is unknown");
+        return;
+    }
+
+    if (replay_blocked) {
+        safeNotify("crash recovery", "Automatic replay is blocked for the retained recovery directory.",
+                   "automatic replay remains blocked");
+        const auto cleanup = discardJournal();
+        finish_terminal_cleanup(cleanup);
+        return;
+    }
     if (!fs::exists(recovery_dir_, ec) || ec) {
+        if (ec) {
+            profiler_.setRecoveryDirectory({});
+            safeNotify("crash recovery",
+                       "The recovery directory could not be inspected; automatic replay was skipped and recovery "
+                       "writing is disabled for this session.",
+                       "recovery directory unavailable; replay skipped");
+        }
         return;
     }
 
     // Check for any segment-*.jnl files.
     bool has_journal = false;
-    for (const auto &entry : fs::directory_iterator(recovery_dir_, ec)) {
+    fs::directory_iterator entries(recovery_dir_, ec);
+    if (ec) {
+        profiler_.setRecoveryDirectory({});
+        safeNotify("crash recovery",
+                   "The recovery directory could not be inspected; automatic replay was skipped and recovery writing "
+                   "is disabled for this session.",
+                   "recovery directory unavailable; replay skipped");
+        return;
+    }
+    const fs::directory_iterator end;
+    for (; entries != end; entries.increment(ec)) {
         if (ec) {
             break;
         }
-        if (!entry.is_regular_file()) {
+        const auto status = entries->status(ec);
+        if (ec) {
+            break;
+        }
+        if (status.type() != fs::file_type::regular) {
             continue;
         }
-        auto name = entry.path().filename().string();
-        if (name.size() >= 8 && name.starts_with("segment-") && name.size() >= 4 &&
-            name.substr(name.size() - 4) == ".jnl") {
+        const std::string name = entries->path().filename().string();
+        if (name.starts_with("segment-") && name.ends_with(".jnl")) {
             has_journal = true;
             break;
         }
+    }
+    if (ec) {
+        profiler_.setRecoveryDirectory({});
+        safeNotify("crash recovery",
+                   "The recovery directory could not be inspected; automatic replay was skipped and recovery writing "
+                   "is disabled for this session.",
+                   "recovery directory unavailable; replay skipped");
+        return;
     }
     if (!has_journal) {
         return;
@@ -217,29 +342,49 @@ void SparkApplication::recoverPreviousSessionImpl()
 
     RecoveredProfile profile;
     try {
+        if (const auto injected = recoveryTestFailure("replay", recovery_dir_); injected) {
+            throw fs::filesystem_error("injected recovery replay failure", recovery_dir_, injected);
+        }
         profile = RecoveryPlayer::replay(recovery_dir_);
     }
     catch (const std::exception &e) {
-        quarantineRecovery(std::string("replay exception: ") + e.what());
+        if (publish_terminal_guard()) {
+            finish_terminal_cleanup(quarantineRecovery(std::string("replay exception: ") + e.what()));
+        }
         return;
     }
     catch (...) {
-        quarantineRecovery("replay exception: unknown error");
+        if (publish_terminal_guard()) {
+            finish_terminal_cleanup(quarantineRecovery("replay exception: unknown error"));
+        }
         return;
     }
 
     if (!profile.valid) {
-        safeNotify("crash recovery", "Discarding incomplete recovery journal: " + profile.error);
-        fs::remove_all(recovery_dir_, ec);
-        fs::create_directories(recovery_dir_, ec);
+        if (!publish_terminal_guard()) {
+            return;
+        }
+        safeNotify("crash recovery", "Discarding incomplete recovery journal: " + profile.error,
+                   "invalid recovery journal reached terminal cleanup");
+        auto cleanup = discardJournal();
+        if (!cleanup.old_generation_removed) {
+            cleanup = quarantineRecovery("could not discard recovery journal");
+        }
+        finish_terminal_cleanup(cleanup);
         return;
     }
 
     // Skip recovery for sessions that ended cleanly (old-format journals
     // that carry a CleanEnd marker).  The journal is just leftover state.
     if (profile.has_clean_end) {
-        fs::remove_all(recovery_dir_, ec);
-        fs::create_directories(recovery_dir_, ec);
+        if (!publish_terminal_guard()) {
+            return;
+        }
+        auto cleanup = discardJournal();
+        if (!cleanup.old_generation_removed) {
+            cleanup = quarantineRecovery("could not discard recovery journal");
+        }
+        finish_terminal_cleanup(cleanup);
         return;
     }
 
@@ -250,57 +395,157 @@ void SparkApplication::recoverPreviousSessionImpl()
         if (saved.ok) {
             saved_profile = true;
             safeNotify("crash recovery",
-                       "Recovered profile saved to " + saved.path.string() + " - open it at " + config_.viewer_url);
+                       "Recovered profile saved to " + saved.path.string() + " - open it at " + config_.viewer_url,
+                       "recovered profile saved; journal cleanup follows");
         }
         else {
-            safeNotify("crash recovery", "Failed to save recovered profile; recovery journal retained: " + saved.error);
+            safeNotify("crash recovery", "Failed to save recovered profile; recovery journal retained: " + saved.error,
+                       "recovery journal retained for retry after save failure");
         }
     }
     catch (const std::exception &error) {
         safeNotify("crash recovery",
-                   "Failed to save recovered profile; recovery journal retained: " + std::string(error.what()));
+                   "Failed to save recovered profile; recovery journal retained: " + std::string(error.what()),
+                   "recovery journal retained for retry after save failure");
     }
     catch (...) {
-        safeNotify("crash recovery", "Failed to save recovered profile; recovery journal retained");
+        safeNotify("crash recovery", "Failed to save recovered profile; recovery journal retained",
+                   "recovery journal retained for retry after save failure");
     }
 
     if (saved_profile) {
-        fs::remove_all(recovery_dir_, ec);
-        fs::create_directories(recovery_dir_, ec);
+        if (!publish_terminal_guard()) {
+            return;
+        }
+        auto cleanup = discardJournal();
+        if (!cleanup.old_generation_removed) {
+            cleanup = quarantineRecovery("could not discard recovery journal");
+        }
+        finish_terminal_cleanup(cleanup);
     }
     else {
         profiler_.setRecoveryDirectory({});
     }
 }
 
-void SparkApplication::quarantineRecovery(const std::string &reason)
+SparkApplication::RecoveryCleanupResult SparkApplication::discardJournal() noexcept
 {
     namespace fs = std::filesystem;
-    std::error_code ec;
-    safeNotify("crash recovery",
-               "Quarantining recovery journal (" + reason + "). The server will continue starting up normally.");
+    RecoveryCleanupResult result;
+    try {
+        result.error = recoveryTestFailure("discard-remove", recovery_dir_);
+        if (result.error) {
+            return result;
+        }
+        fs::remove_all(recovery_dir_, result.error);
+        if (result.error) {
+            return result;
+        }
+        result.old_generation_removed = true;
 
-    // Collision-resistant naming: same-second quarantines get a monotonic suffix.
-    const auto stamp =
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch());
-    const auto quarantined = recovery_dir_.parent_path() / ("recovery.failed-" + std::to_string(stamp.count()) + "-" +
-                                                            std::to_string(quarantine_counter_++));
-    fs::rename(recovery_dir_, quarantined, ec);
-    if (ec) {
-        // Rename failed (cross-device or other error): remove so the next
-        // startup does not re-read the same corrupt journal.
-        fs::remove_all(recovery_dir_, ec);
+        result.error = recoveryTestFailure("create-directory", recovery_dir_);
+        if (result.error) {
+            return result;
+        }
+        fs::create_directories(recovery_dir_, result.error);
+        result.fresh_directory_available = !result.error;
+        return result;
     }
-    fs::create_directories(recovery_dir_, ec);
+    catch (...) {
+        result.error = std::make_error_code(std::errc::io_error);
+        return result;
+    }
 }
 
-void SparkApplication::safeNotify(const std::string &sender, const std::string &message) noexcept
+SparkApplication::RecoveryCleanupResult SparkApplication::quarantineRecovery(const std::string &reason)
+{
+    namespace fs = std::filesystem;
+    RecoveryCleanupResult result;
+    try {
+        safeNotify("crash recovery",
+                   "Quarantining recovery journal (" + reason + "). The server will continue starting up normally.",
+                   "recovery journal quarantine or removal was attempted");
+
+        // Collision-resistant naming: same-second quarantines get a monotonic suffix.
+        const auto stamp =
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch());
+        const auto quarantined = recovery_dir_.parent_path() / ("recovery.failed-" + std::to_string(stamp.count()) +
+                                                                "-" + std::to_string(quarantine_counter_++));
+        result.error = recoveryTestFailure("quarantine-rename", recovery_dir_, quarantined);
+        if (!result.error) {
+            fs::rename(recovery_dir_, quarantined, result.error);
+            result.old_generation_removed = !result.error;
+        }
+        if (!result.old_generation_removed) {
+            result.error = recoveryTestFailure("quarantine-remove", recovery_dir_);
+            if (!result.error) {
+                fs::remove_all(recovery_dir_, result.error);
+                result.old_generation_removed = !result.error;
+            }
+        }
+
+        const auto create_error = recoveryTestFailure("create-directory", recovery_dir_);
+        if (create_error) {
+            if (!result.error) {
+                result.error = create_error;
+            }
+            return result;
+        }
+        std::error_code create_ec;
+        fs::create_directories(recovery_dir_, create_ec);
+        if (create_ec) {
+            if (!result.error) {
+                result.error = create_ec;
+            }
+            return result;
+        }
+        result.fresh_directory_available = true;
+        return result;
+    }
+    catch (...) {
+        if (!result.error) {
+            result.error = std::make_error_code(std::errc::io_error);
+        }
+        return result;
+    }
+}
+
+std::error_code SparkApplication::recoveryTestFailure(std::string_view operation, const std::filesystem::path &path,
+                                                      const std::filesystem::path &other) const noexcept
+{
+    if (!recovery_test_hook_) {
+        return {};
+    }
+    try {
+        return recovery_test_hook_(operation, path, other);
+    }
+    catch (...) {
+        return std::make_error_code(std::errc::io_error);
+    }
+}
+
+void SparkApplication::surfaceJournalDegradation() noexcept
+{
+    try {
+        std::string cause;
+        if (profiler_.reportJournalDegradationIfNeeded(cause)) {
+            safeNotify("crash recovery",
+                       "Crash-recovery journal degraded (" + cause + "); this session may not be recoverable.");
+        }
+    }
+    catch (...) {
+        logRecoveryFailure();
+    }
+}
+
+void SparkApplication::safeNotify(const std::string &sender, const std::string &message,
+                                  std::string_view fallback_disposition) noexcept
 {
     try {
         notifier_.notify(sender, message);
     }
     catch (...) {
-        logRecoveryFailure();
+        logRecoveryFailure(fallback_disposition);
     }
 }
 

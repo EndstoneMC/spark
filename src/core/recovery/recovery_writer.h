@@ -43,7 +43,9 @@ public:
         Reopen,
         FlushRequestBeforeLock,
         WaitBeforePark,
-        DrainComplete
+        DrainComplete,
+        SnapshotOpen,
+        DegradationBeforeLock
     };
 
     struct Config {
@@ -82,6 +84,10 @@ public:
     bool workerExited() const { return worker_exited_.load(std::memory_order_acquire); }
     std::uint64_t droppedRecords() const { return dropped_.load(std::memory_order_relaxed); }
     std::uint64_t writtenRecords() const { return written_.load(std::memory_order_relaxed); }
+    // Sticky first journal I/O degradation cause: write_failed, sync_failed, rotate_failed,
+    // prune_stalled or snapshot_failed.
+    bool journalDegraded() const { return degradation_reported_.load(std::memory_order_acquire); }
+    std::string journalDegradationReason();
 
     // --- RecoverySink (called from the aggregator thread) ---
     void journalModuleDef(std::uint32_t module_id, std::string_view path) override;
@@ -121,6 +127,7 @@ private:
     bool closeFile(std::FILE *file);
     bool renameFile(const std::filesystem::path &from, const std::filesystem::path &to, std::error_code &ec);
     void producerDone() noexcept;
+    void reportJournalDegradation(std::string_view cause) noexcept;
     void markWorkerExited() noexcept;
 
     Config config_;
@@ -135,6 +142,7 @@ private:
     std::atomic<std::size_t> queue_size_{0};
     std::atomic<std::uint64_t> dropped_{0};
     std::atomic<std::uint64_t> written_{0};
+    std::atomic<bool> degradation_reported_{false};
 
     moodycamel::ConcurrentQueue<std::vector<std::uint8_t>> queue_;
 
@@ -145,16 +153,20 @@ private:
     std::mutex exit_mutex_;
     std::condition_variable exit_cv_;
     std::mutex reap_mutex_;
+    std::mutex degradation_mutex_;
+    std::string degradation_reason_;
 
     // Writer-thread state.
     std::filesystem::path segment_path_;
     std::FILE *file_ = nullptr;
     std::uint32_t segment_number_ = 0;
     std::uint32_t first_retained_segment_ = 0;
+    std::map<std::uint32_t, std::size_t> segment_sizes_;
     std::size_t segment_bytes_ = 0;
     std::size_t total_bytes_ = 0;
     bool dirty_ = false;
     std::chrono::steady_clock::time_point last_sync_;
+    int snapshot_failures_ = 0;
 
     // Metadata cache (protected by metadata_mutex_). Updated by producers when they
     // enqueue metadata records; read by the worker when snapshotting before pruning.

@@ -1,7 +1,9 @@
 #ifndef ENDSTONE_SPARK_PROFILER_H
 #define ENDSTONE_SPARK_PROFILER_H
 
+#include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -168,6 +170,10 @@ public:
     void journalStallBegin(std::uint64_t detected_ns, std::uint64_t last_tick_ns);
     void journalStallEnd(std::uint64_t detected_ns, std::uint64_t recovered_ns);
 
+    // Reports first-time crash-recovery journal degradation.  Returns true once
+    // and copies the journal cause into cause.
+    bool reportJournalDegradationIfNeeded(std::string &cause);
+
     // Unconditionally closes the active backend and clears native hook handlers.
     // Must run before the plugin module is unloaded.
     bool shutdown(std::string &error);
@@ -198,6 +204,8 @@ private:
     void stopRecoveryWriter();
     bool reapRecoveryWriter();
     bool hasPendingRecoveryWriter() const;
+    void captureRetiredJournalDegradationLocked(RecoveryWriter &writer) noexcept;
+    void recordJournalDegradationOverflowLocked() noexcept;
     bool startPersistentAllocationCounting(std::string &error);
     bool stopPersistentAllocationCounting(std::string &error);
     void accumulatePersistentAllocationBytes() noexcept;
@@ -218,6 +226,14 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> allocation_export_pending_{false};
     std::atomic<bool> retain_recovery_journal_on_shutdown_{false};
+    std::atomic<bool> journal_degradation_active_{false};
+    std::atomic<bool> journal_degradation_logged_{false};
+    std::atomic<bool> pending_journal_degradation_notice_{false};
+    static constexpr std::size_t kPendingJournalDegradationCapacity = 8;
+    std::array<std::string, kPendingJournalDegradationCapacity> pending_journal_degradation_causes_{};
+    std::size_t pending_journal_degradation_head_ = 0;
+    std::size_t pending_journal_degradation_count_ = 0;
+    std::uint32_t pending_journal_degradation_overflow_count_ = 0;
     std::int64_t start_time_ms_ = 0;
     std::int64_t end_time_ms_ = 0;
     std::int64_t auto_end_time_ms_ = -1;

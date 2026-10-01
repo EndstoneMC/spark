@@ -311,6 +311,8 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
                 std::scoped_lock lock(recovery_mutex_);
                 recovery_writer_ = std::move(writer);
                 allocation_sampler_.setRecoverySink(recovery_writer_.get());
+                journal_degradation_active_.store(true, std::memory_order_release);
+                journal_degradation_logged_.store(false, std::memory_order_release);
             }
             else {
                 allocation_sampler_.setRecoverySink(nullptr);
@@ -355,6 +357,8 @@ bool Profiler::start(const ProfilerOptions &options, std::uint64_t main_tid, std
                 std::scoped_lock lock(recovery_mutex_);
                 recovery_writer_ = std::move(writer);
                 sampler_.setRecoverySink(recovery_writer_.get());
+                journal_degradation_active_.store(true, std::memory_order_release);
+                journal_degradation_logged_.store(false, std::memory_order_release);
             }
             else {
                 sampler_.setRecoverySink(nullptr);

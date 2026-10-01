@@ -3,7 +3,10 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "application/activity/activity_command.h"
@@ -60,11 +63,27 @@ public:
     const SparkConfig &config() const { return config_; }
 
 private:
+    friend struct SparkApplicationRecoveryTestAccess;
+
+    using RecoveryTestHook =
+        std::function<std::error_code(std::string_view, const std::filesystem::path &, const std::filesystem::path &)>;
+
+    struct RecoveryCleanupResult {
+        bool old_generation_removed = false;
+        bool fresh_directory_available = false;
+        std::error_code error;
+    };
+
     void registerCommands();
     void recoverPreviousSession() noexcept;
     void recoverPreviousSessionImpl();
-    void quarantineRecovery(const std::string &reason);
-    void safeNotify(const std::string &sender, const std::string &message) noexcept;
+    RecoveryCleanupResult quarantineRecovery(const std::string &reason);
+    RecoveryCleanupResult discardJournal() noexcept;
+    std::error_code recoveryTestFailure(std::string_view operation, const std::filesystem::path &path,
+                                        const std::filesystem::path &other = {}) const noexcept;
+    void surfaceJournalDegradation() noexcept;
+    void safeNotify(const std::string &sender, const std::string &message,
+                    std::string_view fallback_disposition = {}) noexcept;
 
     StatisticsService statistics_;
     SparkConfig config_;
@@ -90,6 +109,7 @@ private:
     std::uint64_t stall_begin_ns_ = 0;
     std::filesystem::path recovery_dir_;
     std::uint64_t quarantine_counter_ = 0;
+    RecoveryTestHook recovery_test_hook_;
 };
 
 }  // namespace spark

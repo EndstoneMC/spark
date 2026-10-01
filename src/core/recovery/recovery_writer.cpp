@@ -1,7 +1,6 @@
 #include "core/recovery/recovery_writer.h"
 
 #include <algorithm>
-#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -15,11 +14,14 @@
 #include <unistd.h>
 #endif
 
+#include "core/recovery/replay_guard.h"
+
 namespace spark {
 
 namespace {
 
 constexpr std::size_t KMaxQueueReservationAttempts = 64;
+constexpr int KMaxSnapshotFailures = 4;
 
 std::uint64_t monotonicNowNs()
 {
@@ -61,54 +63,55 @@ bool RecoveryWriter::start()
     accepting_.store(false, std::memory_order_release);
     worker_exited_.store(false, std::memory_order_release);
 
+    const auto fail_start = [this] {
+        accepting_.store(false, std::memory_order_release);
+        enabled_.store(false, std::memory_order_release);
+        running_.store(false, std::memory_order_release);
+        worker_exited_.store(true, std::memory_order_release);
+        return false;
+    };
+
     std::error_code ec;
     std::filesystem::create_directories(config_.directory, ec);
     if (ec) {
-        enabled_.store(false, std::memory_order_release);
-        running_.store(false, std::memory_order_release);
-        worker_exited_.store(true, std::memory_order_release);
-        return false;
+        return fail_start();
     }
 
-    for (const auto &entry : std::filesystem::directory_iterator(config_.directory, ec)) {
+    try {
+        std::filesystem::directory_iterator entries(config_.directory, ec);
         if (ec) {
-            enabled_.store(false, std::memory_order_release);
-            running_.store(false, std::memory_order_release);
-            worker_exited_.store(true, std::memory_order_release);
-            return false;
+            return fail_start();
         }
-        if (!entry.is_regular_file()) {
-            continue;
-        }
-        const std::string name = entry.path().filename().string();
-        const bool is_segment = name.size() > 12 && name.starts_with("segment-") && name.ends_with(".jnl");
-        const bool is_staged_segment = name.size() > 16 && name.starts_with("segment-") && name.ends_with(".jnl.tmp");
-        const bool is_snapshot = name == "metadata.snapshot" || name == "metadata.snapshot.tmp";
-        if (!is_segment && !is_staged_segment && !is_snapshot) {
-            continue;
-        }
-        if (is_segment || is_staged_segment) {
-            const std::string_view number(name.data() + 8, name.size() - (is_staged_segment ? 16 : 12));
-            std::uint32_t parsed = 0;
-            const auto [end, error] = std::from_chars(number.data(), number.data() + number.size(), parsed);
-            if (error != std::errc{} || end != number.data() + number.size()) {
+        const std::filesystem::directory_iterator end;
+        for (; entries != end; entries.increment(ec)) {
+            if (ec) {
+                return fail_start();
+            }
+            const auto &entry = *entries;
+            const std::string name = entry.path().filename().string();
+            if (!isRecoveryArtifact(name)) {
                 continue;
             }
+            std::filesystem::remove(entry.path(), ec);
+            if (ec) {
+                return fail_start();
+            }
         }
-        std::filesystem::remove(entry.path(), ec);
-        if (ec) {
-            enabled_.store(false, std::memory_order_release);
-            running_.store(false, std::memory_order_release);
-            worker_exited_.store(true, std::memory_order_release);
-            return false;
+        if (ec || !clearRecoveryReplayBlock(config_.directory, ec)) {
+            return fail_start();
         }
     }
+    catch (...) {
+        return fail_start();
+    }
 
+    segment_sizes_.clear();
+    segment_bytes_ = 0;
+    total_bytes_ = 0;
+    segment_number_ = 0;
+    first_retained_segment_ = 0;
     if (!openSegment(0)) {
-        enabled_.store(false, std::memory_order_release);
-        running_.store(false, std::memory_order_release);
-        worker_exited_.store(true, std::memory_order_release);
-        return false;
+        return fail_start();
     }
 
     enabled_.store(true, std::memory_order_release);
@@ -119,6 +122,7 @@ bool RecoveryWriter::start()
                 writerLoop();
             }
             catch (...) {
+                reportJournalDegradation("worker_exception");
                 enabled_.store(false, std::memory_order_release);
                 if (file_) {
                     closeSegment();
@@ -418,6 +422,7 @@ bool RecoveryWriter::openSegment(std::uint32_t segment_number)
     segment_path_ = path;
     segment_number_ = segment_number;
     segment_bytes_ = header.size();
+    segment_sizes_[segment_number] = header.size();
     total_bytes_ += header.size();
     return true;
 }
@@ -438,6 +443,7 @@ bool RecoveryWriter::syncFile()
         return false;
     }
     if (!syncFile(file_)) {
+        reportJournalDegradation("sync_failed");
         enabled_.store(false, std::memory_order_release);
         return false;
     }
@@ -453,20 +459,49 @@ void RecoveryWriter::rotateIfNeeded()
     }
 
     if (!writeMetadataSnapshot()) {
+        // The snapshot has to precede the prune; skip this rotation, report a persistent failure.
+        if (++snapshot_failures_ >= KMaxSnapshotFailures) {
+            reportJournalDegradation("snapshot_failed");
+            accepting_.store(false, std::memory_order_release);
+            enabled_.store(false, std::memory_order_release);
+            running_.store(false, std::memory_order_release);
+        }
         return;
     }
+    snapshot_failures_ = 0;
 
+    const auto retire_accounted_segment = [this](std::uint32_t number) {
+        const auto accounted = segment_sizes_.find(number);
+        if (accounted != segment_sizes_.end()) {
+            total_bytes_ = accounted->second < total_bytes_ ? total_bytes_ - accounted->second : 0;
+            segment_sizes_.erase(accounted);
+        }
+        ++first_retained_segment_;
+    };
+
+    bool stalled = false;
     while (first_retained_segment_ < segment_number_ && total_bytes_ > config_.max_total_bytes) {
-        auto path = config_.directory / ("segment-" + std::to_string(first_retained_segment_) + ".jnl");
-        std::error_code ec;
-        auto size = std::filesystem::file_size(path, ec);
-        if (!ec && std::filesystem::remove(path, ec)) {
-            total_bytes_ -= (size > 0 ? static_cast<std::size_t>(size) : 0);
-            ++first_retained_segment_;
+        const auto path = config_.directory / ("segment-" + std::to_string(first_retained_segment_) + ".jnl");
+        std::error_code remove_ec;
+        const bool removed = std::filesystem::remove(path, remove_ec);
+        if (removed) {
+            retire_accounted_segment(first_retained_segment_);
+            continue;
         }
-        else {
-            break;
+        std::error_code exists_ec;
+        const bool still_there = std::filesystem::exists(path, exists_ec);
+        if (!exists_ec && !still_there) {
+            retire_accounted_segment(first_retained_segment_);
+            continue;
         }
+        stalled = true;
+        break;
+    }
+    if (stalled || total_bytes_ > config_.max_total_bytes) {
+        reportJournalDegradation("prune_stalled");
+        accepting_.store(false, std::memory_order_release);
+        enabled_.store(false, std::memory_order_release);
+        running_.store(false, std::memory_order_release);
     }
 }
 
@@ -493,6 +528,9 @@ bool RecoveryWriter::writeMetadataSnapshot()
     const auto tmp_path = config_.directory / "metadata.snapshot.tmp";
     const auto final_path = config_.directory / "metadata.snapshot";
 
+    if (!allowIo(IoOperation::SnapshotOpen)) {
+        return false;
+    }
     std::FILE *f = std::fopen(tmp_path.string().c_str(), "wb");
     if (!f) {
         return false;
@@ -523,6 +561,32 @@ bool RecoveryWriter::writeMetadataSnapshot()
     return true;
 }
 
+std::string RecoveryWriter::journalDegradationReason()
+{
+    std::scoped_lock lock(degradation_mutex_);
+    return degradation_reason_;
+}
+
+void RecoveryWriter::reportJournalDegradation(std::string_view cause) noexcept
+{
+    if (degradation_reported_.load(std::memory_order_acquire)) {
+        return;
+    }
+    allowIo(IoOperation::DegradationBeforeLock);
+    try {
+        std::scoped_lock lock(degradation_mutex_);
+        if (degradation_reported_.load(std::memory_order_acquire)) {
+            return;
+        }
+        degradation_reason_.assign(cause);
+        degradation_reported_.store(true, std::memory_order_release);
+    }
+    catch (...) {
+        degradation_reported_.store(true, std::memory_order_release);
+        std::fputs("Spark recovery journal degradation could not be recorded.\n", stderr);
+    }
+}
+
 void RecoveryWriter::markWorkerExited() noexcept
 {
     worker_exited_.store(true, std::memory_order_release);
@@ -546,11 +610,13 @@ void RecoveryWriter::writerLoop()
         }
         dirty_ = true;
         if (!writeFile(file_, record.data(), record.size())) {
+            reportJournalDegradation("write_failed");
             enabled_.store(false, std::memory_order_release);
             return true;
         }
         segment_bytes_ += record.size();
         total_bytes_ += record.size();
+        segment_sizes_[segment_number_] += record.size();
         written_.fetch_add(1, std::memory_order_relaxed);
 
         if (segment_bytes_ >= config_.max_segment_bytes) {
@@ -558,10 +624,12 @@ void RecoveryWriter::writerLoop()
                 return true;
             }
             if (!closeSegment()) {
+                reportJournalDegradation("rotate_failed");
                 enabled_.store(false, std::memory_order_release);
                 return true;
             }
             if (!openSegment(segment_number_ + 1)) {
+                reportJournalDegradation("rotate_failed");
                 enabled_.store(false, std::memory_order_release);
                 return true;
             }
@@ -641,6 +709,8 @@ void RecoveryWriter::writerLoop()
             syncFile();
         }
         if (!closeSegment()) {
+            reportJournalDegradation("close_failed");
+            accepting_.store(false, std::memory_order_release);
             enabled_.store(false, std::memory_order_release);
         }
     }

@@ -127,6 +127,10 @@ public:
     {
         profiler_.journalStallEnd(detected_ns, recovered_ns);
     }
+    bool reportJournalDegradationIfNeeded(std::string &cause)
+    {
+        return profiler_.reportJournalDegradationIfNeeded(cause);
+    }
 
     // Starts the background profiler if configured. Called on enable.
     void startBackgroundProfiler();

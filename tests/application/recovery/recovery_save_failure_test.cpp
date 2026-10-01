@@ -3,11 +3,24 @@
 #include <fstream>
 #include <functional>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #include "application/spark_application.h"
 #include "core/recovery/recovery_writer.h"
+#include "core/recovery/replay_guard.h"
+
+namespace spark {
+
+struct SparkApplicationRecoveryTestAccess {
+    using Hook = SparkApplication::RecoveryTestHook;
+
+    static void setHook(SparkApplication &application, Hook hook) { application.recovery_test_hook_ = std::move(hook); }
+};
+
+}  // namespace spark
 
 namespace {
 
@@ -30,6 +43,27 @@ public:
     void notify(const std::string & /*sender_name*/, const std::string &text) override { messages.push_back(text); }
     std::vector<std::string> messages;
 };
+
+void startApplication(const std::filesystem::path &root, TestNotifier &notifier, int &replay_count)
+{
+    spark::SparkConfig config(root / "config.toml");
+    config.background_profiler_enabled = false;
+    spark::TrustedViewersState trusted(root / "trusted-viewers.json");
+    TestDispatcher dispatcher;
+    TestMetadataProvider metadata;
+    spark::SparkApplication application({}, root, root / "activity.json", std::move(config), std::move(trusted),
+                                        dispatcher, metadata, notifier);
+    spark::SparkApplicationRecoveryTestAccess::setHook(
+        application,
+        [&replay_count](std::string_view operation, const std::filesystem::path &, const std::filesystem::path &) {
+            if (operation == "replay") {
+                ++replay_count;
+            }
+            return std::error_code{};
+        });
+    application.enable();
+    application.shutdown();
+}
 
 }  // namespace
 
@@ -62,20 +96,27 @@ int main()
         std::ofstream(root / (name + ".sparkprofile"));
     }
 
-    spark::SparkConfig config(root / "config.toml");
-    config.background_profiler_enabled = false;
-    spark::TrustedViewersState trusted(root / "trusted-viewers.json");
-    TestDispatcher dispatcher;
-    TestMetadataProvider metadata;
+    int replay_count = 0;
     TestNotifier notifier;
-    spark::SparkApplication application({}, root, root / "activity.json", std::move(config), std::move(trusted),
-                                        dispatcher, metadata, notifier);
-    application.enable();
-    application.shutdown();
+    startApplication(root, notifier, replay_count);
 
+    std::error_code error;
+    assert(replay_count == 1);
     assert(std::filesystem::exists(recovery / "segment-0.jnl"));
     assert(!notifier.messages.empty());
     assert(notifier.messages.back().find("journal retained") != std::string::npos);
+    assert(!spark::recoveryReplayBlocked(recovery, error));
+    assert(!error);
+
+    TestNotifier retry_notifier;
+    startApplication(root, retry_notifier, replay_count);
+    assert(replay_count == 2);
+    assert(std::filesystem::exists(recovery / "segment-0.jnl"));
+    assert(!retry_notifier.messages.empty());
+    assert(retry_notifier.messages.back().find("journal retained") != std::string::npos);
+    assert(!spark::recoveryReplayBlocked(recovery, error));
+    assert(!error);
+
     std::filesystem::remove_all(root);
     return 0;
 }

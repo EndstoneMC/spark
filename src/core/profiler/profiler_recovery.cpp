@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <limits>
 #include <utility>
 
 #include "core/profiler/profiler.h"
@@ -32,7 +34,9 @@ void Profiler::stopRecoveryWriter()
 
     std::scoped_lock lock(recovery_mutex_);
     if (recovery_writer_.get() == writer) {
+        captureRetiredJournalDegradationLocked(*writer);
         recovery_writer_.reset();
+        journal_degradation_active_.store(false, std::memory_order_release);
     }
 }
 
@@ -48,7 +52,9 @@ bool Profiler::reapRecoveryWriter()
     if (!recovery_writer_->tryReap()) {
         return false;
     }
+    captureRetiredJournalDegradationLocked(*recovery_writer_);
     recovery_writer_.reset();
+    journal_degradation_active_.store(false, std::memory_order_release);
     return true;
 }
 
@@ -56,6 +62,42 @@ bool Profiler::hasPendingRecoveryWriter() const
 {
     std::scoped_lock lock(recovery_mutex_);
     return recovery_writer_ != nullptr;
+}
+
+void Profiler::recordJournalDegradationOverflowLocked() noexcept
+{
+    if (pending_journal_degradation_overflow_count_ != std::numeric_limits<std::uint32_t>::max()) {
+        ++pending_journal_degradation_overflow_count_;
+    }
+    pending_journal_degradation_notice_.store(true, std::memory_order_release);
+}
+
+void Profiler::captureRetiredJournalDegradationLocked(RecoveryWriter &writer) noexcept
+{
+    if (!writer.journalDegraded() || journal_degradation_logged_.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (pending_journal_degradation_count_ == kPendingJournalDegradationCapacity) {
+        recordJournalDegradationOverflowLocked();
+        return;
+    }
+
+    try {
+        std::string cause = writer.journalDegradationReason();
+        if (cause.empty()) {
+            cause = "recovery journal degraded";
+        }
+
+        const auto tail = (pending_journal_degradation_head_ + pending_journal_degradation_count_) %
+                          kPendingJournalDegradationCapacity;
+        pending_journal_degradation_causes_[tail] = std::move(cause);
+        ++pending_journal_degradation_count_;
+        pending_journal_degradation_notice_.store(true, std::memory_order_release);
+    }
+    catch (...) {
+        recordJournalDegradationOverflowLocked();
+        std::fputs("Spark recovery journal degradation notice was coalesced.\n", stderr);
+    }
 }
 
 RecoveryDiscardResult Profiler::discardRecoveryJournal()
@@ -111,6 +153,40 @@ void Profiler::journalStallEnd(std::uint64_t detected_ns, std::uint64_t recovere
         recovery_writer_->journalStallEnd(detected_ns, recovered_ns);
         recovery_writer_->requestFlush();
     }
+}
+
+bool Profiler::reportJournalDegradationIfNeeded(std::string &cause)
+{
+    if (!journal_degradation_active_.load(std::memory_order_relaxed) &&
+        !pending_journal_degradation_notice_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    std::scoped_lock lock(recovery_mutex_);
+    if (pending_journal_degradation_count_ != 0) {
+        cause = pending_journal_degradation_causes_[pending_journal_degradation_head_];
+        pending_journal_degradation_causes_[pending_journal_degradation_head_].clear();
+        pending_journal_degradation_head_ =
+            (pending_journal_degradation_head_ + 1) % kPendingJournalDegradationCapacity;
+        --pending_journal_degradation_count_;
+    }
+    else if (pending_journal_degradation_overflow_count_ != 0) {
+        cause = "additional recovery journals degraded";
+        pending_journal_degradation_overflow_count_ = 0;
+    }
+    else if (journal_degradation_active_.load(std::memory_order_relaxed) && recovery_writer_ &&
+             recovery_writer_->journalDegraded() && !journal_degradation_logged_.load(std::memory_order_acquire)) {
+        cause = recovery_writer_->journalDegradationReason();
+        journal_degradation_logged_.store(true, std::memory_order_release);
+        return true;
+    }
+    else {
+        return false;
+    }
+
+    pending_journal_degradation_notice_.store(pending_journal_degradation_count_ != 0 ||
+                                                  pending_journal_degradation_overflow_count_ != 0,
+                                              std::memory_order_release);
+    return true;
 }
 
 }  // namespace spark

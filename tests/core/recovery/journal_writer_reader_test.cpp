@@ -21,6 +21,7 @@ void testWriterBasic()
     cfg.session_id = 99;
     cfg.flush_interval_ms = 50;
     cfg.sync_interval_ms = 50;
+    cfg.shutdown_timeout_ms = 15000;
 
     RecoveryWriter writer(cfg);
     if (!writer.start()) {
@@ -84,6 +85,7 @@ void testWriterStopJoins()
     cfg.directory = dir / "session-3";
     cfg.session_id = 1;
     cfg.flush_interval_ms = 1000;
+    cfg.shutdown_timeout_ms = 15000;
 
     {
         RecoveryWriter writer(cfg);
@@ -110,6 +112,7 @@ void testSessionIsolation()
     RecoveryWriter::Config config;
     config.directory = dir;
     config.session_id = 300;
+    config.shutdown_timeout_ms = 15000;
     RecoveryWriter writer(config);
     assert(writer.start());
     writer.journalTickEvent(2, 6.0);
