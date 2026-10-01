@@ -32,6 +32,7 @@ struct WorldGaugeSnapshot {
     std::vector<WorldGaugeChunkKey> chunks;
     std::vector<WorldGaugeTileEntityCount> tile_entities;
     bool tile_entities_complete = false;
+    bool available = true;
 };
 
 struct WorldGaugeCounts {
@@ -90,6 +91,10 @@ public:
 
     void reconcile(const WorldGaugeSnapshot &snapshot)
     {
+        if (!snapshot.available) {
+            return;
+        }
+
         std::set<std::int64_t> actors(snapshot.actor_ids.begin(), snapshot.actor_ids.end());
         std::set<std::int64_t> players(snapshot.player_ids.begin(), snapshot.player_ids.end());
         std::set<WorldGaugeChunkKey> chunks(snapshot.chunks.begin(), snapshot.chunks.end());

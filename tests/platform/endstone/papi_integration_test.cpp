@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -10,6 +11,7 @@
 
 #include "platform/endstone/papi_integration.h"
 #include "platform/endstone/world_gauge_event_adapter.h"
+#include "platform/endstone/world_gauge_reconcile_schedule.h"
 
 namespace {
 
@@ -96,6 +98,7 @@ public:
 using spark::endstone_adapter::EndstoneWorldGaugeEventAdapter;
 using spark::endstone_adapter::WorldGaugeChunkKey;
 using spark::endstone_adapter::WorldGaugeCounts;
+using spark::endstone_adapter::WorldGaugeReconcileSchedule;
 using spark::endstone_adapter::WorldGaugeSnapshot;
 using spark::endstone_adapter::WorldGaugeTileEntityCount;
 
@@ -251,12 +254,208 @@ void testTileEntityGaugeLifecycle()
     expectGaugeCounts(adapter, 0, 0, 1, 0, true);
 }
 
+void testWorldGaugeUnavailableReconcilePreservesTrustedState()
+{
+    constexpr std::int64_t k_player = 100;
+    constexpr std::int64_t k_entity = 200;
+    const WorldGaugeChunkKey overworld = chunk("minecraft:overworld", 2, 3);
+
+    EndstoneWorldGaugeEventAdapter adapter;
+    WorldGaugeSnapshot trusted;
+    trusted.actor_ids = {k_entity};
+    trusted.player_ids = {k_player};
+    trusted.chunks = {overworld};
+    trusted.tile_entities = {{.chunk = overworld, .count = 7}};
+    trusted.tile_entities_complete = true;
+    adapter.reconcile(trusted);
+    expectGaugeCounts(adapter, 1, 2, 1, 7, true);
+
+    WorldGaugeSnapshot failed_tile_scan;
+    failed_tile_scan.actor_ids = {k_entity};
+    failed_tile_scan.player_ids = {k_player};
+    failed_tile_scan.chunks = {overworld};
+    adapter.reconcile(failed_tile_scan);
+    expectGaugeCounts(adapter, 1, 2, 1, 7, true);
+
+    WorldGaugeSnapshot unavailable;
+    unavailable.available = false;
+    adapter.reconcile(unavailable);
+    expectGaugeCounts(adapter, 1, 2, 1, 7, true);
+
+    WorldGaugeSnapshot successful_empty;
+    successful_empty.tile_entities_complete = true;
+    adapter.reconcile(successful_empty);
+    expectGaugeCounts(adapter, 0, 0, 0, 0, true);
+}
+
+void testWorldGaugeReconcileSchedule()
+{
+    WorldGaugeReconcileSchedule schedule;
+    schedule.start(1000);
+
+    assert(!schedule.tileReconcileDue(60999, true));
+    assert(schedule.tileReconcileDue(61000, true));
+    schedule.recordTileAttempt(61000, false, 71000);
+    assert(!schedule.tileReconcileDue(75999, true));
+    assert(schedule.tileReconcileDue(76000, true));
+
+    schedule.recordTileAttempt(76000, true, 76020);
+    assert(!schedule.tileReconcileDue(136019, true));
+    assert(schedule.tileReconcileDue(136020, true));
+    schedule.recordTileAttempt(136020, false, 136040);
+    assert(!schedule.tileReconcileDue(141039, true));
+    assert(schedule.tileReconcileDue(141040, true));
+    schedule.recordTileAttempt(141040, true, 141050);
+    assert(!schedule.tileReconcileDue(201049, true));
+    assert(schedule.tileReconcileDue(201050, true));
+
+    WorldGaugeReconcileSchedule unsupported;
+    unsupported.start(0);
+    assert(!unsupported.tileReconcileDue(59999, false));
+    assert(unsupported.tileReconcileDue(60000, false));
+    unsupported.recordTileAttempt(60000, false, 65000);
+    assert(!unsupported.tileReconcileDue(124999, false));
+    assert(unsupported.tileReconcileDue(125000, false));
+
+    WorldGaugeReconcileSchedule entities;
+    entities.start(0);
+    assert(!entities.entityReconcileDue(29999));
+    assert(entities.entityReconcileDue(30000));
+    entities.recordReconcile(30000);
+    assert(!entities.entityReconcileDue(59999));
+    assert(entities.entityReconcileDue(60000));
+}
+
+void testWorldGaugeReconcileExceptionTiming()
+{
+    constexpr std::int64_t k_player = 100;
+    constexpr std::int64_t k_entity = 200;
+    const WorldGaugeChunkKey overworld = chunk("minecraft:overworld", 2, 3);
+
+    EndstoneWorldGaugeEventAdapter adapter;
+    WorldGaugeSnapshot trusted;
+    trusted.actor_ids = {k_entity};
+    trusted.player_ids = {k_player};
+    trusted.chunks = {overworld};
+    trusted.tile_entities = {{.chunk = overworld, .count = 7}};
+    trusted.tile_entities_complete = true;
+    adapter.reconcile(trusted);
+
+    WorldGaugeReconcileSchedule scan_schedule;
+    scan_schedule.start(0);
+    std::int64_t now_ms = 60000;
+    const auto now = [&] {
+        return now_ms;
+    };
+    const auto failure_now = [&]() noexcept {
+        return now_ms;
+    };
+    volatile bool throw_scan = true;
+    bool scan_exception_rethrown = false;
+    try {
+        scan_schedule.runReconcile(
+            now,
+            [&]() -> bool {
+                now_ms = 71000;
+                if (throw_scan) {
+                    throw std::runtime_error("scan failed");
+                }
+                return false;
+            },
+            true, failure_now);
+    }
+    catch (const std::runtime_error &error) {
+        scan_exception_rethrown = error.what() == std::string("scan failed");
+    }
+    assert(scan_exception_rethrown);
+    expectGaugeCounts(adapter, 1, 2, 1, 7, true);
+    assert(!scan_schedule.tileReconcileDue(75999, true));
+    assert(scan_schedule.tileReconcileDue(76000, true));
+    assert(!scan_schedule.entityReconcileDue(100999));
+    assert(scan_schedule.entityReconcileDue(101000));
+
+    WorldGaugeReconcileSchedule clock_schedule;
+    clock_schedule.start(0);
+    int clock_calls = 0;
+    volatile bool throw_completion_clock = true;
+    bool clock_exception_rethrown = false;
+    try {
+        clock_schedule.runReconcile(
+            [&]() -> std::int64_t {
+                ++clock_calls;
+                if (clock_calls == 2 && throw_completion_clock) {
+                    throw std::runtime_error("clock failed");
+                }
+                return clock_calls == 1 ? 60000 : 71000;
+            },
+            [] { return true; }, true, []() noexcept { return std::int64_t{71000}; });
+    }
+    catch (const std::runtime_error &error) {
+        clock_exception_rethrown = error.what() == std::string("clock failed");
+    }
+    assert(clock_exception_rethrown);
+    assert(!clock_schedule.tileReconcileDue(75999, true));
+    assert(clock_schedule.tileReconcileDue(76000, true));
+    assert(!clock_schedule.entityReconcileDue(100999));
+    assert(clock_schedule.entityReconcileDue(101000));
+
+    WorldGaugeReconcileSchedule attempt_clock_schedule;
+    attempt_clock_schedule.start(0);
+    volatile bool throw_attempt_clock = true;
+    bool attempt_clock_exception_rethrown = false;
+    try {
+        attempt_clock_schedule.runReconcile(
+            [&]() -> std::int64_t {
+                if (throw_attempt_clock) {
+                    throw std::runtime_error("attempt clock failed");
+                }
+                return 60000;
+            },
+            [] { return true; }, true, []() noexcept { return std::int64_t{71000}; });
+    }
+    catch (const std::runtime_error &error) {
+        attempt_clock_exception_rethrown = error.what() == std::string("attempt clock failed");
+    }
+    assert(attempt_clock_exception_rethrown);
+    assert(!attempt_clock_schedule.tileReconcileDue(75999, true));
+    assert(attempt_clock_schedule.tileReconcileDue(76000, true));
+    assert(!attempt_clock_schedule.entityReconcileDue(100999));
+    assert(attempt_clock_schedule.entityReconcileDue(101000));
+
+    WorldGaugeReconcileSchedule entity_schedule;
+    entity_schedule.start(0);
+    now_ms = 30000;
+    volatile bool throw_entity_scan = true;
+    bool entity_exception_rethrown = false;
+    try {
+        entity_schedule.runReconcile(
+            now,
+            [&]() -> bool {
+                now_ms = 39000;
+                if (throw_entity_scan) {
+                    throw std::runtime_error("entity scan failed");
+                }
+                return false;
+            },
+            false, failure_now);
+    }
+    catch (const std::runtime_error &error) {
+        entity_exception_rethrown = error.what() == std::string("entity scan failed");
+    }
+    assert(entity_exception_rethrown);
+    assert(!entity_schedule.entityReconcileDue(68999));
+    assert(entity_schedule.entityReconcileDue(69000));
+}
+
 }  // namespace
 
 int main()
 {
     testWorldGaugeLifecycle();
     testTileEntityGaugeLifecycle();
+    testWorldGaugeReconcileSchedule();
+    testWorldGaugeReconcileExceptionTiming();
+    testWorldGaugeUnavailableReconcilePreservesTrustedState();
 
     FakePlugin owner;
     spark::StatisticsService statistics;

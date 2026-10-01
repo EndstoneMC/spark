@@ -236,6 +236,14 @@ profile incomplete. Cleanly ended sessions are discarded. Allocation
 contain the allocation free/realloc lifecycle. The recovery journal is removed
 after a successful save and retained if saving fails.
 
+Crash recovery covers BDS process crashes and forced termination. Durability across
+operating-system crashes or power loss is not guaranteed. If metadata snapshots or
+journal pruning keep failing, recovery journaling is disabled for the current session
+while profiling and the server continue, and the operator is notified. If cleanup
+fails, a sibling replay block prevents the same journal directory generation from
+being replayed again; a successful fresh-writer purge clears the block before a new
+journal is created.
+
 An independent watchdog records stall begin/end events if the server main thread
 stops ticking for more than five seconds. This helps identify stalls in a recovered
 profile.

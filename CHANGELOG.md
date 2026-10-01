@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased][Unreleased]
 
+### Added
+
+- Notify the server console and players when the crash-recovery journal degrades,
+  including when a session may no longer be recoverable.
+
+### Changed
+
+- Reduce CPU overhead of persistent Linux allocation-rate metrics while preserving
+  allocation profiler and unload behavior. Single-writer counters reduced observer
+  cost by 7.3-13.3 ns/op across seven single-thread benchmark workloads, with
+  unchanged reported counters and one-thread hook coverage.
+
+### Fixed
+
+- Exclude resolved Linux allocation-hook callback frames from execution profiles.
+- Keep recovery journal size accounting accurate when retained segments disappear
+  or cannot be statted, and stop journal growth after persistent metadata snapshot
+  failure or stalled pruning while profiling continues.
+- Prevent repeated startup replay of the same journal generation after cleanup
+  fails, and retain the first degradation cause and notices across session finalization.
+- Preserve world gauge counts while the level is unavailable and retry failed tile
+  reconciliation after a five-second backoff.
+
 ## [0.6.1][0.6.1] - 2026-09-27
 
 ### Added

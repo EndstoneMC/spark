@@ -13,6 +13,7 @@
 #include "application/platform_capabilities.h"
 #include "core/stats/ping_statistics.h"
 #include "platform/endstone/world_gauge_event_adapter.h"
+#include "platform/endstone/world_gauge_reconcile_schedule.h"
 
 namespace spark::endstone_adapter {
 
@@ -89,13 +90,12 @@ public:
     WorldGaugeValues worldGauges();
 
 private:
-    void reconcile(bool include_tile_entities);
+    bool reconcile(bool include_tile_entities);
 
     ::endstone::Plugin &plugin_;
     ::endstone::Server &server_;
     EndstoneWorldGaugeEventAdapter event_adapter_;
-    std::int64_t last_reconcile_steady_ms_ = 0;
-    std::int64_t last_tile_reconcile_steady_ms_ = 0;
+    WorldGaugeReconcileSchedule schedule_;
     bool initialized_ = false;
 };
 

@@ -10,10 +10,13 @@ namespace spark::endstone_adapter {
 
 namespace {
 
-constexpr std::int64_t KReconcileIntervalMs = 30000;
-constexpr std::int64_t KTileEntityReconcileIntervalMs = 60000;
+#if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
+constexpr bool KTileEntityScanSupported = true;
+#else
+constexpr bool KTileEntityScanSupported = false;
+#endif
 
-std::int64_t steadyNowMs()
+std::int64_t steadyNowMs() noexcept
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
         .count();
@@ -66,18 +69,17 @@ void EndstoneWorldGaugeProvider::init()
         ::endstone::EventPriority::Monitor);
 
     reconcile(false);
-    last_tile_reconcile_steady_ms_ = steadyNowMs();
+    schedule_.start(steadyNowMs());
 }
 
 WorldGaugeValues EndstoneWorldGaugeProvider::worldGauges()
 {
     const std::int64_t now = steadyNowMs();
-    if (now - last_tile_reconcile_steady_ms_ >= KTileEntityReconcileIntervalMs) {
-        last_tile_reconcile_steady_ms_ = now;
-        reconcile(true);
+    if (schedule_.tileReconcileDue(now, KTileEntityScanSupported)) {
+        schedule_.runReconcile(steadyNowMs, [this] { return reconcile(true); }, true, steadyNowMs);
     }
-    else if (now - last_reconcile_steady_ms_ >= KReconcileIntervalMs) {
-        reconcile(false);
+    else if (schedule_.entityReconcileDue(now)) {
+        schedule_.runReconcile(steadyNowMs, [this] { return reconcile(false); }, false, steadyNowMs);
     }
 
     const WorldGaugeCounts counts = event_adapter_.counts();
@@ -87,10 +89,8 @@ WorldGaugeValues EndstoneWorldGaugeProvider::worldGauges()
             .tile_entities_present = counts.tile_entities_present};
 }
 
-void EndstoneWorldGaugeProvider::reconcile(bool include_tile_entities)
+bool EndstoneWorldGaugeProvider::reconcile(bool include_tile_entities)
 {
-    last_reconcile_steady_ms_ = steadyNowMs();
-
     WorldGaugeSnapshot snapshot;
 #if !defined(ENDSTONE_SPARK_ENDSTONE_API_0_11)
     bool tile_scan_ok = include_tile_entities;
@@ -99,8 +99,9 @@ void EndstoneWorldGaugeProvider::reconcile(bool include_tile_entities)
 #endif
     ::endstone::Level *level = server_.getLevel();
     if (level == nullptr) {
+        snapshot.available = false;
         event_adapter_.reconcile(snapshot);
-        return;
+        return false;
     }
     for (const auto &dimension : level->getDimensions()) {
         for (const auto &actor : dimension->getActors()) {
@@ -129,6 +130,7 @@ void EndstoneWorldGaugeProvider::reconcile(bool include_tile_entities)
     }
     snapshot.tile_entities_complete = tile_scan_ok;
     event_adapter_.reconcile(snapshot);
+    return snapshot.tile_entities_complete;
 }
 
 }  // namespace spark::endstone_adapter
