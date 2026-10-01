@@ -37,6 +37,15 @@ target_compile_definitions(
 target_link_libraries(spark_allocation_benchmark PRIVATE spark_core)
 set_target_properties(spark_allocation_benchmark PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(spark_allocation_benchmark PRIVATE "LINKER:-z,now")
+    add_library(spark_allocation_benchmark_workload SHARED native/alloc/allocation_benchmark_workload.cpp)
+    target_compile_options(spark_allocation_benchmark_workload PRIVATE -fno-builtin)
+    target_link_options(spark_allocation_benchmark_workload PRIVATE "LINKER:-z,now")
+    set_target_properties(spark_allocation_benchmark_workload PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    target_link_libraries(spark_allocation_benchmark PRIVATE spark_allocation_benchmark_workload)
+endif ()
 
 add_executable(spark_ci_diagnostics_test core/ci_diagnostics_test.cpp)
 target_link_libraries(spark_ci_diagnostics_test PRIVATE spark_diagnostics)

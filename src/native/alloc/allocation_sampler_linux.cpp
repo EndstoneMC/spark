@@ -401,30 +401,16 @@ struct AllocationSampler::Impl {
 
     class TrackingCallGuard {
     public:
-        explicit TrackingCallGuard(Impl &impl) noexcept : impl_(impl), shard_(currentHookShard())
+        explicit TrackingCallGuard(Impl &impl) noexcept
         {
-            if (!impl_.tracking.load(std::memory_order_acquire)) {
+            if (!impl.tracking.load(std::memory_order_acquire)) {
                 return;
             }
-            impl_.tracking_calls[shard_].fetch_add(1, std::memory_order_acq_rel);
-            if (impl_.tracking.load(std::memory_order_acquire)) {
-                active_ = true;
-            }
-            else {
-                impl_.tracking_calls[shard_].fetch_sub(1, std::memory_order_release);
-            }
-        }
-        ~TrackingCallGuard()
-        {
-            if (active_) {
-                impl_.tracking_calls[shard_].fetch_sub(1, std::memory_order_release);
-            }
+            active_ = impl.tracking.load(std::memory_order_acquire);
         }
         explicit operator bool() const noexcept { return active_; }
 
     private:
-        Impl &impl_;
-        std::size_t shard_ = 0;
         bool active_ = false;
     };
 
@@ -3060,6 +3046,8 @@ bool AllocationLifecycleTestAccess::holdTrackingCall(AllocationSampler &sampler,
         return true;
     }
     bool admitted = false;
+    auto &counter = sampler.impl_->tracking_calls[AllocationSampler::Impl::currentHookShard()];
+    counter.fetch_add(1, std::memory_order_acq_rel);
     {
         AllocationSampler::Impl::TrackingCallGuard tracking_guard(*sampler.impl_);
         if (tracking_guard) {
@@ -3070,6 +3058,7 @@ bool AllocationLifecycleTestAccess::holdTrackingCall(AllocationSampler &sampler,
             admitted = true;
         }
     }
+    counter.fetch_sub(1, std::memory_order_release);
     gate.exited.store(true, std::memory_order_release);
     return admitted;
 }

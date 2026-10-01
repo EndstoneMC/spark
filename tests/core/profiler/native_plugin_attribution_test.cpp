@@ -172,12 +172,29 @@ int main()
     assert(spark::canonicalPluginKey("foo.bar") == "foo-bar");
     assert(spark::canonicalPluginKey("Foo--__..Bar") == "foo-bar");
 
-    assert(spark::isNativeAllocationInstrumentation("spark::AllocationSampler::Impl::hookMalloc(unsigned long)"));
+    assert(
+        spark::isNativeAllocationInstrumentation("spark::AllocationSampler::Impl::hookMalloc(void*, unsigned long)"));
+    assert(spark::isNativeAllocationInstrumentation(
+        "spark::AllocationSampler::Impl::hookCalloc(void*, unsigned long, unsigned long)"));
+    assert(spark::isNativeAllocationInstrumentation(
+        "spark::AllocationSampler::Impl::hookRealloc(void*, void*, unsigned long)"));
+    assert(spark::isNativeAllocationInstrumentation("spark::AllocationSampler::Impl::hookFree(void*, void*)"));
+    assert(spark::isNativeAllocationInstrumentation(
+        "spark::AllocationSampler::Impl::hookReallocArray(void*, void*, unsigned long, unsigned long)"));
+    assert(spark::isNativeAllocationInstrumentation(
+        "spark::AllocationSampler::Impl::hookAlignedAlloc(void*, unsigned long, unsigned long)"));
+    assert(spark::isNativeAllocationInstrumentation(
+        "spark::AllocationSampler::Impl::hookPosixMemalign(void*, void**, unsigned long, unsigned long)"));
     assert(spark::isNativeAllocationInstrumentation("spark::AllocationSampler::Impl::hookHeapAlloc"));
     assert(spark::isNativeAllocationInstrumentation("spark::AllocationSampler::Impl::hookMalloc"));
     assert(spark::isNativeAllocationInstrumentation("spark::AllocationSampler::Impl::hookMallocBase"));
-    assert(spark::isNativeAllocationInstrumentation("_ZN5spark17AllocationSampler4Impl10hookMallocEm"));
-    assert(spark::isNativeAllocationInstrumentation("_ZN5spark17AllocationSampler4Impl17hookPosixMemalignEPPvmm"));
+    assert(spark::isNativeAllocationInstrumentation("_ZN5spark17AllocationSampler4Impl10hookMallocEPvm"));
+    assert(spark::isNativeAllocationInstrumentation("_ZN5spark17AllocationSampler4Impl10hookCallocEPvmm"));
+    assert(spark::isNativeAllocationInstrumentation("_ZN5spark17AllocationSampler4Impl11hookReallocEPvS2_m"));
+    assert(spark::isNativeAllocationInstrumentation("_ZN5spark17AllocationSampler4Impl8hookFreeEPvS2_"));
+    assert(spark::isNativeAllocationInstrumentation("_ZN5spark17AllocationSampler4Impl16hookReallocArrayEPvS2_mm"));
+    assert(spark::isNativeAllocationInstrumentation("_ZN5spark17AllocationSampler4Impl16hookAlignedAllocEPvmm"));
+    assert(spark::isNativeAllocationInstrumentation("_ZN5spark17AllocationSampler4Impl17hookPosixMemalignEPvPS2_mm"));
     assert(!spark::isNativeAllocationInstrumentation("spark::AllocationSampler::Impl::hookMallocExtra(unsigned long)"));
     assert(!spark::isNativeAllocationInstrumentation("plugin::AllocationSampler::Impl::hookMalloc(unsigned long)"));
 

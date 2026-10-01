@@ -28,23 +28,23 @@ bool matches(std::string_view method_name, const std::array<std::string_view, N>
 }
 
 constexpr std::array KLinuxMethods{
-    std::string_view("spark::AllocationSampler::Impl::hookMalloc(unsigned long)"),
-    std::string_view("spark::AllocationSampler::Impl::hookCalloc(unsigned long, unsigned long)"),
-    std::string_view("spark::AllocationSampler::Impl::hookRealloc(void*, unsigned long)"),
-    std::string_view("spark::AllocationSampler::Impl::hookFree(void*)"),
-    std::string_view("spark::AllocationSampler::Impl::hookReallocArray(void*, unsigned long, unsigned long)"),
-    std::string_view("spark::AllocationSampler::Impl::hookAlignedAlloc(unsigned long, unsigned long)"),
-    std::string_view("spark::AllocationSampler::Impl::hookPosixMemalign(void**, unsigned long, unsigned long)"),
+    std::string_view("spark::AllocationSampler::Impl::hookMalloc(void*, unsigned long)"),
+    std::string_view("spark::AllocationSampler::Impl::hookCalloc(void*, unsigned long, unsigned long)"),
+    std::string_view("spark::AllocationSampler::Impl::hookRealloc(void*, void*, unsigned long)"),
+    std::string_view("spark::AllocationSampler::Impl::hookFree(void*, void*)"),
+    std::string_view("spark::AllocationSampler::Impl::hookReallocArray(void*, void*, unsigned long, unsigned long)"),
+    std::string_view("spark::AllocationSampler::Impl::hookAlignedAlloc(void*, unsigned long, unsigned long)"),
+    std::string_view("spark::AllocationSampler::Impl::hookPosixMemalign(void*, void**, unsigned long, unsigned long)"),
 };
 
 constexpr std::array KItaniumMethods{
-    std::string_view("_ZN5spark17AllocationSampler4Impl10hookMallocEm"),
-    std::string_view("_ZN5spark17AllocationSampler4Impl10hookCallocEmm"),
-    std::string_view("_ZN5spark17AllocationSampler4Impl11hookReallocEPvm"),
-    std::string_view("_ZN5spark17AllocationSampler4Impl8hookFreeEPv"),
-    std::string_view("_ZN5spark17AllocationSampler4Impl16hookReallocArrayEPvmm"),
-    std::string_view("_ZN5spark17AllocationSampler4Impl16hookAlignedAllocEmm"),
-    std::string_view("_ZN5spark17AllocationSampler4Impl17hookPosixMemalignEPPvmm"),
+    std::string_view("_ZN5spark17AllocationSampler4Impl10hookMallocEPvm"),
+    std::string_view("_ZN5spark17AllocationSampler4Impl10hookCallocEPvmm"),
+    std::string_view("_ZN5spark17AllocationSampler4Impl11hookReallocEPvS2_m"),
+    std::string_view("_ZN5spark17AllocationSampler4Impl8hookFreeEPvS2_"),
+    std::string_view("_ZN5spark17AllocationSampler4Impl16hookReallocArrayEPvS2_mm"),
+    std::string_view("_ZN5spark17AllocationSampler4Impl16hookAlignedAllocEPvmm"),
+    std::string_view("_ZN5spark17AllocationSampler4Impl17hookPosixMemalignEPvPS2_mm"),
 };
 
 constexpr std::array KSignaturelessMethods{
