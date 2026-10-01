@@ -5,6 +5,8 @@
 #include <memory>
 #include <utility>
 
+#include "native/diagnostics/ci_diagnostics_snapshot.h"
+
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -22,10 +24,6 @@ namespace {
 
 std::atomic<CiDiagnostics *> GDiagnostics{nullptr};
 thread_local bool GLiveExportScope = false;
-
-constexpr std::uint64_t KPhaseMask = 0xffffULL;
-constexpr std::uint64_t KTransitionShift = 16;
-constexpr std::uint64_t KTransitionMask = (1ULL << 48) - 1;
 
 void clearRecord(CiDiagnosticRecord &record) noexcept
 {
@@ -57,37 +55,15 @@ void invalidateRecord(CiDiagnosticRecord &record) noexcept
 std::uint64_t nextTransition(const CiDiagnosticRecord &record) noexcept
 {
     const std::uint64_t packed = record.phase_and_transition.load(std::memory_order_seq_cst);
-    return ((packed >> KTransitionShift) + 1) & KTransitionMask;
+    return ((packed >> ci_diagnostics_snapshot_detail::kTransitionShift) + 1) &
+           ci_diagnostics_snapshot_detail::kTransitionMask;
 }
 
 }  // namespace
 
 CiDiagnosticSnapshot readCiDiagnosticSnapshot(const CiDiagnosticRecord &record) noexcept
 {
-    CiDiagnosticSnapshot snapshot;
-    const std::uint64_t before = record.sequence.load(std::memory_order_seq_cst);
-    if ((before & 1U) != 0) {
-        return snapshot;
-    }
-
-    snapshot.sequence = before;
-    snapshot.generation = record.generation.load(std::memory_order_seq_cst);
-    const std::uint64_t packed = record.phase_and_transition.load(std::memory_order_seq_cst);
-    snapshot.phase = static_cast<CiDiagnosticPhase>(packed & KPhaseMask);
-    snapshot.transition = (packed >> KTransitionShift) & KTransitionMask;
-    snapshot.worker_tid = record.worker_tid.load(std::memory_order_seq_cst);
-    snapshot.target_tid = record.target_tid.load(std::memory_order_seq_cst);
-    snapshot.suspend_success_count = record.suspend_success_count.load(std::memory_order_seq_cst);
-    snapshot.resume_success_count = record.resume_success_count.load(std::memory_order_seq_cst);
-    snapshot.walk_call_count = record.walk_call_count.load(std::memory_order_seq_cst);
-
-    const std::uint64_t after = record.sequence.load(std::memory_order_seq_cst);
-    if (before != after || (after & 1U) != 0) {
-        return CiDiagnosticSnapshot{};
-    }
-    snapshot.sequence = after;
-    snapshot.consistent = true;
-    return snapshot;
+    return ci_diagnostics_snapshot_detail::readSnapshot(record, ci_diagnostics_snapshot_detail::NoSequenceReadHook{});
 }
 
 CiDiagnostics::CiDiagnostics() noexcept
@@ -337,9 +313,10 @@ void CiDiagnostics::publish(CiDiagnosticContext context, CiDiagnosticPhase phase
         entry->target_tid.store(target_tid, std::memory_order_seq_cst);
     }
     const std::uint64_t transition = nextTransition(*entry);
-    entry->phase_and_transition.store((transition << KTransitionShift) |
-                                          (static_cast<std::uint64_t>(phase_value) & KPhaseMask),
-                                      std::memory_order_seq_cst);
+    entry->phase_and_transition.store(
+        (transition << ci_diagnostics_snapshot_detail::kTransitionShift) |
+            (static_cast<std::uint64_t>(phase_value) & ci_diagnostics_snapshot_detail::kPhaseMask),
+        std::memory_order_seq_cst);
     if (counter_delta != 0) {
         switch (counter) {
         case CiDiagnosticCounter::SuspendSuccess:

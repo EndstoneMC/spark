@@ -1,13 +1,12 @@
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <string>
-#include <thread>
 
 #include "native/diagnostics/ci_diagnostics.h"
+#include "native/diagnostics/ci_diagnostics_snapshot.h"
 
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
 #ifndef WIN32_LEAN_AND_MEAN
@@ -391,43 +390,37 @@ bool testInvalidContextAndCoherentPublication()
                    "publication did not carry the new generation");
 }
 
-bool testOddAndChangedSequence()
+bool testChangedSequenceRejected()
+{
+    CiDiagnosticRecord record;
+    record.sequence.store(2, std::memory_order_seq_cst);
+    record.generation.store(7, std::memory_order_seq_cst);
+    record.phase_and_transition.store(static_cast<std::uint64_t>(CiDiagnosticPhase::ApplicationCommandEnter),
+                                      std::memory_order_seq_cst);
+    record.worker_tid.store(8, std::memory_order_seq_cst);
+    bool callback_invoked = false;
+    const CiDiagnosticSnapshot snapshot = spark::ci_diagnostics_snapshot_detail::readSnapshot(record, [&]() noexcept {
+        callback_invoked = true;
+        record.sequence.store(4, std::memory_order_seq_cst);
+    });
+    return require(callback_invoked, "sequence-change callback did not run inside the snapshot read") &&
+           require(record.sequence.load(std::memory_order_seq_cst) == 4,
+                   "sequence-change callback did not advance the sequence") &&
+           require(isUnknown(snapshot), "a changed sequence was accepted as a snapshot");
+}
+
+bool testOddSequenceRejected()
 {
     CiDiagnosticRecord record;
     record.generation.store(7);
     record.phase_and_transition.store(static_cast<std::uint64_t>(CiDiagnosticPhase::ApplicationCommandEnter));
     record.worker_tid.store(8);
     record.sequence.store(1);
-    if (!require(isUnknown(spark::readCiDiagnosticSnapshot(record)), "odd sequence was accepted as a snapshot")) {
-        return false;
-    }
-
-    record.sequence.store(0);
-    std::atomic<bool> run{true};
-    std::atomic<bool> writer_started{false};
-    std::thread writer([&] {
-        writer_started.store(true, std::memory_order_release);
-        std::uint64_t sequence = 0;
-        while (run.load(std::memory_order_acquire)) {
-            sequence += 2;
-            record.sequence.store(sequence, std::memory_order_seq_cst);
-            record.generation.store(sequence, std::memory_order_seq_cst);
-            std::this_thread::yield();
-        }
-    });
-    while (!writer_started.load(std::memory_order_acquire)) {
-        std::this_thread::yield();
-    }
-    bool changed_unknown = false;
-    for (int attempt = 0; attempt < 250'000 && !changed_unknown; ++attempt) {
-        changed_unknown = isUnknown(spark::readCiDiagnosticSnapshot(record));
-        if ((attempt & 0x3ff) == 0) {
-            std::this_thread::yield();
-        }
-    }
-    run.store(false, std::memory_order_release);
-    writer.join();
-    return require(changed_unknown, "changed sequence was accepted as a snapshot");
+    bool callback_invoked = false;
+    const CiDiagnosticSnapshot snapshot =
+        spark::ci_diagnostics_snapshot_detail::readSnapshot(record, [&]() noexcept { callback_invoked = true; });
+    return require(isUnknown(snapshot), "odd updating sequence was accepted as a snapshot") &&
+           require(!callback_invoked, "odd sequence entered the snapshot read window");
 }
 
 bool testScopeAndRegistration()
@@ -493,7 +486,8 @@ int main()
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
     ok = ok && testMappingOwnershipAndReopen();
 #endif
-    ok = ok && testInvalidContextAndCoherentPublication() && testOddAndChangedSequence() && testScopeAndRegistration();
+    ok = ok && testInvalidContextAndCoherentPublication() && testOddSequenceRejected() &&
+         testChangedSequenceRejected() && testScopeAndRegistration();
     if (ok) {
         std::puts("All CI diagnostics tests passed.");
     }
