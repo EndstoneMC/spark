@@ -37,6 +37,14 @@ void testSaveAndReload()
     config.bytebin_url = "https://upload-saved.example.com/";
     config.background_profiler_enabled = false;
     config.background_profiler_interval = 25;
+    config.auto_profiler_enabled = true;
+    config.auto_profiler_mspt_threshold = 65.0;
+    config.auto_profiler_trigger_duration_seconds = 8;
+    config.auto_profiler_duration_seconds = 240;
+    config.auto_profiler_interval = 3;
+    config.auto_profiler_cooldown_seconds = 900;
+    config.auto_profiler_thread_grouper = "by-name";
+    config.auto_profiler_thread_dumper = "all";
     config.allocation_rate_metrics_enabled = true;
     assert(config.save());
     SparkConfig reloaded(path);
@@ -45,6 +53,14 @@ void testSaveAndReload()
     assert(reloaded.bytebin_url == "https://upload-saved.example.com/");
     assert(!reloaded.background_profiler_enabled);
     assert(reloaded.background_profiler_interval == 25);
+    assert(reloaded.auto_profiler_enabled);
+    assert(reloaded.auto_profiler_mspt_threshold == 65.0);
+    assert(reloaded.auto_profiler_trigger_duration_seconds == 8);
+    assert(reloaded.auto_profiler_duration_seconds == 240);
+    assert(reloaded.auto_profiler_interval == 3);
+    assert(reloaded.auto_profiler_cooldown_seconds == 900);
+    assert(reloaded.auto_profiler_thread_grouper == "by-name");
+    assert(reloaded.auto_profiler_thread_dumper == "all");
     assert(reloaded.allocation_rate_metrics_enabled);
     std::printf("  [PASS] save and reload\n");
 }

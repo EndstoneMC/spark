@@ -292,8 +292,7 @@ void testRollingSnapshotRecovery()
         writer.journalSample(sample);
         writer.journalTickEvent(static_cast<std::uint64_t>(i), 5.0);
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    writer.stop();
+    assert(writer.stop(std::chrono::seconds(10)));
 
     assert(!std::filesystem::exists(recovery / "segment-0.jnl"));
     assert(std::filesystem::exists(recovery / "metadata.snapshot"));

@@ -36,6 +36,16 @@ public:
     std::string background_profiler_thread_grouper = "by-pool";
     std::string background_profiler_thread_dumper = "default";
 
+    // --- Automatic MSPT-triggered profiler ---
+    bool auto_profiler_enabled = false;
+    double auto_profiler_mspt_threshold = 50.0;
+    int auto_profiler_trigger_duration_seconds = 5;
+    int auto_profiler_duration_seconds = 60;
+    int auto_profiler_interval = 4;
+    int auto_profiler_cooldown_seconds = 300;
+    std::string auto_profiler_thread_grouper = "by-pool";
+    std::string auto_profiler_thread_dumper = "default";
+
     // --- Native allocation-rate metrics ---
     bool allocation_rate_metrics_enabled = true;
 

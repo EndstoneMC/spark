@@ -23,6 +23,14 @@ void testDefaults()
     assert(config.background_profiler_interval == 10);
     assert(config.background_profiler_thread_grouper == "by-pool");
     assert(config.background_profiler_thread_dumper == "default");
+    assert(!config.auto_profiler_enabled);
+    assert(config.auto_profiler_mspt_threshold == 50.0);
+    assert(config.auto_profiler_trigger_duration_seconds == 5);
+    assert(config.auto_profiler_duration_seconds == 60);
+    assert(config.auto_profiler_interval == 4);
+    assert(config.auto_profiler_cooldown_seconds == 300);
+    assert(config.auto_profiler_thread_grouper == "by-pool");
+    assert(config.auto_profiler_thread_dumper == "default");
     assert(config.allocation_rate_metrics_enabled);
     assert(config.server_properties_additional_keys.empty());
     assert(!config.disable_response_broadcast);
@@ -41,6 +49,14 @@ backgroundProfiler = false
 backgroundProfilerInterval = 20
 backgroundProfilerThreadGrouper = "by-name"
 backgroundProfilerThreadDumper = "all"
+autoProfiler = true
+autoProfilerMsptThreshold = 55.5
+autoProfilerTriggerDuration = 7
+autoProfilerDuration = 120
+autoProfilerInterval = 2
+autoProfilerCooldown = 600
+autoProfilerThreadGrouper = "as-one"
+autoProfilerThreadDumper = "all"
 allocationRateMetrics = true
 serverPropertiesAdditionalKeys = "server-port, custom-safe-key,server-port"
 disableResponseBroadcast = true
@@ -54,6 +70,14 @@ disableResponseBroadcast = true
     assert(config.background_profiler_interval == 20);
     assert(config.background_profiler_thread_grouper == "by-name");
     assert(config.background_profiler_thread_dumper == "all");
+    assert(config.auto_profiler_enabled);
+    assert(config.auto_profiler_mspt_threshold == 55.5);
+    assert(config.auto_profiler_trigger_duration_seconds == 7);
+    assert(config.auto_profiler_duration_seconds == 120);
+    assert(config.auto_profiler_interval == 2);
+    assert(config.auto_profiler_cooldown_seconds == 600);
+    assert(config.auto_profiler_thread_grouper == "as-one");
+    assert(config.auto_profiler_thread_dumper == "all");
     assert(config.allocation_rate_metrics_enabled);
     assert(config.server_properties_additional_keys.size() == 2);
     assert(config.server_properties_additional_keys[0] == "server-port");
@@ -118,6 +142,13 @@ void testValidation()
                                               "backgroundProfilerInterval = 9223372036854775807\n",
                                               "backgroundProfilerThreadGrouper = \"invalid\"\n",
                                               "backgroundProfilerThreadDumper = \"invalid\"\n",
+                                              "autoProfilerMsptThreshold = 0.0\n",
+                                              "autoProfilerTriggerDuration = 0\n",
+                                              "autoProfilerDuration = 601\n",
+                                              "autoProfilerInterval = 0\n",
+                                              "autoProfilerCooldown = -1\n",
+                                              "autoProfilerThreadGrouper = \"invalid\"\n",
+                                              "autoProfilerThreadDumper = \"invalid\"\n",
                                               "serverPropertiesAdditionalKeys = \"valid-key,bad key\"\n",
                                               "bytebinUrl = \"\"\n"};
     for (const auto &text : invalid) {
@@ -188,6 +219,8 @@ void testTomlPartial()
     assert(config.viewer_url == "https://custom.example.com/");
     assert(config.bytebin_url == "https://spark-usercontent.lucko.me/");
     assert(config.background_profiler_enabled);
+    assert(!config.auto_profiler_enabled);
+    assert(config.auto_profiler_duration_seconds == 60);
     assert(config.allocation_rate_metrics_enabled);
     assert(config.server_properties_additional_keys.empty());
     std::printf("  [PASS] partial config\n");

@@ -16,6 +16,18 @@ namespace spark {
 
 namespace {
 
+AutoProfilerConfig makeAutoProfilerConfig(const SparkConfig &config)
+{
+    return {.enabled = config.auto_profiler_enabled,
+            .mspt_threshold = config.auto_profiler_mspt_threshold,
+            .trigger_duration_seconds = config.auto_profiler_trigger_duration_seconds,
+            .profile_duration_seconds = config.auto_profiler_duration_seconds,
+            .interval_ms = config.auto_profiler_interval,
+            .cooldown_seconds = config.auto_profiler_cooldown_seconds,
+            .thread_grouper = config.auto_profiler_thread_grouper,
+            .thread_dumper = config.auto_profiler_thread_dumper};
+}
+
 void logRecoveryFailure(std::string_view disposition = {}) noexcept
 {
     if (disposition.empty()) {
@@ -38,8 +50,8 @@ SparkApplication::SparkApplication(std::string bds_executable_sha256, const std:
       profiler_(statistics_, std::move(bds_executable_sha256), profile_storage_dir, config_.bytebin_url,
                 config_.viewer_url, config_.bytesocks_host, config_.background_profiler_enabled,
                 config_.background_profiler_interval, config_.background_profiler_thread_grouper,
-                config_.background_profiler_thread_dumper, trusted_viewers_, dispatcher_, metadata_provider_,
-                notifier_),
+                config_.background_profiler_thread_dumper, trusted_viewers_, dispatcher_, metadata_provider_, notifier_,
+                makeAutoProfilerConfig(config_)),
       health_(statistics_, metadata_provider_, config_.bytebin_url, config_.viewer_url, config_.bytesocks_host,
               trusted_viewers_, dispatcher_, notifier_),
       activity_log_(std::move(activity_log_file)), activity_command_(activity_log_), tick_monitor_(notifier_),

@@ -930,6 +930,8 @@ void testFailedBackgroundCancelPreservesViewer()
     fixture.service.cmdStart(sender, spark::Arguments({"start"}, true));
     assert(!sender.errors.empty());
     assert(sender.errors.back().find("Couldn't stop the background profiler safely") != std::string::npos);
+    assert(!fixture.service.running());
+    assert(!fixture.service.isBackgroundRunning());
     assert(socket->isOpen());
     assert(fixture.metadata.native_calls == metadata_calls);
     spark::ProfilerLifecycleTestAccess::setRecoveryRemove(profiler, {});

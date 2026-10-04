@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <exception>
 #include <limits>
 #include <stdexcept>
@@ -30,13 +31,14 @@ ProfilerService::ProfilerService(StatisticsService &statistics, std::string bds_
                                  int background_interval, std::string background_thread_grouper,
                                  std::string background_thread_dumper, TrustedViewersState &trusted_viewers,
                                  MainThreadDispatcher &dispatcher, ProfileMetadataProvider &metadata_provider,
-                                 ResultNotifier &notifier)
+                                 ResultNotifier &notifier, AutoProfilerConfig auto_profiler)
     : statistics_(statistics), bds_executable_sha256_(std::move(bds_executable_sha256)), dispatcher_(dispatcher),
       metadata_provider_(metadata_provider), notifier_(notifier),
       exporter_(std::move(profile_storage_dir), bytebin_url, viewer_url), background_enabled_(background_enabled),
       background_interval_(background_interval), background_thread_grouper_(std::move(background_thread_grouper)),
-      background_thread_dumper_(std::move(background_thread_dumper)), bytebin_url_(std::move(bytebin_url)),
-      viewer_url_(std::move(viewer_url)), bytesocks_host_(std::move(bytesocks_host)), trusted_viewers_(trusted_viewers)
+      background_thread_dumper_(std::move(background_thread_dumper)), auto_profiler_(std::move(auto_profiler)),
+      bytebin_url_(std::move(bytebin_url)), viewer_url_(std::move(viewer_url)),
+      bytesocks_host_(std::move(bytesocks_host)), trusted_viewers_(trusted_viewers)
 {
     viewer_open_ = std::make_unique<ProfilerOpenOrchestrator>(
         profiler_, statistics_, bds_executable_sha256_, bytebin_url_, viewer_url_, bytesocks_host_, trusted_viewers_,
@@ -116,7 +118,8 @@ bool ProfilerService::shutdown(std::string &error)
         export_worker_exited_ = true;
     }
     exporting_.store(false);
-    restart_background_after_export_ = false;
+    auto_profiler_cooldown_pending_ = false;
+    auto_profiler_threshold_since_ms_ = 0;
     lifetime_.reset();
     return true;
 }
@@ -203,6 +206,210 @@ bool ProfilerService::armProfilerTimeout(std::int64_t timeout_seconds) noexcept
     });
 }
 
+void ProfilerService::restoreProfilerTimeoutAfterFailedStop() noexcept
+{
+    if (!profiler_.running()) {
+        return;
+    }
+
+    const std::int64_t auto_end_ms = profiler_.autoEndTimeMs();
+    if (auto_end_ms <= 0) {
+        return;
+    }
+
+    const std::int64_t now_ms = nowMs();
+    const std::int64_t remaining_ms = auto_end_ms > now_ms ? auto_end_ms - now_ms : 0;
+    const std::int64_t remaining_seconds = remaining_ms / 1000;
+    if (remaining_seconds > 0 && armProfilerTimeout(remaining_seconds)) {
+        return;
+    }
+
+    // The independent timeout is part of the bounded-profile guarantee. If it
+    // cannot be restored without extending the original deadline, stop sampling
+    // immediately and publish a completion for the next main-thread tick.
+    profiler_.requestStop();
+    timeout_completion_pending_.store(timeout_generation_.load(std::memory_order_acquire), std::memory_order_release);
+}
+
+void ProfilerService::notifyAutoProfiler(const std::string &message) noexcept
+{
+    try {
+        notifier_.notify("CONSOLE", message);
+    }
+    catch (...) {  // NOLINT(bugprone-empty-catch): automatic diagnostics are best effort.
+    }
+}
+
+void ProfilerService::beginAutoProfilerCooldown() noexcept
+{
+    auto_profiler_cooldown_pending_ = false;
+    auto_profiler_threshold_since_ms_ = 0;
+    const auto cooldown_seconds = (std::max)(auto_profiler_.cooldown_seconds, 0);
+    auto_profiler_cooldown_until_ms_ = nowMs() + static_cast<std::int64_t>(cooldown_seconds) * 1000;
+}
+
+bool ProfilerService::startAutoProfilerSession() noexcept
+{
+    if (stopping_.load(std::memory_order_acquire) || !auto_profiler_.enabled || exporting_.load() || main_tid_ == 0) {
+        return false;
+    }
+    if (profiler_.running() && session_type_ != SessionType::Background) {
+        return false;
+    }
+
+    if (profiler_.running()) {
+        resetProfilerTimeout();
+        std::string cancel_error;
+        if (!profiler_.cancel(cancel_error)) {
+            if (!profiler_.running()) {
+                session_type_ = SessionType::None;
+                background_started_ = false;
+            }
+            notifyAutoProfiler("Automatic MSPT profiler could not replace the background profiler: " + cancel_error);
+            return false;
+        }
+        session_type_ = SessionType::None;
+        background_started_ = false;
+    }
+
+    const auto replacement_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    const bool timer_stopped = resetProfilerTimeoutUntil(replacement_deadline);
+    const bool viewer_stopped = !viewer_open_ || viewer_open_->retireUntil(replacement_deadline);
+    if (!timer_stopped || !viewer_stopped) {
+        if (!timer_stopped) {
+            notifyAutoProfiler("Automatic MSPT profiler deferred: previous profiler timer is still stopping.");
+        }
+        else {
+            notifyAutoProfiler("Automatic MSPT profiler deferred: previous live viewer is still closing.");
+        }
+        return false;
+    }
+    resetProfilerTimeout();
+
+    std::vector<NativePluginSource> native_plugin_sources;
+    try {
+        native_plugin_sources = metadata_provider_.nativePluginSources();
+    }
+    catch (const std::exception &error) {
+        notifyAutoProfiler(std::string("Automatic MSPT profiler could not collect metadata: ") + error.what());
+        return false;
+    }
+    catch (...) {
+        notifyAutoProfiler("Automatic MSPT profiler could not collect metadata.");
+        return false;
+    }
+
+    ProfilerOptions options;
+    options.interval_ms = std::clamp(auto_profiler_.interval_ms, 1, kMaxSamplingIntervalMs);
+    options.timeout_seconds = std::clamp(auto_profiler_.profile_duration_seconds, 1, 600);
+    options.ignore_sleeping = false;
+    options.creator_name = "CONSOLE";
+    options.creator_is_player = false;
+    options.comment = "Automatically triggered after sustained high MSPT.";
+
+    if (auto_profiler_.thread_dumper == "all") {
+        options.threads = {"*"};
+    }
+    if (auto_profiler_.thread_grouper == "by-name") {
+        options.thread_grouper = ThreadGrouperMode::ByName;
+    }
+    else if (auto_profiler_.thread_grouper == "as-one") {
+        options.thread_grouper = ThreadGrouperMode::AsOne;
+    }
+    else {
+        options.thread_grouper = ThreadGrouperMode::ByPool;
+    }
+
+    // Automatic profiles are only admitted after the independent timeout has
+    // been armed. Profiler::start also records auto_end_time_ms_, giving the
+    // main thread a second bounded-stop path.
+    if (!armProfilerTimeout(options.timeout_seconds)) {
+        notifyAutoProfiler("Automatic MSPT profiler could not arm its bounded timeout.");
+        return false;
+    }
+
+    std::string error;
+    bool started = false;
+    try {
+        started = profiler_.start(options, main_tid_, error);
+    }
+    catch (const std::exception &exception) {
+        error = exception.what();
+    }
+    catch (...) {
+        error = "unknown profiler startup failure";
+    }
+    if (!started) {
+        resetProfilerTimeout();
+        if (profiler_.running()) {
+            try {
+                std::string cleanup_error;
+                if (!profiler_.cancel(cleanup_error)) {
+                    restoreProfilerTimeoutAfterFailedStop();
+                }
+            }
+            catch (...) {  // NOLINT(bugprone-empty-catch): startup cleanup is best effort.
+                restoreProfilerTimeoutAfterFailedStop();
+            }
+        }
+        session_type_ = SessionType::None;
+        background_started_ = false;
+        notifyAutoProfiler("Automatic MSPT profiler could not start: " + error);
+        return false;
+    }
+
+    session_native_plugin_sources_ = std::move(native_plugin_sources);
+    start_sender_name_ = "CONSOLE";
+    start_sender_is_player_ = false;
+    start_sender_unique_id_.clear();
+    session_type_ = SessionType::AutoForeground;
+    background_started_ = false;
+    auto_profiler_cooldown_pending_ = true;
+
+    notifyAutoProfiler("Automatic MSPT profiler started for " + std::to_string(options.timeout_seconds) +
+                       " seconds at a " + std::to_string(options.interval_ms) + "ms sampling interval.");
+    return true;
+}
+
+bool ProfilerService::processAutoProfilerTrigger(double mspt) noexcept
+{
+    if (!auto_profiler_.enabled || stopping_.load(std::memory_order_acquire) || exporting_.load() || main_tid_ == 0) {
+        auto_profiler_threshold_since_ms_ = 0;
+        return false;
+    }
+    if (session_type_ == SessionType::ManualForeground || session_type_ == SessionType::AutoForeground ||
+        (profiler_.running() && session_type_ != SessionType::Background)) {
+        auto_profiler_threshold_since_ms_ = 0;
+        return false;
+    }
+
+    const std::int64_t now = nowMs();
+    if (now < auto_profiler_cooldown_until_ms_) {
+        auto_profiler_threshold_since_ms_ = 0;
+        return false;
+    }
+    if (!std::isfinite(auto_profiler_.mspt_threshold) || auto_profiler_.mspt_threshold <= 0.0 || !std::isfinite(mspt) ||
+        mspt < auto_profiler_.mspt_threshold) {
+        auto_profiler_threshold_since_ms_ = 0;
+        return false;
+    }
+
+    const std::int64_t trigger_duration_ms =
+        static_cast<std::int64_t>((std::max)(auto_profiler_.trigger_duration_seconds, 1)) * 1000;
+    if (auto_profiler_threshold_since_ms_ == 0) {
+        // Start the sustained-condition window after observing the first
+        // over-threshold tick. A single very long tick must not satisfy a
+        // multi-second trigger by itself.
+        auto_profiler_threshold_since_ms_ = now;
+    }
+    if (now - auto_profiler_threshold_since_ms_ < trigger_duration_ms) {
+        return false;
+    }
+
+    auto_profiler_threshold_since_ms_ = 0;
+    return startAutoProfilerSession();
+}
+
 void ProfilerService::finishProfiler(const std::string &sender_name, bool sender_is_player,
                                      std::string sender_unique_id, bool save, const std::string &comment)
 {
@@ -218,16 +425,19 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
         catch (...) {  // NOLINT(bugprone-empty-catch): notification is best effort.
         }
     };
-    const auto restore_background = [this]() noexcept {
+    const auto finish_without_export = [this]() noexcept {
         background_started_ = false;
-        if (!restart_background_after_export_) {
-            return;
+        if (auto_profiler_cooldown_pending_) {
+            beginAutoProfilerCooldown();
         }
-        restart_background_after_export_ = false;
-        background_suppressed_ = false;
-        background_started_ = startBackgroundSession();
+        if (!background_suppressed_ && background_enabled_) {
+            background_started_ = startBackgroundSession();
+        }
     };
 
+    if (session_type_ == SessionType::AutoForeground) {
+        auto_profiler_cooldown_pending_ = true;
+    }
     resetProfilerTimeout();
     std::string stop_error;
     if (!profiler_.stopSampling(stop_error)) {
@@ -238,7 +448,10 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
             session_type_ = SessionType::None;
             std::string resume_error;
             profiler_.resumePersistentAllocationCounting(resume_error);
-            restore_background();
+            finish_without_export();
+        }
+        else {
+            restoreProfilerTimeoutAfterFailedStop();
         }
         if (backend_failed) {
             notify_best_effort(sender_name,
@@ -251,6 +464,7 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
         return;
     }
     session_type_ = SessionType::None;
+    background_started_ = false;
 
     ExportContext context;
     try {
@@ -273,7 +487,7 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
     catch (const std::exception &error) {
         std::string resume_error;
         profiler_.resumePersistentAllocationCounting(resume_error);
-        restore_background();
+        finish_without_export();
         try {
             notify_best_effort(sender_name, std::string("Failed to prepare the profile export: ") + error.what());
         }
@@ -284,7 +498,7 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
     catch (...) {
         std::string resume_error;
         profiler_.resumePersistentAllocationCounting(resume_error);
-        restore_background();
+        finish_without_export();
         notify_best_effort(sender_name, "Failed to prepare the profile export.");
         return;
     }
@@ -315,14 +529,14 @@ void ProfilerService::finishProfiler(const std::string &sender_name, bool sender
         exporting_.store(false);
         std::string resume_error;
         profiler_.resumePersistentAllocationCounting(resume_error);
-        restore_background();
+        finish_without_export();
         notify_best_effort(sender_name, std::string("Failed to start the profile export worker: ") + error.what());
     }
     catch (...) {
         exporting_.store(false);
         std::string resume_error;
         profiler_.resumePersistentAllocationCounting(resume_error);
-        restore_background();
+        finish_without_export();
         notify_best_effort(sender_name, "Failed to start the profile export worker.");
     }
 }
@@ -572,10 +786,8 @@ void ProfilerService::announceResult(ExportResult result) noexcept
     }
 
     exporting_.store(false, std::memory_order_release);
-    if (restart_background_after_export_) {
-        restart_background_after_export_ = false;
-        background_suppressed_ = false;
-        background_started_ = startBackgroundSession();
+    if (auto_profiler_cooldown_pending_) {
+        beginAutoProfilerCooldown();
     }
 
     const auto notify_best_effort = [this](const std::string &name, const std::string &message) noexcept {
@@ -635,6 +847,11 @@ void ProfilerService::onTick(double mspt)
     }
     if (viewer_open_) {
         viewer_open_->onTick(start_sender_name_);
+    }
+    if (auto_profiler_.enabled && processAutoProfilerTrigger(mspt)) {
+        // The triggering tick completed before the automatic sampler started;
+        // do not attribute that tick to the new profile.
+        return;
     }
     if (!background_started_ && !background_suppressed_ && background_enabled_ && main_tid_ != 0 &&
         !profiler_.running() && !exporting_.load()) {

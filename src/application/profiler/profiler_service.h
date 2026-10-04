@@ -34,6 +34,17 @@ namespace spark {
 
 struct ProfilerServiceTestAccess;
 
+struct AutoProfilerConfig {
+    bool enabled = false;
+    double mspt_threshold = 50.0;
+    int trigger_duration_seconds = 5;
+    int profile_duration_seconds = 60;
+    int interval_ms = 4;
+    int cooldown_seconds = 300;
+    std::string thread_grouper = "by-pool";
+    std::string thread_dumper = "default";
+};
+
 // Manages the profiling session lifecycle and background export. No Endstone dependency.
 class ProfilerService {
 public:
@@ -42,7 +53,8 @@ public:
                     std::string bytesocks_host, bool background_enabled, int background_interval,
                     std::string background_thread_grouper, std::string background_thread_dumper,
                     TrustedViewersState &trusted_viewers, MainThreadDispatcher &dispatcher,
-                    ProfileMetadataProvider &metadata_provider, ResultNotifier &notifier);
+                    ProfileMetadataProvider &metadata_provider, ResultNotifier &notifier,
+                    AutoProfilerConfig auto_profiler = {});
     ~ProfilerService();
 
     ProfilerService(const ProfilerService &) = delete;
@@ -141,7 +153,8 @@ private:
     enum class SessionType {
         None,
         Background,
-        Foreground
+        ManualForeground,
+        AutoForeground
     };
     bool background_started_ = false;
     bool background_suppressed_ = false;
@@ -173,11 +186,16 @@ private:
     void announceResult() noexcept;
     void announceResult(ExportResult result) noexcept;
     bool startBackgroundSession() noexcept;
+    bool startAutoProfilerSession() noexcept;
+    bool processAutoProfilerTrigger(double mspt) noexcept;
+    void beginAutoProfilerCooldown() noexcept;
+    void notifyAutoProfiler(const std::string &message) noexcept;
     void closeViewerSocket();
     void resetProfilerTimeout() noexcept;
     void requestProfilerTimeoutStop() noexcept;
     bool resetProfilerTimeoutUntil(std::chrono::steady_clock::time_point deadline) noexcept;
     bool armProfilerTimeout(std::int64_t timeout_seconds) noexcept;
+    void restoreProfilerTimeoutAfterFailedStop() noexcept;
     ExportContext captureLiveContext(std::int64_t now_ms);
     std::string buildLiveSamplerData(const ExportContext &context);
     bool viewerOpenPending() const { return viewer_open_ && viewer_open_->viewerOpenPending(); }
@@ -224,13 +242,16 @@ private:
     std::atomic<std::uint64_t> timeout_generation_{1};
     std::atomic<bool> stopping_{false};
     SessionType session_type_ = SessionType::None;
-    bool restart_background_after_export_ = false;
     bool background_enabled_ = true;
     int background_interval_ = 10;
     bool allocation_rate_metrics_enabled_ = false;
     bool allocation_rate_metrics_start_attempted_ = false;
     std::string background_thread_grouper_ = "by-pool";
     std::string background_thread_dumper_ = "default";
+    AutoProfilerConfig auto_profiler_;
+    std::int64_t auto_profiler_threshold_since_ms_ = 0;
+    std::int64_t auto_profiler_cooldown_until_ms_ = 0;
+    bool auto_profiler_cooldown_pending_ = false;
     std::string start_sender_name_ = "CONSOLE";
     bool start_sender_is_player_ = false;
     std::string start_sender_unique_id_;

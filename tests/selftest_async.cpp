@@ -138,12 +138,12 @@ bool verifyBackgroundCommandValidation(std::uint64_t worker_tid)
     }
     service.cmdCancel(sender);
     service.onTick(50.0);
-    if (service.running()) {
-        std::fprintf(stderr, "background validation: cancelled foreground profile restarted background profiling\n");
+    if (!service.running() || !service.isBackgroundRunning()) {
+        std::fprintf(stderr,
+                     "background validation: cancelled foreground profile did not restore background profiling\n");
         return false;
     }
 
-    service.startBackgroundProfiler();
     service.cmdStart(sender, spark::Arguments({"start", "--interval", "1", "--save-to-file"}, true));
     service.cmdStop(sender, spark::Arguments({"stop"}, true));
     if (!waitForCondition(
@@ -171,8 +171,8 @@ bool verifyBackgroundCommandValidation(std::uint64_t worker_tid)
         return false;
     }
     service.onTick(50.0);
-    if (service.running()) {
-        std::fprintf(stderr, "background validation: timed foreground profile restarted background profiling\n");
+    if (!service.running() || !service.isBackgroundRunning()) {
+        std::fprintf(stderr, "background validation: timed foreground profile did not restore background profiling\n");
         return false;
     }
     std::filesystem::remove_all(profile_directory);

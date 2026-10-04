@@ -21,14 +21,32 @@ never written to the file.
 | `backgroundProfilerInterval` | integer | `10` | Background execution sampling interval in milliseconds, from `1` through `1000`. |
 | `backgroundProfilerThreadGrouper` | string | `"by-pool"` | Group background profile threads by `by-pool`, `by-name`, or `as-one`. |
 | `backgroundProfilerThreadDumper` | string | `"default"` | Profile the server thread (`default`) or all process threads (`all`). |
+| `autoProfiler` | boolean | `false` | Automatically start a bounded execution profile after MSPT remains above the configured threshold. |
+| `autoProfilerMsptThreshold` | number | `50.0` | MSPT threshold in milliseconds. |
+| `autoProfilerTriggerDuration` | integer | `5` | Number of continuous seconds MSPT must remain at or above the threshold before profiling starts. |
+| `autoProfilerDuration` | integer | `60` | Automatic profile duration in seconds, from `1` through `600`. Automatic profiles can never run without a time limit. |
+| `autoProfilerInterval` | integer | `4` | Automatic execution sampling interval in milliseconds, from `1` through `1000`. |
+| `autoProfilerCooldown` | integer | `300` | Seconds after an automatic profile finishes before another may trigger. `0` disables the cooldown. |
+| `autoProfilerThreadGrouper` | string | `"by-pool"` | Group automatic-profile threads by `by-pool`, `by-name`, or `as-one`. |
+| `autoProfilerThreadDumper` | string | `"default"` | Profile the server thread (`default`) or all process threads (`all`) for automatic profiles. |
 | `allocationRateMetrics` | boolean | `true` | Keep the count-only native allocation-rate counter active outside allocation profiles. It starts after Spark identifies the server thread and resumes after a foreground allocation profile is exported. `false` disables this counter; explicit `--alloc` profiles still work. |
 | `serverPropertiesAdditionalKeys` | string | `""` | Comma-separated extra `server.properties` keys to include in profile metadata after administrator review. |
 | `disableResponseBroadcast` | boolean | `false` | Restrict result notifications to the player who requested them. |
 
-The background profiler starts automatically when enabled. A valid foreground
-profile pauses it; explicitly stopping and exporting the foreground profile
-restarts it after export completes. A cancelled or timed-out foreground session
-leaves it paused until Spark is reloaded.
+The background profiler starts automatically when enabled. Foreground profiles
+temporarily replace it; after a foreground profile stops, times out, is cancelled,
+or fails during finalization, the background profiler is eligible to start again
+automatically. Explicitly cancelling the background profiler itself pauses
+background profiling until Spark is reloaded.
+
+When `autoProfiler` is enabled, Spark watches completed tick durations on the
+server thread. If MSPT remains at or above `autoProfilerMsptThreshold` for
+`autoProfilerTriggerDuration` continuous seconds, Spark replaces the background
+session (if one is running) with a normal execution profile using the configured
+automatic interval, thread selection, and grouping. Manual foreground profiles
+take priority and suspend threshold accumulation. Each automatic profile has a
+hard duration limit of at most 600 seconds; after it finishes and exports, the
+configured cooldown begins and the background profiler is restored when enabled.
 
 ### Additional `server.properties` keys
 

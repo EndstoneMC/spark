@@ -35,6 +35,24 @@ struct ProfilerServiceTestAccess {
     {
         return service.profiler_.start(options, tid, error);
     }
+
+    static bool autoForeground(const ProfilerService &service)
+    {
+        return service.session_type_ == ProfilerService::SessionType::AutoForeground;
+    }
+
+    static bool manualForeground(const ProfilerService &service)
+    {
+        return service.session_type_ == ProfilerService::SessionType::ManualForeground;
+    }
+
+    static void ageAutoTrigger(ProfilerService &service) { service.auto_profiler_threshold_since_ms_ = 1; }
+
+    static int activeInterval(const ProfilerService &service) { return service.profiler_.options().interval_ms; }
+    static std::int64_t activeTimeout(const ProfilerService &service)
+    {
+        return service.profiler_.options().timeout_seconds;
+    }
 };
 
 }  // namespace spark
@@ -210,6 +228,238 @@ void test_export_metadata_exception_restores_background()
     worker.join();
 }
 
+void test_foreground_cancel_restores_background_but_background_cancel_suppresses_it()
+{
+    std::atomic<bool> run{true};
+    std::atomic<std::uint64_t> worker_tid{0};
+    std::thread worker([&] {
+        worker_tid.store(currentThreadId(), std::memory_order_release);
+        while (run.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    });
+    while (worker_tid.load(std::memory_order_acquire) == 0) {
+        std::this_thread::yield();
+    }
+
+    spark::StatisticsService statistics;
+    Metadata metadata;
+    Dispatcher dispatcher;
+    ThrowingNotifier notifier;
+    notifier.throwing = false;
+    spark::TrustedViewersState trusted(std::filesystem::temp_directory_path() / "spark-profiler-resume-viewers.json");
+    spark::ProfilerService service(statistics, {}, {}, {}, {}, {}, true, 10, "by-pool", "default", trusted, dispatcher,
+                                   metadata, notifier);
+    service.setMainThreadId(worker_tid.load(std::memory_order_acquire));
+    service.startBackgroundProfiler();
+    assert(service.running());
+    assert(service.isBackgroundRunning());
+
+    Sender sender;
+    service.cmdStart(sender, spark::Arguments({"start"}, true));
+    assert(service.running());
+    assert(!service.isBackgroundRunning());
+    service.cmdCancel(sender);
+    assert(!service.running());
+
+    service.onTick(1.0);
+    assert(service.running());
+    assert(service.isBackgroundRunning());
+
+    service.cmdCancel(sender);
+    assert(!service.running());
+    service.onTick(1.0);
+    assert(!service.running());
+
+    service.shutdown();
+    run.store(false, std::memory_order_release);
+    worker.join();
+}
+
+void test_auto_profiler_replaces_and_restores_background()
+{
+    std::atomic<bool> run{true};
+    std::atomic<std::uint64_t> worker_tid{0};
+    std::thread worker([&] {
+        worker_tid.store(currentThreadId(), std::memory_order_release);
+        while (run.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    });
+    while (worker_tid.load(std::memory_order_acquire) == 0) {
+        std::this_thread::yield();
+    }
+
+    spark::StatisticsService statistics;
+    Metadata metadata;
+    Dispatcher dispatcher;
+    ThrowingNotifier notifier;
+    notifier.throwing = false;
+    spark::TrustedViewersState trusted(std::filesystem::temp_directory_path() / "spark-auto-profiler-viewers.json");
+    spark::AutoProfilerConfig auto_config;
+    auto_config.enabled = true;
+    auto_config.mspt_threshold = 50.0;
+    auto_config.trigger_duration_seconds = 5;
+    auto_config.profile_duration_seconds = 9999;
+    auto_config.interval_ms = 2;
+    auto_config.cooldown_seconds = 30;
+
+    spark::ProfilerService service(statistics, {}, {}, {}, {}, {}, true, 10, "by-pool", "default", trusted, dispatcher,
+                                   metadata, notifier, auto_config);
+    service.setMainThreadId(worker_tid.load(std::memory_order_acquire));
+    service.startBackgroundProfiler();
+    assert(service.running());
+    assert(service.isBackgroundRunning());
+
+    // A single pathological tick must not satisfy the sustained-duration gate.
+    service.onTick(5000.0);
+    assert(service.running());
+    assert(service.isBackgroundRunning());
+
+    spark::ProfilerServiceTestAccess::ageAutoTrigger(service);
+    service.onTick(60.0);
+    assert(service.running());
+    assert(!service.isBackgroundRunning());
+    assert(spark::ProfilerServiceTestAccess::autoForeground(service));
+    assert(spark::ProfilerServiceTestAccess::activeInterval(service) == 2);
+    assert(spark::ProfilerServiceTestAccess::activeTimeout(service) == 600);
+
+    Sender sender;
+    service.cmdCancel(sender);
+    assert(!service.running());
+    service.onTick(1.0);
+    assert(service.running());
+    assert(service.isBackgroundRunning());
+
+    spark::ProfilerServiceTestAccess::ageAutoTrigger(service);
+    service.onTick(60.0);
+    assert(service.running());
+    assert(service.isBackgroundRunning());
+
+    service.cmdCancel(sender);
+    service.shutdown();
+    run.store(false, std::memory_order_release);
+    worker.join();
+}
+
+void test_failed_auto_start_does_not_consume_cooldown()
+{
+    std::atomic<bool> run{true};
+    std::atomic<std::uint64_t> worker_tid{0};
+    std::thread worker([&] {
+        worker_tid.store(currentThreadId(), std::memory_order_release);
+        while (run.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    });
+    while (worker_tid.load(std::memory_order_acquire) == 0) {
+        std::this_thread::yield();
+    }
+
+    spark::StatisticsService statistics;
+    Metadata metadata;
+    metadata.throw_native = true;
+    Dispatcher dispatcher;
+    ThrowingNotifier notifier;
+    notifier.throwing = false;
+    spark::TrustedViewersState trusted(std::filesystem::temp_directory_path() / "spark-auto-retry-viewers.json");
+    spark::AutoProfilerConfig auto_config;
+    auto_config.enabled = true;
+    auto_config.mspt_threshold = 50.0;
+    auto_config.trigger_duration_seconds = 5;
+    auto_config.profile_duration_seconds = 60;
+    auto_config.interval_ms = 2;
+    auto_config.cooldown_seconds = 300;
+
+    spark::ProfilerService service(statistics, {}, {}, {}, {}, {}, false, 10, "by-pool", "default", trusted, dispatcher,
+                                   metadata, notifier, auto_config);
+    service.setMainThreadId(worker_tid.load(std::memory_order_acquire));
+
+    spark::ProfilerServiceTestAccess::ageAutoTrigger(service);
+    service.onTick(60.0);
+    assert(!service.running());
+
+    // A failed start never produced an automatic session, so it must not consume
+    // the post-session cooldown. Once the transient failure clears, another
+    // sustained threshold window may retry immediately.
+    metadata.throw_native = false;
+    spark::ProfilerServiceTestAccess::ageAutoTrigger(service);
+    service.onTick(60.0);
+    assert(service.running());
+    assert(spark::ProfilerServiceTestAccess::autoForeground(service));
+
+    Sender sender;
+    service.cmdCancel(sender);
+    service.shutdown();
+    run.store(false, std::memory_order_release);
+    worker.join();
+}
+
+void test_manual_profiler_preempts_auto_profiler()
+{
+    std::atomic<bool> run{true};
+    std::atomic<std::uint64_t> worker_tid{0};
+    std::thread worker([&] {
+        worker_tid.store(currentThreadId(), std::memory_order_release);
+        while (run.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    });
+    while (worker_tid.load(std::memory_order_acquire) == 0) {
+        std::this_thread::yield();
+    }
+
+    spark::StatisticsService statistics;
+    Metadata metadata;
+    Dispatcher dispatcher;
+    ThrowingNotifier notifier;
+    notifier.throwing = false;
+    spark::TrustedViewersState trusted(std::filesystem::temp_directory_path() / "spark-auto-preempt-viewers.json");
+    spark::AutoProfilerConfig auto_config;
+    auto_config.enabled = true;
+    auto_config.mspt_threshold = 50.0;
+    auto_config.trigger_duration_seconds = 5;
+    auto_config.profile_duration_seconds = 60;
+    auto_config.interval_ms = 2;
+    auto_config.cooldown_seconds = 30;
+
+    spark::ProfilerService service(statistics, {}, {}, {}, {}, {}, true, 10, "by-pool", "default", trusted, dispatcher,
+                                   metadata, notifier, auto_config);
+    service.setMainThreadId(worker_tid.load(std::memory_order_acquire));
+    service.startBackgroundProfiler();
+
+    spark::ProfilerServiceTestAccess::ageAutoTrigger(service);
+    service.onTick(60.0);
+    assert(service.running());
+    assert(spark::ProfilerServiceTestAccess::autoForeground(service));
+
+    Sender sender;
+    service.cmdStart(sender, spark::Arguments({"start", "--interval", "7"}, true));
+    assert(sender.errors.empty());
+    assert(service.running());
+    assert(!service.isBackgroundRunning());
+    assert(spark::ProfilerServiceTestAccess::manualForeground(service));
+    assert(spark::ProfilerServiceTestAccess::activeInterval(service) == 7);
+
+    service.cmdCancel(sender);
+    assert(!service.running());
+    service.onTick(1.0);
+    assert(service.running());
+    assert(service.isBackgroundRunning());
+
+    // Preempting an automatic profile starts its cooldown, so high MSPT cannot
+    // immediately replace the manually-restored background profile.
+    spark::ProfilerServiceTestAccess::ageAutoTrigger(service);
+    service.onTick(60.0);
+    assert(service.running());
+    assert(service.isBackgroundRunning());
+
+    service.cmdCancel(sender);
+    service.shutdown();
+    run.store(false, std::memory_order_release);
+    worker.join();
+}
+
 }  // namespace
 
 int main()
@@ -218,5 +468,9 @@ int main()
     test_normal_notifier_publishes_normal_exit();
     test_background_start_fails_closed_on_metadata_exception();
     test_export_metadata_exception_restores_background();
+    test_foreground_cancel_restores_background_but_background_cancel_suppresses_it();
+    test_auto_profiler_replaces_and_restores_background();
+    test_failed_auto_start_does_not_consume_cooldown();
+    test_manual_profiler_preempts_auto_profiler();
     return 0;
 }

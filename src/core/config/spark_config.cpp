@@ -1,8 +1,10 @@
 #include "core/config/spark_config.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <toml.hpp>
@@ -19,6 +21,8 @@ namespace spark {
 namespace {
 
 constexpr std::int64_t KMaxBackgroundProfilerIntervalMs = 1000;
+constexpr std::int64_t KMaxAutoProfilerIntervalMs = 1000;
+constexpr std::int64_t KMaxAutoProfilerDurationSeconds = 10 * 60;
 constexpr std::size_t KMaxConfigFileBytes = 1U * 1024U * 1024U;
 constexpr std::size_t KMaxAdditionalServerPropertyKeys = 64;
 constexpr std::size_t KMaxServerPropertyKeyLength = 128;
@@ -31,6 +35,14 @@ struct ConfigValues {
     std::int64_t background_profiler_interval;
     std::string background_profiler_thread_grouper;
     std::string background_profiler_thread_dumper;
+    bool auto_profiler_enabled;
+    double auto_profiler_mspt_threshold;
+    std::int64_t auto_profiler_trigger_duration_seconds;
+    std::int64_t auto_profiler_duration_seconds;
+    std::int64_t auto_profiler_interval;
+    std::int64_t auto_profiler_cooldown_seconds;
+    std::string auto_profiler_thread_grouper;
+    std::string auto_profiler_thread_dumper;
     bool allocation_rate_metrics_enabled;
     std::vector<std::string> server_properties_additional_keys;
     bool disable_response_broadcast;
@@ -186,6 +198,17 @@ bool parseAdditionalServerPropertyKeys(std::string_view text, std::vector<std::s
     return true;
 }
 
+std::optional<double> numericConfigValue(const toml::parse_result &result, const char *key)
+{
+    if (const auto floating = result[key].value<double>()) {
+        return floating;
+    }
+    if (const auto integer = result[key].value<std::int64_t>()) {
+        return static_cast<double>(*integer);
+    }
+    return std::nullopt;
+}
+
 std::string joinAdditionalServerPropertyKeys(const std::vector<std::string> &keys)
 {
     std::string result;
@@ -253,6 +276,38 @@ bool validateConfigValues(ConfigValues &values, std::string &error)
         error = "Invalid backgroundProfilerThreadDumper - using defaults";
         return false;
     }
+    if (!std::isfinite(values.auto_profiler_mspt_threshold) || values.auto_profiler_mspt_threshold <= 0.0) {
+        error = "autoProfilerMsptThreshold must be a positive finite number - using defaults";
+        return false;
+    }
+    if (values.auto_profiler_trigger_duration_seconds < 1 ||
+        values.auto_profiler_trigger_duration_seconds > std::numeric_limits<int>::max()) {
+        error = "autoProfilerTriggerDuration must be a positive number of seconds - using defaults";
+        return false;
+    }
+    if (values.auto_profiler_duration_seconds < 1 ||
+        values.auto_profiler_duration_seconds > KMaxAutoProfilerDurationSeconds) {
+        error = "autoProfilerDuration must be between 1 and 600 seconds - using defaults";
+        return false;
+    }
+    if (values.auto_profiler_interval < 1 || values.auto_profiler_interval > KMaxAutoProfilerIntervalMs) {
+        error = "autoProfilerInterval must be between 1 and 1000 milliseconds - using defaults";
+        return false;
+    }
+    if (values.auto_profiler_cooldown_seconds < 0 ||
+        values.auto_profiler_cooldown_seconds > std::numeric_limits<int>::max()) {
+        error = "autoProfilerCooldown must be a non-negative number of seconds - using defaults";
+        return false;
+    }
+    if (values.auto_profiler_thread_grouper != "by-pool" && values.auto_profiler_thread_grouper != "by-name" &&
+        values.auto_profiler_thread_grouper != "as-one") {
+        error = "Invalid autoProfilerThreadGrouper - using defaults";
+        return false;
+    }
+    if (values.auto_profiler_thread_dumper != "default" && values.auto_profiler_thread_dumper != "all") {
+        error = "Invalid autoProfilerThreadDumper - using defaults";
+        return false;
+    }
 
     if (values.viewer_url.back() != '/') {
         values.viewer_url.push_back('/');
@@ -272,6 +327,14 @@ ConfigValues currentConfigValues(const SparkConfig &config)
             .background_profiler_interval = config.background_profiler_interval,
             .background_profiler_thread_grouper = config.background_profiler_thread_grouper,
             .background_profiler_thread_dumper = config.background_profiler_thread_dumper,
+            .auto_profiler_enabled = config.auto_profiler_enabled,
+            .auto_profiler_mspt_threshold = config.auto_profiler_mspt_threshold,
+            .auto_profiler_trigger_duration_seconds = config.auto_profiler_trigger_duration_seconds,
+            .auto_profiler_duration_seconds = config.auto_profiler_duration_seconds,
+            .auto_profiler_interval = config.auto_profiler_interval,
+            .auto_profiler_cooldown_seconds = config.auto_profiler_cooldown_seconds,
+            .auto_profiler_thread_grouper = config.auto_profiler_thread_grouper,
+            .auto_profiler_thread_dumper = config.auto_profiler_thread_dumper,
             .allocation_rate_metrics_enabled = config.allocation_rate_metrics_enabled,
             .server_properties_additional_keys = config.server_properties_additional_keys,
             .disable_response_broadcast = config.disable_response_broadcast};
@@ -286,6 +349,14 @@ void commitConfigValues(SparkConfig &config, ConfigValues values)
     config.background_profiler_interval = static_cast<int>(values.background_profiler_interval);
     config.background_profiler_thread_grouper = std::move(values.background_profiler_thread_grouper);
     config.background_profiler_thread_dumper = std::move(values.background_profiler_thread_dumper);
+    config.auto_profiler_enabled = values.auto_profiler_enabled;
+    config.auto_profiler_mspt_threshold = values.auto_profiler_mspt_threshold;
+    config.auto_profiler_trigger_duration_seconds = static_cast<int>(values.auto_profiler_trigger_duration_seconds);
+    config.auto_profiler_duration_seconds = static_cast<int>(values.auto_profiler_duration_seconds);
+    config.auto_profiler_interval = static_cast<int>(values.auto_profiler_interval);
+    config.auto_profiler_cooldown_seconds = static_cast<int>(values.auto_profiler_cooldown_seconds);
+    config.auto_profiler_thread_grouper = std::move(values.auto_profiler_thread_grouper);
+    config.auto_profiler_thread_dumper = std::move(values.auto_profiler_thread_dumper);
     config.allocation_rate_metrics_enabled = values.allocation_rate_metrics_enabled;
     config.server_properties_additional_keys = std::move(values.server_properties_additional_keys);
     config.disable_response_broadcast = values.disable_response_broadcast;
@@ -325,6 +396,20 @@ bool SparkConfig::load()
             result["backgroundProfilerThreadGrouper"].value<std::string>().value_or(background_profiler_thread_grouper),
         .background_profiler_thread_dumper =
             result["backgroundProfilerThreadDumper"].value<std::string>().value_or(background_profiler_thread_dumper),
+        .auto_profiler_enabled = result["autoProfiler"].value<bool>().value_or(auto_profiler_enabled),
+        .auto_profiler_mspt_threshold =
+            numericConfigValue(result, "autoProfilerMsptThreshold").value_or(auto_profiler_mspt_threshold),
+        .auto_profiler_trigger_duration_seconds = result["autoProfilerTriggerDuration"].value<std::int64_t>().value_or(
+            auto_profiler_trigger_duration_seconds),
+        .auto_profiler_duration_seconds =
+            result["autoProfilerDuration"].value<std::int64_t>().value_or(auto_profiler_duration_seconds),
+        .auto_profiler_interval = result["autoProfilerInterval"].value<std::int64_t>().value_or(auto_profiler_interval),
+        .auto_profiler_cooldown_seconds =
+            result["autoProfilerCooldown"].value<std::int64_t>().value_or(auto_profiler_cooldown_seconds),
+        .auto_profiler_thread_grouper =
+            result["autoProfilerThreadGrouper"].value<std::string>().value_or(auto_profiler_thread_grouper),
+        .auto_profiler_thread_dumper =
+            result["autoProfilerThreadDumper"].value<std::string>().value_or(auto_profiler_thread_dumper),
         .allocation_rate_metrics_enabled =
             result["allocationRateMetrics"].value<bool>().value_or(allocation_rate_metrics_enabled),
         .server_properties_additional_keys = server_properties_additional_keys,
@@ -335,11 +420,18 @@ bool SparkConfig::load()
         using Value = std::remove_cvref_t<decltype(tag)>;
         return result[key] && !result[key].value<Value>();
     };
+    const auto invalid_number = [&result](const char *key) {
+        return result[key] && !numericConfigValue(result, key);
+    };
     if (invalid_type("viewerUrl", std::string{}) || invalid_type("bytebinUrl", std::string{}) ||
         invalid_type("bytesocksHost", std::string{}) || invalid_type("backgroundProfiler", bool{}) ||
         invalid_type("backgroundProfilerThreadGrouper", std::string{}) ||
-        invalid_type("backgroundProfilerThreadDumper", std::string{}) ||
-        invalid_type("allocationRateMetrics", bool{}) ||
+        invalid_type("backgroundProfilerThreadDumper", std::string{}) || invalid_type("autoProfiler", bool{}) ||
+        invalid_number("autoProfilerMsptThreshold") || invalid_type("autoProfilerTriggerDuration", std::int64_t{}) ||
+        invalid_type("autoProfilerDuration", std::int64_t{}) || invalid_type("autoProfilerInterval", std::int64_t{}) ||
+        invalid_type("autoProfilerCooldown", std::int64_t{}) ||
+        invalid_type("autoProfilerThreadGrouper", std::string{}) ||
+        invalid_type("autoProfilerThreadDumper", std::string{}) || invalid_type("allocationRateMetrics", bool{}) ||
         invalid_type("serverPropertiesAdditionalKeys", std::string{}) ||
         invalid_type("disableResponseBroadcast", bool{}) ||
         invalid_type("backgroundProfilerInterval", std::int64_t{})) {
@@ -412,6 +504,30 @@ void SparkConfig::writeTemplate(std::ostream &out) const
     out << "\n";
     out << "# Thread selection: default or all\n";
     out << "backgroundProfilerThreadDumper = \"" << escapeString(background_profiler_thread_dumper) << "\"\n";
+    out << "\n";
+    out << "# Automatically start a bounded execution profile after sustained high MSPT\n";
+    out << "autoProfiler = " << (auto_profiler_enabled ? "true" : "false") << "\n";
+    out << "\n";
+    out << "# Trigger threshold in milliseconds per tick\n";
+    out << "autoProfilerMsptThreshold = " << auto_profiler_mspt_threshold << "\n";
+    out << "\n";
+    out << "# Threshold must remain exceeded for this many seconds\n";
+    out << "autoProfilerTriggerDuration = " << auto_profiler_trigger_duration_seconds << "\n";
+    out << "\n";
+    out << "# Automatic profile duration in seconds (1-600)\n";
+    out << "autoProfilerDuration = " << auto_profiler_duration_seconds << "\n";
+    out << "\n";
+    out << "# Automatic execution sampling interval in milliseconds (1-1000)\n";
+    out << "autoProfilerInterval = " << auto_profiler_interval << "\n";
+    out << "\n";
+    out << "# Delay after an automatic profile finishes before another may trigger\n";
+    out << "autoProfilerCooldown = " << auto_profiler_cooldown_seconds << "\n";
+    out << "\n";
+    out << "# Automatic profile thread grouping: by-pool, by-name, or as-one\n";
+    out << "autoProfilerThreadGrouper = \"" << escapeString(auto_profiler_thread_grouper) << "\"\n";
+    out << "\n";
+    out << "# Automatic profile thread selection: default or all\n";
+    out << "autoProfilerThreadDumper = \"" << escapeString(auto_profiler_thread_dumper) << "\"\n";
     out << "\n";
     out << "# Track native process allocation throughput using the existing allocator hooks\n";
     out << "# Enabled by default after Linux/Windows real-BDS overhead validation\n";
