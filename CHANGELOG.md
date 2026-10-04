@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased][Unreleased]
 
+## [0.6.3][0.6.3] - 2026-10-04
+
 ### Added
 
 - Add optional MSPT-triggered automatic execution profiling after sustained high
@@ -608,7 +610,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dladdr` symbolization (module + RVA fallback for stripped frames).
 - Windows backend: `SuspendThread` + `StackWalk64` capture with PDB symbolization.
 
-[Unreleased]: https://github.com/EndstoneMC/spark/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/EndstoneMC/spark/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/EndstoneMC/spark/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/EndstoneMC/spark/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/EndstoneMC/spark/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/EndstoneMC/spark/compare/v0.5.3...v0.6.0

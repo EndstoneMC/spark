@@ -3,7 +3,7 @@
 
 namespace spark {
 
-inline constexpr const char *kVersion = "0.6.2";
+inline constexpr const char *kVersion = "0.6.3";
 
 inline constexpr int kSparkFormatVersion = 2;
 
