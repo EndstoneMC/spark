@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased][Unreleased]
 
+### Added
+
+- Add optional MSPT-triggered automatic execution profiling after sustained high
+  tick times, with configurable threshold, trigger duration, profile duration,
+  sampling interval, cooldown, thread grouping, and thread selection. Automatic
+  profiles are always bounded to at most 600 seconds.
+
+### Changed
+
+- Define profiler priority as manual > automatic > background. Manual profiles
+  preempt automatic profiles, automatic profiles temporarily replace background
+  profiling, and background profiling resumes after foreground stop, timeout,
+  cancellation, or finalization/export failure. Explicitly cancelling the
+  background profiler still pauses it until Spark is reloaded.
+
+### Fixed
+
+- Preserve the remaining bounded-profile deadline when stop or cancel fails, and
+  request an immediate stop if the deadline cannot be restored safely.
+- Allow automatic profiling to retry after a startup failure without consuming
+  the post-session cooldown, and preserve the live-viewer transaction boundary
+  when profiler replacement cannot complete safely.
+
 ## [0.6.2][0.6.2] - 2026-10-01
 
 ### Added
